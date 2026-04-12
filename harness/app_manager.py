@@ -93,3 +93,25 @@ def list_archived(apps_dir: str = "apps") -> list:
     if not Path(archived_dir).is_dir():
         return []
     return load_apps(archived_dir)
+
+
+def get_known_vars(apps_dir: str = "apps") -> list:
+    """Scan all YAML files (including archived/) for $VAR references.
+
+    Returns a sorted list of unique variable names like ['$MY_PASSWORD', '$MY_TOKEN'].
+    Never reads actual env var values — only discovers names used in YAML files.
+    """
+    apps_path = Path(apps_dir)
+    if not apps_path.is_dir():
+        return []
+    pattern = re.compile(r'\$([A-Z_][A-Z0-9_]*)')
+    found = set()
+    for yaml_file in apps_path.rglob("*.yaml"):
+        content = yaml_file.read_text(encoding="utf-8")
+        for match in pattern.finditer(content):
+            found.add(f"${match.group(1)}")
+    for yaml_file in apps_path.rglob("*.yml"):
+        content = yaml_file.read_text(encoding="utf-8")
+        for match in pattern.finditer(content):
+            found.add(f"${match.group(1)}")
+    return sorted(found)

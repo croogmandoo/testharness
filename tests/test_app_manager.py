@@ -12,6 +12,7 @@ from harness.app_manager import (
     delete_archived_app,
     list_apps,
     list_archived,
+    get_known_vars,
 )
 
 SAMPLE_APP = {
@@ -153,3 +154,50 @@ def test_archive_app_raises_if_already_archived(tmp_path):
 def test_slugify_produces_empty_string_raises(tmp_path):
     with pytest.raises(AppManagerError):
         app_file_path("!!!", apps_dir=str(tmp_path))
+
+
+def test_get_known_vars_returns_var_names(tmp_path):
+    """Scans YAML files and returns sorted unique $VAR names."""
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    (apps_dir / "myapp.yaml").write_text(
+        "app: myapp\nurl: https://example.com\ntests:\n"
+        "  - name: login\n    type: browser\n    steps:\n"
+        "      - fill:\n          field: '#user'\n          value: $MY_USERNAME\n"
+        "      - fill:\n          field: '#pass'\n          value: $MY_PASSWORD\n"
+    )
+    result = get_known_vars(apps_dir=str(apps_dir))
+    assert result == ["$MY_PASSWORD", "$MY_USERNAME"]
+
+
+def test_get_known_vars_deduplicates(tmp_path):
+    """Same var used in multiple files appears once."""
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    (apps_dir / "a.yaml").write_text("url: $SHARED_URL\n")
+    (apps_dir / "b.yaml").write_text("url: $SHARED_URL\nother: $OTHER_VAR\n")
+    result = get_known_vars(apps_dir=str(apps_dir))
+    assert result == ["$OTHER_VAR", "$SHARED_URL"]
+
+
+def test_get_known_vars_includes_archived(tmp_path):
+    """Also scans apps/archived/ so users can reuse vars from archived apps."""
+    apps_dir = tmp_path / "apps"
+    (apps_dir / "archived").mkdir(parents=True)
+    (apps_dir / "archived" / "old.yaml").write_text("url: $ARCHIVED_SECRET\n")
+    result = get_known_vars(apps_dir=str(apps_dir))
+    assert "$ARCHIVED_SECRET" in result
+
+
+def test_get_known_vars_empty_dir(tmp_path):
+    """Returns empty list when no YAML files exist."""
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    result = get_known_vars(apps_dir=str(apps_dir))
+    assert result == []
+
+
+def test_get_known_vars_missing_dir(tmp_path):
+    """Returns empty list when apps_dir does not exist."""
+    result = get_known_vars(apps_dir=str(tmp_path / "nonexistent"))
+    assert result == []
