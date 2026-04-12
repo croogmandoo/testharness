@@ -1,6 +1,8 @@
-# Getting Started
+# Web Testing Harness
 
 A Python-based web and API testing harness with a browser dashboard, Teams/email alerts, and Windows Task Scheduler integration.
+
+Define tests in YAML, run them on demand or on a schedule, and view results in a web dashboard.
 
 ---
 
@@ -13,16 +15,21 @@ A Python-based web and API testing harness with a browser dashboard, Teams/email
 
 ## Installation
 
+### 1. Create and activate a virtual environment
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+### 2. Install dependencies
+
 ```bash
 pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
----
-
-## Configuration
-
-### 1. Copy the example env file
+### 3. Copy the example env file
 
 ```bash
 copy .env.example .env
@@ -30,7 +37,7 @@ copy .env.example .env
 
 Edit `.env` and fill in your values. At minimum, set `TEAMS_WEBHOOK_URL` if you want alert notifications. If you don't use Teams, comment it out in `config.yaml` under `alerts:`.
 
-### 2. Review `config.yaml`
+### 4. Review `config.yaml`
 
 ```yaml
 default_environment: production
@@ -135,6 +142,7 @@ tests:
 ## Start the Dashboard
 
 ```bash
+.venv\Scripts\activate
 python -m web.main
 ```
 
