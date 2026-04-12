@@ -146,8 +146,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"
         crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
-const FORM_MODE = {{ '"edit"' if mode == 'edit' else '"create"' }};
-const APP_NAME = {{ ('"' + app_name + '"') if app_name else '""' }};
+const FORM_MODE = {{ mode | tojson }};
+const APP_NAME = {{ app_name | tojson }};
 let currentMode = 'simple';
 
 function switchMode(target) {
