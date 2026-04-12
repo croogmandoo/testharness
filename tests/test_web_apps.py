@@ -224,3 +224,59 @@ def test_get_secrets_does_not_expose_values(client_with_app, monkeypatch):
     assert resp.status_code == 200
     assert b"super-secret-value" not in resp.content
     assert b"$MY_SECRET" in resp.content
+
+
+def test_detail_page_shows_run_history_strip(tmp_path):
+    """GET /app/{app}/{env} shows a list of recent runs as a strip."""
+    from harness.db import Database
+    from harness.models import Run
+    from web.main import create_app
+    from fastapi.testclient import TestClient
+
+    db = Database(str(tmp_path / "h.db"))
+    db.init_schema()
+    for i in range(2):
+        run = Run(app="myapp", environment="prod", triggered_by="test")
+        db.insert_run(run)
+        db.update_run_status(run.id, "complete",
+                             started_at=f"2026-01-0{i+1}T00:00:00",
+                             finished_at=f"2026-01-0{i+1}T00:01:00")
+
+    config = {"default_environment": "prod", "environments": {"prod": {"label": "Prod"}}}
+    app = create_app(db=db, config=config, apps_dir=str(tmp_path / "apps"))
+    client = TestClient(app)
+    resp = client.get("/app/myapp/prod")
+    assert resp.status_code == 200
+    assert b"run-history-strip" in resp.content
+
+
+def test_detail_page_shows_pending_cards_when_run_is_active(tmp_path):
+    """Detail page shows pending test placeholders while a run is in progress."""
+    import yaml
+    from harness.db import Database
+    from harness.models import Run
+    from web.main import create_app
+    from fastapi.testclient import TestClient
+
+    db = Database(str(tmp_path / "h.db"))
+    db.init_schema()
+    run = Run(app="myapp", environment="prod", triggered_by="test")
+    db.insert_run(run)
+    db.update_run_status(run.id, "running", started_at="2026-01-01T00:00:00")
+
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    app_def = {
+        "app": "myapp", "url": "https://x.com",
+        "tests": [{"name": "health", "type": "availability"},
+                  {"name": "login", "type": "browser", "steps": []}]
+    }
+    (apps_dir / "myapp.yaml").write_text(yaml.dump(app_def))
+
+    config = {"default_environment": "prod", "environments": {"prod": {"label": "Prod"}}}
+    app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    client = TestClient(app)
+    resp = client.get("/app/myapp/prod")
+    assert resp.status_code == 200
+    assert b"Pending" in resp.content
+    assert b"progress-bar" in resp.content

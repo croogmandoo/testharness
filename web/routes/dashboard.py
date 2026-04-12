@@ -41,7 +41,7 @@ async def dashboard(request: Request, environment: str = None):
 
 @router.get("/app/{app}/{environment}", response_class=HTMLResponse)
 async def app_detail(request: Request, app: str, environment: str, run_id: str = None):
-    from web.main import get_db, get_config
+    from web.main import get_db, get_config, get_apps
     db = get_db()
     config = get_config()
 
@@ -59,7 +59,18 @@ async def app_detail(request: Request, app: str, environment: str, run_id: str =
         test_names = [tr["test_name"] for tr in test_results]
         history = db.get_run_history_batch(app, environment, test_names)
 
-    return templates.TemplateResponse("detail.html", {
+    is_live = bool(selected_run and selected_run["status"] in ("pending", "running"))
+    pending_test_names = []
+    if is_live:
+        completed_names = {tr["test_name"] for tr in test_results}
+        app_def = next((a for a in get_apps() if a["app"] == app), None)
+        if app_def:
+            pending_test_names = [
+                t["name"] for t in app_def.get("tests", [])
+                if t["name"] not in completed_names
+            ]
+
+    return templates.TemplateResponse(request, "detail.html", {
         "request": request,
         "app": app,
         "environment": environment,
@@ -68,4 +79,6 @@ async def app_detail(request: Request, app: str, environment: str, run_id: str =
         "selected_run": selected_run,
         "test_results": test_results,
         "history": history,
+        "is_live": is_live,
+        "pending_test_names": pending_test_names,
     })
