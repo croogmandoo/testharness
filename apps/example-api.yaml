@@ -1,0 +1,11 @@
+app: "Example API"
+url: "https://api.example.com"
+environments:
+  staging: "https://staging-api.example.com"
+  production: "https://api.example.com"
+tests:
+  - name: "Health check"
+    type: api
+    endpoint: /health
+    method: GET
+    expect_status: 200

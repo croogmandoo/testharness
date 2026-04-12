@@ -1,0 +1,14 @@
+app: "Example Web App"
+url: "https://example.com"
+environments:
+  staging: "https://staging.example.com"
+  production: "https://example.com"
+tests:
+  - name: "Page is reachable"
+    type: availability
+    expect_status: 200
+  - name: "Homepage loads"
+    type: browser
+    steps:
+      - navigate: /
+      - assert_text: "Example"
