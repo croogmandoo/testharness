@@ -6,7 +6,8 @@ from playwright.async_api import async_playwright, Page
 from harness.models import TestResult, StepResult
 from harness.loader import slugify_test_name
 
-async def execute_step(page: Page, step: dict, base_url: str) -> StepResult:
+async def execute_step(page: Page, step: dict, base_url: str,
+                       screenshot_path: Optional[str] = None) -> StepResult:
     start = time.monotonic()
     def _elapsed() -> int:
         return int((time.monotonic() - start) * 1000)
@@ -53,6 +54,15 @@ async def execute_step(page: Page, step: dict, base_url: str) -> StepResult:
             selector = step["wait_for_selector"]
             await page.wait_for_selector(selector)
             return StepResult(step=f"wait_for_selector {selector}", status="pass", duration_ms=_elapsed())
+        if "screenshot" in step:
+            if not screenshot_path:
+                return StepResult(step="screenshot", status="error", duration_ms=_elapsed(),
+                                  error="No screenshot path provided")
+            os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
+            await page.screenshot(path=screenshot_path)
+            rel = os.path.relpath(screenshot_path, "data/screenshots").replace("\\", "/")
+            return StepResult(step="screenshot", status="pass", duration_ms=_elapsed(),
+                              screenshot=rel)
         return StepResult(step=str(step), status="error", duration_ms=_elapsed(),
                           error=f"Unknown step type: {list(step.keys())}")
     except Exception as e:
@@ -71,16 +81,20 @@ async def run_browser_test(run_id: str, app: str, environment: str,
         page = await browser.new_page()
         page.set_default_timeout(timeout_ms)
         steps = test_def.get("steps", [])
+        slug = slugify_test_name(test_def["name"])
         failed = False
-        for step in steps:
-            step_result = await execute_step(page, step, base_url)
+        for i, step in enumerate(steps):
+            step_shot = (
+                os.path.join(screenshot_dir, app, environment, run_id, f"{slug}-step-{i}.png")
+                if "screenshot" in step else None
+            )
+            step_result = await execute_step(page, step, base_url, screenshot_path=step_shot)
             step_log.append(step_result)
             if step_result.status in ("fail", "error"):
                 failed = True
-                slug = slugify_test_name(test_def["name"])
-                screenshot_path = os.path.join(screenshot_dir, app, environment, run_id, f"{slug}.png")
-                os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
-                await page.screenshot(path=screenshot_path)
+                failure_shot = os.path.join(screenshot_dir, app, environment, run_id, f"{slug}.png")
+                os.makedirs(os.path.dirname(failure_shot), exist_ok=True)
+                await page.screenshot(path=failure_shot)
                 result.screenshot = os.path.join(app, environment, run_id, f"{slug}.png")
                 result.error_msg = step_result.error
                 break
