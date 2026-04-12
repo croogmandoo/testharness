@@ -1,0 +1,22 @@
+default_environment: production
+
+environments:
+  staging:
+    label: "Staging"
+  production:
+    label: "Production"
+
+alerts:
+  teams:
+    webhook_url: "$TEAMS_WEBHOOK_URL"
+  # email:
+  #   smtp_host: "mail.company.com"
+  #   smtp_port: 587
+  #   from: "harness@company.com"
+  #   to: ["ops-team@company.com"]
+  #   username: "$SMTP_USERNAME"
+  #   password: "$SMTP_PASSWORD"
+
+browser:
+  headless: true
+  timeout_ms: 30000
