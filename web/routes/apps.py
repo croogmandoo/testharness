@@ -27,7 +27,7 @@ async def apps_list(request: Request):
     apps_dir = get_apps_dir()
     active = mgr.list_apps(apps_dir=apps_dir)
     archived = mgr.list_archived(apps_dir=apps_dir)
-    return templates.TemplateResponse("apps.html", {
+    return templates.TemplateResponse(request, "apps.html", {
         **_nav_ctx(request),
         "active_apps": active,
         "archived_apps": archived,
@@ -36,7 +36,7 @@ async def apps_list(request: Request):
 
 @router.get("/apps/new", response_class=HTMLResponse)
 async def apps_new(request: Request):
-    return templates.TemplateResponse("app_form.html", {
+    return templates.TemplateResponse(request, "app_form.html", {
         **_nav_ctx(request),
         "mode": "create",
         "app_name": "",
@@ -55,7 +55,7 @@ async def apps_edit(request: Request, app_name: str):
     except mgr.AppManagerError:
         raise HTTPException(status_code=404, detail=f"App '{app_name}' not found")
     app_def = yaml.safe_load(raw_yaml) or {}
-    return templates.TemplateResponse("app_form.html", {
+    return templates.TemplateResponse(request, "app_form.html", {
         **_nav_ctx(request),
         "mode": "edit",
         "app_name": app_name,
