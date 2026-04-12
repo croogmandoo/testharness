@@ -41,6 +41,12 @@
       <span class="step-name">{{ step.step }}</span>
       <span class="step-duration">{{ step.duration_ms }}ms</span>
       {% if step.error %}<span class="step-error">{{ step.error }}</span>{% endif %}
+      {% if step.screenshot %}
+      <div style="margin-top:.4rem;">
+        <img src="/screenshots/{{ step.screenshot }}" class="screenshot"
+             style="max-width:320px; border-radius:4px; display:block;">
+      </div>
+      {% endif %}
     </div>
     {% endfor %}
   </div>
