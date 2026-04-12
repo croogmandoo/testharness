@@ -54,6 +54,11 @@ def test_read_app_raw_returns_string_with_unresolved_vars(tmp_path):
     assert "$BASE_URL" in raw
 
 
+def test_read_app_raw_raises_if_not_found(tmp_path):
+    with pytest.raises(AppManagerError, match="not found"):
+        read_app_raw("Missing App", apps_dir=str(tmp_path))
+
+
 def test_update_app_overwrites_file(tmp_path):
     write_app(SAMPLE_APP, apps_dir=str(tmp_path))
     updated = {**SAMPLE_APP, "url": "https://updated.com"}
