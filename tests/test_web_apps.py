@@ -83,7 +83,7 @@ def test_put_api_apps_updates_file_and_returns_200(client_with_app):
 def test_put_api_apps_returns_404_if_not_found(client):
     resp = client.put(
         "/api/apps/nonexistent",
-        json={"app_def": {"app": "x", "url": "https://x.com", "tests": []}},
+        json={"app_def": {"app": "nonexistent", "url": "https://x.com", "tests": []}},
     )
     assert resp.status_code == 404
 
@@ -126,6 +126,15 @@ def test_delete_permanent_removes_file_and_returns_204(client_with_app):
 def test_delete_permanent_returns_404_if_not_archived(client):
     resp = client.delete("/api/apps/nonexistent/permanent")
     assert resp.status_code == 404
+
+
+def test_put_api_apps_returns_422_if_app_name_mismatch(client_with_app):
+    client, apps_dir = client_with_app
+    resp = client.put(
+        "/api/apps/my-api",
+        json={"app_def": {"app": "different-name", "url": "https://x.com", "tests": []}},
+    )
+    assert resp.status_code == 422
 
 
 # --- HTML route tests ---
