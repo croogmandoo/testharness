@@ -41,6 +41,18 @@ async def execute_step(page: Page, step: dict, base_url: str) -> StepResult:
                                   status="fail", duration_ms=_elapsed(), error=err)
             return StepResult(step=f"assert_text {expected}",
                               status="pass", duration_ms=_elapsed())
+        if "wait" in step:
+            ms = int(step["wait"])
+            await page.wait_for_timeout(ms)
+            return StepResult(step=f"wait {ms}ms", status="pass", duration_ms=_elapsed())
+        if "wait_for_url" in step:
+            expected = step["wait_for_url"]
+            await page.wait_for_url(f"**{expected}**")
+            return StepResult(step=f"wait_for_url {expected}", status="pass", duration_ms=_elapsed())
+        if "wait_for_selector" in step:
+            selector = step["wait_for_selector"]
+            await page.wait_for_selector(selector)
+            return StepResult(step=f"wait_for_selector {selector}", status="pass", duration_ms=_elapsed())
         return StepResult(step=str(step), status="error", duration_ms=_elapsed(),
                           error=f"Unknown step type: {list(step.keys())}")
     except Exception as e:
