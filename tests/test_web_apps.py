@@ -209,3 +209,18 @@ def test_get_secrets_returns_200_html(client_with_app):
     resp = client.get("/secrets")
     assert resp.status_code == 200
     assert b"$MY_SECRET" in resp.content
+
+
+def test_get_secrets_does_not_expose_values(client_with_app, monkeypatch):
+    """GET /secrets never exposes actual env var values — only names and set/not-set status."""
+    client, apps_dir = client_with_app
+    monkeypatch.setenv("MY_SECRET", "super-secret-value")
+    (apps_dir / "myapp.yaml").write_text(
+        "app: myapp\nurl: https://example.com\ntests:\n"
+        "  - name: t\n    type: browser\n    steps:\n"
+        "      - fill:\n          field: '#p'\n          value: $MY_SECRET\n"
+    )
+    resp = client.get("/secrets")
+    assert resp.status_code == 200
+    assert b"super-secret-value" not in resp.content
+    assert b"$MY_SECRET" in resp.content

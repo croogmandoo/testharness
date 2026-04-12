@@ -1,6 +1,7 @@
 import os
 import yaml
 from fastapi import APIRouter, Request, HTTPException
+from harness.app_manager import get_known_vars
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -66,7 +67,6 @@ async def apps_edit(request: Request, app_name: str):
 
 @router.get("/secrets", response_class=HTMLResponse)
 async def secrets_page(request: Request):
-    from harness.app_manager import get_known_vars
     from web.main import get_apps_dir
     apps_dir = get_apps_dir()
     var_names = get_known_vars(apps_dir=apps_dir)
