@@ -55,7 +55,10 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
 def main():
     import sys
     import uvicorn
+    from dotenv import load_dotenv
     from harness.config import load_config
+
+    load_dotenv()
 
     # When run as `python -m web.main`, this module is __main__, not web.main.
     # Request handlers do `from web.main import get_db`, which imports a fresh
