@@ -370,6 +370,7 @@ function onStepActionChange(sel) {
     row.insertBefore(makeInput('search step-value', 'text', 'value', 'flex:1; margin-bottom:0;'), rm);
     const sp = document.createElement('span'); sp.style.flex = '1'; row.insertBefore(sp, rm);
   }
+  applyVarDatalist();
 }
 
 function makeInput(cls, type, placeholder, style) {
@@ -390,8 +391,9 @@ varDatalist.id = 'var-options';
 document.body.appendChild(varDatalist);
 
 fetch('/api/vars')
-  .then(function(r) { return r.json(); })
+  .then(function(r) { if (!r.ok) return null; return r.json(); })
   .then(function(data) {
+    if (!data) return;
     data.vars.forEach(function(v) {
       const opt = document.createElement('option');
       opt.value = v;
@@ -399,7 +401,8 @@ fetch('/api/vars')
     });
     // Wire datalist to all existing value inputs
     applyVarDatalist();
-  });
+  })
+  .catch(function() { /* autocomplete unavailable — form still works */ });
 
 function applyVarDatalist() {
   if (!document.getElementById('var-options')) return;
