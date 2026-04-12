@@ -196,3 +196,16 @@ def test_get_vars_returns_empty_when_no_apps(client):
     resp = client.get("/api/vars")
     assert resp.status_code == 200
     assert resp.json() == {"vars": []}
+
+
+def test_get_secrets_returns_200_html(client_with_app):
+    """GET /secrets returns 200 HTML with the secrets dependency table."""
+    client, apps_dir = client_with_app
+    (apps_dir / "myapp.yaml").write_text(
+        "app: myapp\nurl: https://example.com\ntests:\n"
+        "  - name: t\n    type: browser\n    steps:\n"
+        "      - fill:\n          field: '#p'\n          value: $MY_SECRET\n"
+    )
+    resp = client.get("/secrets")
+    assert resp.status_code == 200
+    assert b"$MY_SECRET" in resp.content

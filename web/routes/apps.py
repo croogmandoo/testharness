@@ -62,3 +62,17 @@ async def apps_edit(request: Request, app_name: str):
         "app_def": app_def,
         "raw_yaml": raw_yaml,
     })
+
+
+@router.get("/secrets", response_class=HTMLResponse)
+async def secrets_page(request: Request):
+    from harness.app_manager import get_known_vars
+    from web.main import get_apps_dir
+    apps_dir = get_apps_dir()
+    var_names = get_known_vars(apps_dir=apps_dir)
+    # Check presence only — never read values
+    vars_with_status = [(v, os.environ.get(v[1:]) is not None) for v in var_names]
+    return templates.TemplateResponse(request, "secrets.html", {
+        "vars": vars_with_status,
+        **_nav_ctx(request),
+    })
