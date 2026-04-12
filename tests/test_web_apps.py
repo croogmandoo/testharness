@@ -161,3 +161,66 @@ def test_get_apps_edit_returns_200_html(client_with_app):
 def test_get_apps_edit_returns_404_for_unknown_app(client):
     resp = client.get("/apps/nonexistent/edit")
     assert resp.status_code == 404
+
+
+# --- API /vars endpoint tests ---
+
+
+def test_get_vars_returns_list(client_with_app):
+    """GET /api/vars returns sorted list of $VAR names found in app YAMLs."""
+    client, apps_dir = client_with_app
+    # Add another app with a different var
+    app_def_2 = {
+        "app": "myapp",
+        "url": "https://example.com",
+        "tests": [
+            {
+                "name": "login",
+                "type": "browser",
+                "steps": [{"fill": {"field": "#p", "value": "$SECRET_PASS"}}],
+            }
+        ],
+    }
+    (apps_dir / "myapp.yaml").write_text(yaml.dump(app_def_2))
+    resp = client.get("/api/vars")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "vars" in data
+    assert "$SECRET_PASS" in data["vars"]
+    assert isinstance(data["vars"], list)
+    assert data["vars"] == sorted(data["vars"])
+
+
+def test_get_vars_returns_empty_when_no_apps(client):
+    """GET /api/vars returns empty list when no app YAMLs exist."""
+    resp = client.get("/api/vars")
+    assert resp.status_code == 200
+    assert resp.json() == {"vars": []}
+
+
+def test_get_secrets_returns_200_html(client_with_app):
+    """GET /secrets returns 200 HTML with the secrets dependency table."""
+    client, apps_dir = client_with_app
+    (apps_dir / "myapp.yaml").write_text(
+        "app: myapp\nurl: https://example.com\ntests:\n"
+        "  - name: t\n    type: browser\n    steps:\n"
+        "      - fill:\n          field: '#p'\n          value: $MY_SECRET\n"
+    )
+    resp = client.get("/secrets")
+    assert resp.status_code == 200
+    assert b"$MY_SECRET" in resp.content
+
+
+def test_get_secrets_does_not_expose_values(client_with_app, monkeypatch):
+    """GET /secrets never exposes actual env var values — only names and set/not-set status."""
+    client, apps_dir = client_with_app
+    monkeypatch.setenv("MY_SECRET", "super-secret-value")
+    (apps_dir / "myapp.yaml").write_text(
+        "app: myapp\nurl: https://example.com\ntests:\n"
+        "  - name: t\n    type: browser\n    steps:\n"
+        "      - fill:\n          field: '#p'\n          value: $MY_SECRET\n"
+    )
+    resp = client.get("/secrets")
+    assert resp.status_code == 200
+    assert b"super-secret-value" not in resp.content
+    assert b"$MY_SECRET" in resp.content

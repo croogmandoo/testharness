@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Any, Optional
 from harness.models import Run
 from harness.runner import run_app
+from harness.app_manager import get_known_vars
 
 router = APIRouter(prefix="/api")
 
@@ -67,6 +68,13 @@ async def list_apps(environment: str = "production"):
     from web.main import get_db
     db = get_db()
     return db.get_app_summary(environment)
+
+
+@router.get("/vars")
+async def list_vars():
+    """Return all $VAR names referenced in app YAML files. Never returns values."""
+    from web.main import get_apps_dir
+    return {"vars": get_known_vars(apps_dir=get_apps_dir())}
 
 
 @router.get("/results/{app}/{environment}")
