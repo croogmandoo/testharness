@@ -1,3 +1,4 @@
+import json
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -15,10 +16,10 @@ def generate_task_xml(task_name: str, harness_url: str,
             f.write(xml)
         # Then: schtasks /create /xml task.xml /tn "Harness-Prod"
     """
-    body_parts = [f'"environment": "{environment}", "triggered_by": "api"']
+    payload: dict = {"environment": environment, "triggered_by": "api"}
     if app:
-        body_parts.insert(0, f'"app": "{app}"')
-    body = "{" + ", ".join(body_parts) + "}"
+        payload["app"] = app
+    body = json.dumps(payload)
     command = (
         f'powershell -Command "Invoke-RestMethod -Uri {harness_url}/api/runs '
         f"-Method POST -ContentType 'application/json' -Body '{body}'\""
@@ -26,12 +27,15 @@ def generate_task_xml(task_name: str, harness_url: str,
 
     root = ET.Element("Task", version="1.2",
                       xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task")
+    reg_info = ET.SubElement(root, "RegistrationInfo")
+    ET.SubElement(reg_info, "URI").text = f"\\{task_name}"
     triggers = ET.SubElement(root, "Triggers")
     trigger = ET.SubElement(triggers, "TimeTrigger")
     ET.SubElement(trigger, "StartBoundary").text = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     ET.SubElement(trigger, "Enabled").text = "true"
     repetition = ET.SubElement(trigger, "Repetition")
     ET.SubElement(repetition, "Interval").text = f"PT{interval_minutes}M"
+    ET.SubElement(repetition, "Duration").text = "P1Y"
 
     actions = ET.SubElement(root, "Actions", Context="Author")
     exec_elem = ET.SubElement(actions, "Exec")

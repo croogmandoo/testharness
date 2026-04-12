@@ -5,14 +5,13 @@ from harness.config import ConfigError
 
 # AppTest base class for Python escape-hatch test files
 import os
-from typing import Optional
 
 
 class AppTest:
     """Base class for Python-defined app tests. Subclass and add test_* methods."""
     name: str = ""
     base_url: str = ""
-    environments: dict = {}
+    environments: dict | None = None
 
     def env(self, key: str) -> str:
         val = os.environ.get(key)
@@ -21,8 +20,9 @@ class AppTest:
         return val
 
     def resolve_base_url(self, environment: str) -> str:
-        if self.environments and environment in self.environments:
-            return self.environments[environment]
+        envs = self.environments or {}
+        if envs and environment in envs:
+            return envs[environment]
         if self.base_url:
             return self.base_url
         raise ConfigError(
