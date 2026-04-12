@@ -41,7 +41,7 @@
         <input class="search env-key" type="text" placeholder="staging"
                value="{{ key | e }}" style="max-width:150px; margin-bottom:0;">
         <input class="search env-url" type="text" placeholder="https://staging.example.com"
-               value="{{ url | e }}" style="flex:1; margin-bottom:0;">
+               value="{{ url | e }}" style="flex:1; margin-bottom:0;" list="var-options">
         <button type="button" class="btn btn-sm" style="border-color:#ef4444;color:#f87171;"
                 onclick="this.closest('.env-row').remove()">&#215;</button>
       </div>
@@ -112,10 +112,10 @@
               <input class="search step-fill-field" type="text" placeholder="CSS selector"
                      value="{{ step.fill.field | default('') | e }}" style="flex:1; margin-bottom:0;">
               <input class="search step-fill-value" type="text" placeholder="value"
-                     value="{{ step.fill.value | default('') | e }}" style="flex:1; margin-bottom:0;">
+                     value="{{ step.fill.value | default('') | e }}" style="flex:1; margin-bottom:0;" list="var-options">
               {% else %}
               <input class="search step-value" type="text" placeholder="value"
-                     value="{{ step[action] | default('') | e }}" style="flex:1; margin-bottom:0;">
+                     value="{{ step[action] | default('') | e }}" style="flex:1; margin-bottom:0;" list="var-options">
               <span style="flex:1;"></span>
               {% endif %}
               <button type="button" class="btn btn-sm" style="border-color:#ef4444;color:#f87171;"
@@ -275,6 +275,7 @@ function addEnvRow() {
   const rm = makeRemoveBtn(function() { row.remove(); });
   row.appendChild(k); row.appendChild(v); row.appendChild(rm);
   container.appendChild(row);
+  applyVarDatalist();
 }
 
 function addTestBlock() {
@@ -296,6 +297,7 @@ function addTestBlock() {
   block.appendChild(hdr);
   block.appendChild(makeAvailFields()); block.appendChild(makeApiFields()); block.appendChild(makeBrowserFields());
   container.appendChild(block);
+  applyVarDatalist();
 }
 
 function makeAvailFields() {
@@ -339,6 +341,7 @@ function addStepRow(btn) {
   const rm = makeRemoveBtn(function() { row.remove(); });
   row.appendChild(sel); row.appendChild(vi); row.appendChild(sp); row.appendChild(rm);
   sc.appendChild(row);
+  applyVarDatalist();
 }
 
 function makeStepActionSelect() {
@@ -380,5 +383,34 @@ function makeRemoveBtn(fn) {
 }
 function showBanner(msg) { const el = document.getElementById('error-banner'); el.textContent = msg; el.style.display = 'block'; }
 function clearBanner() { const el = document.getElementById('error-banner'); el.textContent = ''; el.style.display = 'none'; }
+
+// Populate var autocomplete datalist from /api/vars
+const varDatalist = document.createElement('datalist');
+varDatalist.id = 'var-options';
+document.body.appendChild(varDatalist);
+
+fetch('/api/vars')
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    data.vars.forEach(function(v) {
+      const opt = document.createElement('option');
+      opt.value = v;
+      varDatalist.appendChild(opt);
+    });
+    // Wire datalist to all existing value inputs
+    applyVarDatalist();
+  });
+
+function applyVarDatalist() {
+  if (!document.getElementById('var-options')) return;
+  // Fill step value fields
+  document.querySelectorAll('.step-fill-value, .step-value').forEach(function(el) {
+    el.setAttribute('list', 'var-options');
+  });
+  // Environment URL fields
+  document.querySelectorAll('.env-url').forEach(function(el) {
+    el.setAttribute('list', 'var-options');
+  });
+}
 </script>
 {% endblock %}
