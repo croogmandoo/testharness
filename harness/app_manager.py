@@ -17,10 +17,15 @@ def slugify_app_name(name: str) -> str:
 
 
 def app_file_path(name: str, apps_dir: str = "apps") -> Path:
-    return Path(apps_dir) / f"{slugify_app_name(name)}.yaml"
+    slug = slugify_app_name(name)
+    if not slug:
+        raise AppManagerError(f"App name '{name}' produces an empty slug")
+    return Path(apps_dir) / f"{slug}.yaml"
 
 
 def write_app(app_def: dict, apps_dir: str = "apps") -> Path:
+    if "app" not in app_def:
+        raise AppManagerError("app_def must have an 'app' key")
     Path(apps_dir).mkdir(parents=True, exist_ok=True)
     path = app_file_path(app_def["app"], apps_dir=apps_dir)
     if path.exists():
@@ -51,6 +56,8 @@ def archive_app(app_name: str, apps_dir: str = "apps") -> Path:
     archived_dir = Path(apps_dir) / "archived"
     archived_dir.mkdir(parents=True, exist_ok=True)
     dest = archived_dir / src.name
+    if dest.exists():
+        raise AppManagerError(f"Archived file already exists at {dest}")
     shutil.move(str(src), str(dest))
     return dest
 
@@ -61,6 +68,8 @@ def restore_app(app_name: str, apps_dir: str = "apps") -> Path:
     if not src.exists():
         raise AppManagerError(f"App '{app_name}' not found in archived at {src}")
     dest = Path(apps_dir) / src.name
+    if dest.exists():
+        raise AppManagerError(f"App file already exists at {dest}")
     shutil.move(str(src), str(dest))
     return dest
 

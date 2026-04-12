@@ -131,3 +131,25 @@ def test_list_archived_returns_archived_apps(tmp_path):
     archived = list_archived(apps_dir=str(tmp_path))
     assert len(archived) == 1
     assert archived[0]["app"] == "My API"
+
+
+def test_write_app_raises_if_no_app_key(tmp_path):
+    with pytest.raises(AppManagerError, match="app"):
+        write_app({"url": "https://example.com"}, apps_dir=str(tmp_path))
+
+
+def test_archive_app_raises_if_already_archived(tmp_path):
+    write_app(SAMPLE_APP, apps_dir=str(tmp_path))
+    archive_app("My API", apps_dir=str(tmp_path))
+    # Restore it so we can re-archive, then manually put the archived version back
+    restore_app("My API", apps_dir=str(tmp_path))
+    archive_app("My API", apps_dir=str(tmp_path))
+    # Now write a new copy and try to archive when archived/ already has the file
+    write_app(SAMPLE_APP, apps_dir=str(tmp_path))
+    with pytest.raises(AppManagerError):
+        archive_app("My API", apps_dir=str(tmp_path))
+
+
+def test_slugify_produces_empty_string_raises(tmp_path):
+    with pytest.raises(AppManagerError):
+        app_file_path("!!!", apps_dir=str(tmp_path))
