@@ -181,4 +181,13 @@ class Database:
         for row in last_runs:
             if row["app"] in apps:
                 apps[row["app"]]["last_run"] = row["last_run"]
+        with self._connect() as conn:
+            active_rows = conn.execute(
+                "SELECT app, id FROM runs "
+                "WHERE environment=? AND status IN ('pending','running')",
+                (environment,)
+            ).fetchall()
+        active_map = {row["app"]: row["id"] for row in active_rows}
+        for app_dict in apps.values():
+            app_dict["active_run_id"] = active_map.get(app_dict["app"])
         return list(apps.values())
