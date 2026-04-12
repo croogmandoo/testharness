@@ -106,12 +106,9 @@ def get_known_vars(apps_dir: str = "apps") -> list:
         return []
     pattern = re.compile(r'\$([A-Z_][A-Z0-9_]*)')
     found = set()
-    for yaml_file in apps_path.rglob("*.yaml"):
-        content = yaml_file.read_text(encoding="utf-8")
-        for match in pattern.finditer(content):
-            found.add(f"${match.group(1)}")
-    for yaml_file in apps_path.rglob("*.yml"):
-        content = yaml_file.read_text(encoding="utf-8")
-        for match in pattern.finditer(content):
-            found.add(f"${match.group(1)}")
+    for ext in ("*.yaml", "*.yml"):
+        for yaml_file in apps_path.rglob(ext):
+            content = yaml_file.read_text(encoding="utf-8")
+            for match in pattern.finditer(content):
+                found.add(f"${match.group(1)}")
     return sorted(found)
