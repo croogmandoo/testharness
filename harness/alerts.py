@@ -28,6 +28,8 @@ def _send_email(smtp_config: dict, subject: str, body: str) -> None:
         s.send_message(msg)
 
 async def dispatch_alerts(alerts: list, alerts_config: dict) -> None:
+    if not alerts_config:
+        return
     teams_cfg = alerts_config.get("teams")
     email_cfg = alerts_config.get("email")
     for alert_type, app, environment, test_name, error_msg in alerts:
