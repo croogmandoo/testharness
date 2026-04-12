@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="breadcrumb">
+  <a href="/?environment={{ environment }}">← Dashboard</a> / {{ app }}
+</div>
+
+{% if selected_run %}
+<div class="run-meta">
+  <span>Run: {{ selected_run.id[:8] }}</span>
+  <span>Status: <strong>{{ selected_run.status }}</strong></span>
+  <span>Started: {{ selected_run.started_at or "—" }}</span>
+  <button class="btn btn-sm" onclick="triggerRun()">Re-run All</button>
+</div>
+
+{% for tr in test_results %}
+<div class="test-card {% if tr.status == 'fail' or tr.status == 'error' %}test-card--fail{% elif tr.status == 'pass' %}test-card--pass{% endif %}">
+  <div class="test-card-header">
+    <span class="test-name">{{ tr.test_name }}</span>
+    <span class="test-status">
+      {% if tr.status == 'pass' %}✓ Pass{% elif tr.status == 'fail' %}✗ Fail{% else %}⚠ Error{% endif %}
+    </span>
+    <span class="test-duration">{{ tr.duration_ms }}ms</span>
+  </div>
+
+  {% if tr.error_msg %}
+  <div class="error-box">{{ tr.error_msg }}</div>
+  {% endif %}
+
+  {% if tr.screenshot %}
+  <div class="screenshot-wrap">
+    <div class="screenshot-label">Screenshot at failure</div>
+    <img src="/screenshots/{{ tr.screenshot }}" alt="Screenshot" class="screenshot">
+  </div>
+  {% endif %}
+
+  {% if tr.step_log %}
+  <div class="step-log">
+    {% for step in tr.step_log %}
+    <div class="step step--{{ step.status }}">
+      <span class="step-icon">{% if step.status == 'pass' %}✓{% else %}✗{% endif %}</span>
+      <span class="step-name">{{ step.step }}</span>
+      <span class="step-duration">{{ step.duration_ms }}ms</span>
+      {% if step.error %}<span class="step-error">{{ step.error }}</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if history[tr.test_name] is defined %}
+  <div class="history">
+    {% for s in history[tr.test_name] %}
+      <span class="history-dot history-dot--{{ s }}" title="{{ s }}"></span>
+    {% endfor %}
+    <span class="history-label">recent runs</span>
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+
+{% else %}
+<p>No runs yet for {{ app }} ({{ environment }}). <button class="btn" onclick="triggerRun()">Run now</button></p>
+{% endif %}
+
+<script>
+const APP = "{{ app }}";
+const ENV = "{{ environment }}";
+async function triggerRun() {
+  await fetch("/api/runs", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({app: APP, environment: ENV, triggered_by: "ui"})
+  });
+  setTimeout(() => location.reload(), 3000);
+}
+</script>
+{% endblock %}

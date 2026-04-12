@@ -1,0 +1,74 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, sans-serif; background: #0f1117; color: #e2e8f0; font-size: 14px; }
+a { color: #60a5fa; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.nav { display: flex; align-items: center; justify-content: space-between;
+       padding: .75rem 1.5rem; background: #1a1f2e; border-bottom: 1px solid #2d3748; }
+.nav-brand { font-weight: 700; font-size: 1rem; color: #e2e8f0; }
+.env-switcher { display: flex; gap: .5rem; }
+.env-btn { padding: .3rem .75rem; border-radius: 4px; border: 1px solid #4a5568;
+           color: #a0aec0; font-size: .8rem; cursor: pointer; }
+.env-btn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+
+.main { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+h1 { font-size: 1.25rem; font-weight: 600; }
+
+.search { width: 100%; padding: .5rem .75rem; background: #1a1f2e; border: 1px solid #2d3748;
+          border-radius: 6px; color: #e2e8f0; margin-bottom: 1rem; font-size: .875rem; }
+
+.table { width: 100%; border-collapse: collapse; }
+.table th { text-align: left; padding: .6rem .75rem; color: #718096;
+             font-size: .75rem; text-transform: uppercase; border-bottom: 1px solid #2d3748; }
+.table td { padding: .65rem .75rem; border-bottom: 1px solid #1e2535; }
+.row-fail { background: rgba(239,68,68,.05); }
+.empty { text-align: center; color: #718096; padding: 2rem; }
+
+.badge { padding: .2rem .5rem; border-radius: 4px; font-size: .75rem; font-weight: 600; }
+.badge-pass { background: rgba(34,197,94,.15); color: #4ade80; }
+.badge-fail { background: rgba(239,68,68,.15); color: #f87171; }
+.badge-unknown { background: rgba(148,163,184,.1); color: #94a3b8; }
+
+.btn { padding: .35rem .75rem; border-radius: 5px; border: 1px solid #3b82f6;
+       background: transparent; color: #60a5fa; cursor: pointer; font-size: .8rem; }
+.btn:hover { background: #3b82f6; color: #fff; }
+.btn-primary { background: #3b82f6; color: #fff; }
+.btn-sm { padding: .2rem .5rem; font-size: .75rem; }
+
+.breadcrumb { margin-bottom: 1rem; color: #718096; font-size: .875rem; }
+.run-meta { display: flex; gap: 1.5rem; align-items: center; margin-bottom: 1rem;
+            padding: .75rem; background: #1a1f2e; border-radius: 6px; font-size: .875rem; }
+
+.test-card { border: 1px solid #2d3748; border-radius: 8px; margin-bottom: 1rem; overflow: hidden; }
+.test-card--pass { border-color: #166534; }
+.test-card--fail { border-color: #7f1d1d; }
+.test-card-header { display: flex; align-items: center; gap: 1rem; padding: .75rem 1rem;
+                     background: #1a1f2e; }
+.test-name { font-weight: 600; flex: 1; }
+.test-status { font-size: .8rem; }
+.test-duration { color: #718096; font-size: .75rem; margin-left: auto; }
+
+.error-box { padding: .75rem 1rem; background: #3b0f0f; border-top: 1px solid #7f1d1d;
+             font-family: monospace; font-size: .8rem; color: #fca5a5; }
+
+.screenshot-wrap { padding: .75rem 1rem; border-top: 1px solid #2d3748; }
+.screenshot-label { font-size: .75rem; color: #718096; margin-bottom: .5rem; }
+.screenshot { max-width: 100%; border-radius: 4px; border: 1px solid #2d3748; }
+
+.step-log { padding: .5rem 1rem; border-top: 1px solid #2d3748; }
+.step { display: flex; align-items: baseline; gap: .5rem; padding: .25rem 0;
+        font-family: monospace; font-size: .78rem; }
+.step--pass .step-icon { color: #4ade80; }
+.step--fail .step-icon, .step--error .step-icon { color: #f87171; }
+.step-name { flex: 1; }
+.step-duration { color: #718096; font-size: .7rem; }
+.step-error { color: #f87171; font-size: .75rem; }
+
+.history { display: flex; align-items: center; gap: .25rem; padding: .6rem 1rem;
+           border-top: 1px solid #2d3748; }
+.history-dot { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+.history-dot--pass { background: #166534; }
+.history-dot--fail { background: #7f1d1d; }
+.history-dot--error { background: #78350f; }
+.history-label { font-size: .7rem; color: #718096; margin-left: .25rem; }

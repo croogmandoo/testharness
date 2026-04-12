@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Testing Harness</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav class="nav">
+    <a href="/" class="nav-brand">Testing Harness</a>
+    <div class="env-switcher">
+      {% for key, env in environments.items() %}
+        <a href="?environment={{ key }}"
+           class="env-btn {% if environment == key %}active{% endif %}">
+          {{ env.label }}
+        </a>
+      {% endfor %}
+    </div>
+  </nav>
+  <main class="main">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

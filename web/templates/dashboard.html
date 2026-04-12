@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="toolbar">
+  <h1>Application Status</h1>
+  <button class="btn btn-primary" onclick="runAll()">Run All</button>
+</div>
+
+<input class="search" type="text" placeholder="Search apps…" oninput="filterTable(this.value)">
+
+<table class="table" id="app-table">
+  <thead>
+    <tr>
+      <th>Application</th>
+      <th>Status</th>
+      <th>Tests</th>
+      <th>Last Run</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in summary %}
+    <tr class="{% if row.failing > 0 %}row-fail{% endif %}" data-app="{{ row.app }}">
+      <td><a href="/app/{{ row.app }}/{{ environment }}">{{ row.app }}</a></td>
+      <td>
+        {% if row.failing > 0 %}
+          <span class="badge badge-fail">✗ Fail</span>
+        {% elif row.unknown == row.total %}
+          <span class="badge badge-unknown">— Unknown</span>
+        {% else %}
+          <span class="badge badge-pass">✓ Pass</span>
+        {% endif %}
+      </td>
+      <td>{{ row.passing }}/{{ row.total }}</td>
+      <td>{{ row.last_run or "—" }}</td>
+      <td>
+        <button class="btn btn-sm" onclick="triggerRun('{{ row.app }}')">Run</button>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="empty">No apps configured. Add YAML files to the apps/ directory.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<script>
+const ENV = "{{ environment }}";
+
+async function triggerRun(app) {
+  const btn = event.target;
+  btn.textContent = "Running…";
+  btn.disabled = true;
+  const resp = await fetch("/api/runs", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({app, environment: ENV, triggered_by: "ui"})
+  });
+  if (!resp.ok) {
+    const err = await resp.json();
+    alert(err.detail || "Failed to start run");
+    btn.textContent = "Run";
+    btn.disabled = false;
+  } else {
+    setTimeout(() => location.reload(), 3000);
+  }
+}
+
+async function runAll() {
+  await fetch("/api/runs", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({environment: ENV, triggered_by: "ui"})
+  });
+  setTimeout(() => location.reload(), 3000);
+}
+
+function filterTable(query) {
+  document.querySelectorAll("#app-table tbody tr[data-app]").forEach(row => {
+    row.style.display = row.dataset.app.toLowerCase().includes(query.toLowerCase()) ? "" : "none";
+  });
+}
+</script>
+{% endblock %}
