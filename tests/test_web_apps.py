@@ -187,8 +187,8 @@ def test_get_vars_returns_list(client_with_app):
     data = resp.json()
     assert "vars" in data
     assert "$SECRET_PASS" in data["vars"]
-    # my-api app doesn't have any vars, so only SECRET_PASS should be found
     assert isinstance(data["vars"], list)
+    assert data["vars"] == sorted(data["vars"])
 
 
 def test_get_vars_returns_empty_when_no_apps(client):
