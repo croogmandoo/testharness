@@ -11,12 +11,26 @@ templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), ".
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, environment: str = None):
-    from web.main import get_db, get_config
+    from web.main import get_db, get_config, get_apps
     db = get_db()
     config = get_config()
     env = environment or config.get("default_environment", "production")
     envs = config.get("environments", {})
     summary = db.get_app_summary(env)
+
+    # Ensure every configured app appears, even if it has never been run
+    known = {row["app"] for row in summary}
+    for app_def in get_apps():
+        if app_def["app"] not in known:
+            summary.append({
+                "app": app_def["app"],
+                "total": 0,
+                "passing": 0,
+                "failing": 0,
+                "unknown": 0,
+                "last_run": None,
+            })
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "summary": summary,
