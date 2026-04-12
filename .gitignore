@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .superpowers/
+harness-task-*.xml
+*.xml

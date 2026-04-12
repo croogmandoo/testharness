@@ -53,8 +53,17 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
 
 
 def main():
+    import sys
     import uvicorn
     from harness.config import load_config
+
+    # When run as `python -m web.main`, this module is __main__, not web.main.
+    # Request handlers do `from web.main import get_db`, which imports a fresh
+    # web.main module with _db=None.  Fix: register __main__ as web.main so
+    # both names point to the same module object.
+    if __name__ == "__main__" or sys.modules.get("web.main") is None:
+        sys.modules["web.main"] = sys.modules[__name__]
+
     config = load_config("config.yaml")
     app = create_app(config=config)
     uvicorn.run(app, host="0.0.0.0", port=8000)
