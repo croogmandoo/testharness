@@ -17,24 +17,31 @@ YAML files in `apps/` remain the single source of truth. The UI reads and writes
 
 Archived apps are moved to `apps/archived/` and can be restored. The in-memory `_apps` snapshot in `web/main.py` is reloaded after any mutation so the dashboard reflects changes immediately without a server restart.
 
+**Important:** The edit form reads raw YAML from disk (via `app_manager`), not from `get_apps()`. The `_apps` list holds resolved data (env vars substituted), which is wrong for editing.
+
 ---
 
 ## API Endpoints
 
-Three new REST endpoints added to `web/routes/api.py`:
+### Existing endpoint (unchanged)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/apps` | Create a new app — writes YAML file to `apps/` |
-| `PUT` | `/api/apps/{app_name}` | Update an existing app — overwrites its YAML file |
-| `DELETE` | `/api/apps/{app_name}` | Archive an app — moves file to `apps/archived/` |
+`GET /api/apps?environment=...` already exists in `web/routes/api.py` and returns database-backed app summary rows (pass/fail counts, last run). It is **not modified** by this feature.
 
-Additional endpoints for archive management:
+### New mutation endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/apps/{app_name}/restore` | Restore an archived app — moves file back to `apps/` |
-| `DELETE` | `/api/apps/{app_name}/permanent` | Permanently delete an archived app |
+Added to `web/routes/api.py`:
+
+| Method | Path | Body | Response |
+|--------|------|------|----------|
+| `POST` | `/api/apps` | `{app_def: dict}` | 201 `{app: str, file: str}` |
+| `PUT` | `/api/apps/{app_name}` | `{app_def: dict}` | 200 `{app: str, file: str}` |
+| `DELETE` | `/api/apps/{app_name}` | — | 200 `{archived: str}` |
+| `POST` | `/api/apps/{app_name}/restore` | — | 200 `{app: str, file: str}` |
+| `DELETE` | `/api/apps/{app_name}/permanent` | — | 204 (no body) |
+
+All mutation endpoints call `reload_apps()` after the filesystem operation succeeds.
+
+Error responses: 404 if app not found, 409 if duplicate on create, 422 for validation errors.
 
 ---
 
@@ -50,11 +57,11 @@ Lists all active apps and archived apps. Linked from the nav bar.
 
 ### `/apps/new` — Create App
 
-Form for creating a new app. On save, writes a new YAML file and redirects to `/apps`.
+Form for creating a new app. On save, calls `POST /api/apps` and redirects to `/apps`.
 
 ### `/apps/{app_name}/edit` — Edit App
 
-Same form as create, pre-filled with the existing app's data. On save, overwrites the YAML file and redirects to `/apps`.
+Same form as create, pre-filled with the **raw YAML file contents** read from disk (not from `get_apps()`). On save, calls `PUT /api/apps/{app_name}` and redirects to `/apps`.
 
 ---
 
@@ -83,9 +90,9 @@ Fill steps have two value fields: `field` (CSS selector) and `value`.
 
 ### Advanced Mode
 
-A `<textarea>` pre-filled with the YAML generated from the Simple mode fields (or the raw file contents on edit). Saved as-is to disk. YAML parse errors are shown inline before saving.
+A `<textarea>` pre-filled with the YAML generated from the Simple mode fields (on create) or the raw file contents read from disk (on edit). Saved as-is to disk. YAML parse errors are shown inline before saving.
 
-Switching from Simple → Advanced pre-fills the textarea. Switching from Advanced → Simple is not supported (data loss warning shown).
+Switching from Simple → Advanced pre-fills the textarea with the current form state serialised to YAML. Switching from Advanced → Simple is not supported (a warning is shown).
 
 ---
 
@@ -110,26 +117,37 @@ Errors shown inline above the form field or as a banner.
 
 ## `harness/app_manager.py`
 
-Owns all filesystem operations. Functions:
+Owns all filesystem operations. Raises `AppManagerError` on failure.
+
+**No concurrency locking is implemented.** Concurrent writes (e.g. a UI save racing with a background test reload) may produce inconsistent reads. This is an accepted limitation for a single-operator tool.
+
+`list_apps()` and `list_archived()` delegate to `harness.loader.load_apps()` for consistency — they return the same dict shape (including `_source`, `_type`, and resolved env vars). The edit form does **not** use these — it reads the raw file from disk directly to preserve unresolved `$VAR` placeholders.
 
 ```python
+class AppManagerError(Exception):
+    pass
+
 def slugify_app_name(name: str) -> str
     # "My API" → "my-api"
 
 def app_file_path(name: str, apps_dir: str = "apps") -> Path
-    # returns apps/my-api.yaml
+    # returns Path("apps/my-api.yaml")
 
 def list_apps(apps_dir: str = "apps") -> list[dict]
-    # returns parsed YAML for all .yaml/.yml in apps/ (not archived/)
+    # delegates to load_apps(apps_dir); excludes apps/archived/
 
 def list_archived(apps_dir: str = "apps") -> list[dict]
-    # returns parsed YAML for all files in apps/archived/
+    # delegates to load_apps(apps_dir + "/archived")
 
-def create_app(app_def: dict, apps_dir: str = "apps") -> Path
+def write_app(app_def: dict, apps_dir: str = "apps") -> Path
     # validates no conflict, writes YAML file, returns path
+    # (named write_app to avoid collision with web.main.create_app)
 
 def update_app(app_name: str, app_def: dict, apps_dir: str = "apps") -> Path
-    # overwrites existing file, raises if not found
+    # overwrites existing file, raises AppManagerError if not found
+
+def read_app_raw(app_name: str, apps_dir: str = "apps") -> str
+    # returns raw YAML string from disk (unresolved env vars preserved)
 
 def archive_app(app_name: str, apps_dir: str = "apps") -> Path
     # moves file to apps/archived/, returns new path
@@ -141,7 +159,26 @@ def delete_archived_app(app_name: str, apps_dir: str = "apps") -> None
     # permanently deletes from apps/archived/
 ```
 
-All functions raise `AppManagerError` (a new exception class) on failure.
+---
+
+## Reload Behaviour
+
+After any create, update, archive, or restore operation, the API route calls `reload_apps()` from `web/main.py` to refresh `_apps`.
+
+```python
+# web/main.py
+def reload_apps(apps_dir: str = "apps") -> None:
+    global _apps
+    _apps = load_apps(apps_dir) if os.path.isdir(apps_dir) else []
+```
+
+**Module identity note:** `web/main.py` already registers itself as `sys.modules["web.main"]` when run as `__main__` (see existing code). Routes in `web/routes/api.py` must import `reload_apps` as:
+
+```python
+from web.main import reload_apps
+```
+
+This works correctly because the module-aliasing trick in `main()` ensures `sys.modules["web.main"]` always points to the live module object with the real `_apps` global.
 
 ---
 
@@ -163,16 +200,16 @@ harness/
 
 web/
 ├── routes/
-│   ├── apps.py             ← new: HTML routes
-│   └── api.py              ← update: CRUD endpoints
+│   ├── apps.py             ← new: HTML routes (GET /apps, /apps/new, /apps/{name}/edit)
+│   └── api.py              ← update: add mutation endpoints
 ├── templates/
 │   ├── base.html           ← update: Apps nav link
-│   ├── apps.html           ← new: management page
-│   └── app_form.html       ← new: create/edit form
-└── main.py                 ← update: register router, reload _apps after mutations
+│   ├── apps.html           ← new: active + archived app tables
+│   └── app_form.html       ← new: shared create/edit form
+└── main.py                 ← update: register apps router, add reload_apps()
 
 apps/
-└── archived/               ← new directory (created on first archive)
+└── archived/               ← created on first archive operation
 
 tests/
 ├── test_app_manager.py     ← new
@@ -181,35 +218,26 @@ tests/
 
 ---
 
-## Reload Behaviour
-
-After any create, update, archive, or restore operation, `web/main.py`'s `_apps` list is refreshed by calling `load_apps()` again. This keeps the dashboard in sync without requiring a server restart.
-
-A `reload_apps()` helper function is added to `web/main.py`:
-
-```python
-def reload_apps(apps_dir: str = "apps") -> None:
-    global _apps
-    _apps = load_apps(apps_dir) if os.path.isdir(apps_dir) else []
-```
-
----
-
 ## Testing
 
 `tests/test_app_manager.py` — unit tests using `tmp_path`:
-- Create app writes correct YAML
-- Create app raises on duplicate name
-- Update app overwrites file
-- Archive moves file to `archived/`
-- Restore moves file back
-- Permanent delete removes file
+- `write_app` writes correct YAML file
+- `write_app` raises `AppManagerError` on duplicate name
+- `read_app_raw` returns raw YAML with unresolved `$VAR` placeholders
+- `update_app` overwrites existing file
+- `update_app` raises `AppManagerError` if app not found
+- `archive_app` moves file to `archived/` subdirectory
+- `restore_app` moves file back from `archived/`
+- `delete_archived_app` permanently removes file
 - All error cases raise `AppManagerError`
 
 `tests/test_web_apps.py` — FastAPI `TestClient` tests:
-- `POST /api/apps` creates file and returns 201
-- `POST /api/apps` returns 409 on duplicate
-- `PUT /api/apps/{name}` updates file
-- `DELETE /api/apps/{name}` archives app
-- `POST /api/apps/{name}/restore` restores app
-- GET `/apps` returns 200 HTML
+- `GET /apps` returns 200 HTML
+- `GET /apps/new` returns 200 HTML
+- `GET /apps/{name}/edit` returns 200 HTML with app data pre-filled
+- `POST /api/apps` creates file and returns 201 with `{app, file}`
+- `POST /api/apps` returns 409 on duplicate name
+- `PUT /api/apps/{name}` updates file and returns 200
+- `DELETE /api/apps/{name}` archives app and returns 200
+- `POST /api/apps/{name}/restore` restores app and returns 200
+- `DELETE /api/apps/{name}/permanent` permanently deletes and returns 204
