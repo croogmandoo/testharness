@@ -96,6 +96,17 @@ class Database:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def get_results_for_app(self, app: str, environment: str, limit: int = 20) -> list:
+        conn = sqlite3.connect(self.path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM test_results WHERE app=? AND environment=? "
+            "ORDER BY finished_at DESC LIMIT ?",
+            (app, environment, limit)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
     def upsert_app_state(self, state: AppState) -> None:
         with self._connect() as conn:
             conn.execute(

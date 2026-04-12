@@ -73,14 +73,5 @@ async def list_apps(environment: str = "production"):
 @router.get("/results/{app}/{environment}")
 async def get_results(app: str, environment: str, limit: int = 20):
     from web.main import get_db
-    import sqlite3
     db = get_db()
-    conn = sqlite3.connect(db.path)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        "SELECT * FROM test_results WHERE app=? AND environment=? "
-        "ORDER BY finished_at DESC LIMIT ?",
-        (app, environment, limit)
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    return db.get_results_for_app(app, environment, limit)

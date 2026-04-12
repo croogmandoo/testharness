@@ -6,7 +6,7 @@ from harness.loader import load_apps
 
 _db: Database = None
 _config: dict = {}
-_apps_dir: str = "apps"
+_apps: list = []
 
 
 def get_db() -> Database:
@@ -18,13 +18,13 @@ def get_config() -> dict:
 
 
 def get_apps() -> list:
-    return load_apps(_apps_dir) if os.path.isdir(_apps_dir) else []
+    return _apps
 
 
 def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps") -> FastAPI:
-    global _db, _config, _apps_dir
+    global _db, _config, _apps
     _config = config or {}
-    _apps_dir = apps_dir
+    _apps = load_apps(apps_dir) if os.path.isdir(apps_dir) else []
 
     if db is None:
         os.makedirs("data", exist_ok=True)

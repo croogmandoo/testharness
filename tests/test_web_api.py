@@ -14,9 +14,10 @@ def db(tmp_path):
 
 @pytest.fixture
 def client(db, tmp_path):
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
     config = {"default_environment": "production", "environments": {"production": {"label": "Production"}}}
-    app = create_app(db=db, config=config, apps_dir=str(tmp_path / "apps"))
-    (tmp_path / "apps").mkdir()
+    app = create_app(db=db, config=config, apps_dir=str(apps_dir))
     return TestClient(app)
 
 
@@ -26,15 +27,18 @@ def test_get_apps_empty(client):
     assert resp.json() == []
 
 
-def test_trigger_run_returns_run_id(client, db, tmp_path):
-    # Create a minimal YAML app
+def test_trigger_run_returns_run_id(db, tmp_path):
     import yaml
     apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
     (apps_dir / "myapp.yaml").write_text(yaml.dump({
         "app": "myapp", "url": "https://example.com",
         "tests": [{"name": "health", "type": "api", "endpoint": "/h",
                    "method": "GET", "expect_status": 200}]
     }))
+    config = {"default_environment": "production", "environments": {"production": {"label": "Production"}}}
+    app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    client = TestClient(app)
     with patch("web.routes.api.run_app", new=AsyncMock(return_value="run-123")):
         resp = client.post("/api/runs", json={"app": "myapp", "environment": "production"})
     assert resp.status_code == 202
@@ -62,3 +66,18 @@ def test_get_run_status(client, db):
 def test_get_run_not_found(client):
     resp = client.get("/api/runs/nonexistent")
     assert resp.status_code == 404
+
+
+def test_get_results_for_app(client, db):
+    from harness.models import Run, TestResult
+    run = Run(app="myapp", environment="production", triggered_by="api")
+    db.insert_run(run)
+    tr = TestResult(run_id=run.id, app="myapp", environment="production",
+                    test_name="health", status="pass", duration_ms=100)
+    db.insert_test_result(tr)
+    resp = client.get("/api/results/myapp/production")
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) == 1
+    assert results[0]["test_name"] == "health"
+    assert results[0]["status"] == "pass"
