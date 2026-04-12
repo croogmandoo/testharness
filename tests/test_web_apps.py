@@ -161,3 +161,38 @@ def test_get_apps_edit_returns_200_html(client_with_app):
 def test_get_apps_edit_returns_404_for_unknown_app(client):
     resp = client.get("/apps/nonexistent/edit")
     assert resp.status_code == 404
+
+
+# --- API /vars endpoint tests ---
+
+
+def test_get_vars_returns_list(client_with_app):
+    """GET /api/vars returns sorted list of $VAR names found in app YAMLs."""
+    client, apps_dir = client_with_app
+    # Add another app with a different var
+    app_def_2 = {
+        "app": "myapp",
+        "url": "https://example.com",
+        "tests": [
+            {
+                "name": "login",
+                "type": "browser",
+                "steps": [{"fill": {"field": "#p", "value": "$SECRET_PASS"}}],
+            }
+        ],
+    }
+    (apps_dir / "myapp.yaml").write_text(yaml.dump(app_def_2))
+    resp = client.get("/api/vars")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "vars" in data
+    assert "$SECRET_PASS" in data["vars"]
+    # my-api app doesn't have any vars, so only SECRET_PASS should be found
+    assert isinstance(data["vars"], list)
+
+
+def test_get_vars_returns_empty_when_no_apps(client):
+    """GET /api/vars returns empty list when no app YAMLs exist."""
+    resp = client.get("/api/vars")
+    assert resp.status_code == 200
+    assert resp.json() == {"vars": []}
