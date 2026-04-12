@@ -21,9 +21,12 @@ def resolve_base_url(app: dict, environment: str) -> str:
     )
 
 def load_apps(apps_dir: str = "apps") -> list:
-    pattern = os.path.join(apps_dir, "*.yaml")
+    paths = sorted(
+        glob.glob(os.path.join(apps_dir, "*.yaml")) +
+        glob.glob(os.path.join(apps_dir, "*.yml"))
+    )
     apps = []
-    for path in sorted(glob.glob(pattern)):
+    for path in paths:
         with open(path) as f:
             raw = yaml.safe_load(f)
         resolved = resolve_env_vars(raw)
