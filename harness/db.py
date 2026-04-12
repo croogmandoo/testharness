@@ -110,15 +110,13 @@ class Database:
         if not test_names:
             return {}
         placeholders = ",".join("?" * len(test_names))
-        conn = sqlite3.connect(self.path)
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            f"SELECT test_name, status FROM test_results "
-            f"WHERE app=? AND environment=? AND test_name IN ({placeholders}) "
-            f"ORDER BY finished_at DESC",
-            [app, environment] + list(test_names)
-        ).fetchall()
-        conn.close()
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT test_name, status FROM test_results "
+                f"WHERE app=? AND environment=? AND test_name IN ({placeholders}) "
+                f"ORDER BY finished_at DESC",
+                [app, environment] + list(test_names)
+            ).fetchall()
         result = {name: [] for name in test_names}
         for row in rows:
             hist = result[row["test_name"]]
