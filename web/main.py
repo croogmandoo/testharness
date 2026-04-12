@@ -7,6 +7,7 @@ from harness.loader import load_apps
 _db: Database = None
 _config: dict = {}
 _apps: list = []
+_apps_dir: str = "apps"
 
 
 def get_db() -> Database:
@@ -21,9 +22,19 @@ def get_apps() -> list:
     return _apps
 
 
+def get_apps_dir() -> str:
+    return _apps_dir
+
+
+def reload_apps() -> None:
+    global _apps
+    _apps = load_apps(_apps_dir) if os.path.isdir(_apps_dir) else []
+
+
 def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps") -> FastAPI:
-    global _db, _config, _apps
+    global _db, _config, _apps, _apps_dir
     _config = config or {}
+    _apps_dir = apps_dir
     _apps = load_apps(apps_dir) if os.path.isdir(apps_dir) else []
 
     if db is None:
@@ -40,6 +51,9 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
 
     from web.routes.dashboard import router as dashboard_router
     app.include_router(dashboard_router)
+
+    from web.routes.apps import router as apps_router
+    app.include_router(apps_router)
 
     screenshots_dir = "data/screenshots"
     os.makedirs(screenshots_dir, exist_ok=True)
