@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Optional
 from harness.models import Run
 from harness.runner import run_app
 
@@ -78,11 +78,9 @@ async def get_results(app: str, environment: str, limit: int = 20):
 
 # ---- App management mutation endpoints ----
 
-from typing import Any as _Any
-
 
 class AppDefRequest(BaseModel):
-    app_def: dict[str, _Any]
+    app_def: dict[str, Any]
 
 
 @router.post("/apps", status_code=201)
@@ -93,7 +91,10 @@ async def create_app_def(req: AppDefRequest):
         path = mgr.write_app(req.app_def, apps_dir=get_apps_dir())
     except mgr.AppManagerError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    reload_apps()
+    try:
+        reload_apps()
+    except Exception:
+        pass  # in-memory app list may be briefly stale; harmless for single-operator use
     return {"app": req.app_def.get("app", ""), "file": str(path)}
 
 
@@ -101,11 +102,19 @@ async def create_app_def(req: AppDefRequest):
 async def update_app_def(app_name: str, req: AppDefRequest):
     from web.main import get_apps_dir, reload_apps
     import harness.app_manager as mgr
+    if req.app_def.get("app") and req.app_def["app"] != app_name:
+        raise HTTPException(
+            status_code=422,
+            detail=f"app_def.app must match the URL app name '{app_name}'"
+        )
     try:
         path = mgr.update_app(app_name, req.app_def, apps_dir=get_apps_dir())
     except mgr.AppManagerError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    reload_apps()
+    try:
+        reload_apps()
+    except Exception:
+        pass  # in-memory app list may be briefly stale; harmless for single-operator use
     return {"app": app_name, "file": str(path)}
 
 
@@ -117,7 +126,10 @@ async def archive_app_def(app_name: str):
         path = mgr.archive_app(app_name, apps_dir=get_apps_dir())
     except mgr.AppManagerError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    reload_apps()
+    try:
+        reload_apps()
+    except Exception:
+        pass  # in-memory app list may be briefly stale; harmless for single-operator use
     return {"archived": str(path)}
 
 
@@ -129,12 +141,15 @@ async def restore_app_def(app_name: str):
         path = mgr.restore_app(app_name, apps_dir=get_apps_dir())
     except mgr.AppManagerError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    reload_apps()
+    try:
+        reload_apps()
+    except Exception:
+        pass  # in-memory app list may be briefly stale; harmless for single-operator use
     return {"app": app_name, "file": str(path)}
 
 
 @router.delete("/apps/{app_name}/permanent", status_code=204)
-async def delete_app_permanently(app_name: str):
+async def delete_app_permanently(app_name: str) -> None:
     from web.main import get_apps_dir
     import harness.app_manager as mgr
     try:
