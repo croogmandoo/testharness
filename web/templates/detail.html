@@ -62,8 +62,8 @@
 {% endif %}
 
 <script>
-const APP = "{{ app }}";
-const ENV = "{{ environment }}";
+const APP = {{ app | tojson }};
+const ENV = {{ environment | tojson }};
 async function triggerRun() {
   await fetch("/api/runs", {
     method: "POST",

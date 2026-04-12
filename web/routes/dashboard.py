@@ -1,3 +1,6 @@
+import json
+import sqlite3
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -26,41 +29,29 @@ async def dashboard(request: Request, environment: str = None):
 @router.get("/app/{app}/{environment}", response_class=HTMLResponse)
 async def app_detail(request: Request, app: str, environment: str, run_id: str = None):
     from web.main import get_db, get_config
-    import sqlite3
     db = get_db()
     config = get_config()
 
-    # Get recent runs for this app+environment
+    # Get recent runs for this app+environment (single connection)
     conn = sqlite3.connect(db.path)
     conn.row_factory = sqlite3.Row
-    runs = conn.execute(
+    runs = [dict(r) for r in conn.execute(
         "SELECT * FROM runs WHERE app=? AND environment=? ORDER BY started_at DESC LIMIT 10",
         (app, environment)
-    ).fetchall()
-    runs = [dict(r) for r in runs]
+    ).fetchall()]
+    conn.close()
 
     selected_run = None
     test_results = []
+    history = {}
+
     if runs:
-        selected = next((r for r in runs if r["id"] == run_id), runs[0])
-        selected_run = selected
-        test_results = db.get_results_for_run(selected["id"])
-        import json
+        selected_run = next((r for r in runs if r["id"] == run_id), runs[0])
+        test_results = db.get_results_for_run(selected_run["id"])
         for tr in test_results:
             tr["step_log"] = json.loads(tr["step_log"] or "[]")
-    conn.close()
-
-    history = {}
-    conn2 = sqlite3.connect(db.path)
-    conn2.row_factory = sqlite3.Row
-    for tr in test_results:
-        rows = conn2.execute(
-            "SELECT status FROM test_results WHERE app=? AND environment=? AND test_name=? "
-            "ORDER BY finished_at DESC LIMIT 10",
-            (app, environment, tr["test_name"])
-        ).fetchall()
-        history[tr["test_name"]] = [r["status"] for r in rows]
-    conn2.close()
+        test_names = [tr["test_name"] for tr in test_results]
+        history = db.get_run_history_batch(app, environment, test_names)
 
     return templates.TemplateResponse("detail.html", {
         "request": request,

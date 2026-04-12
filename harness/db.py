@@ -97,15 +97,34 @@ class Database:
             return [dict(r) for r in rows]
 
     def get_results_for_app(self, app: str, environment: str, limit: int = 20) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM test_results WHERE app=? AND environment=? "
+                "ORDER BY finished_at DESC LIMIT ?",
+                (app, environment, limit)
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_run_history_batch(self, app: str, environment: str, test_names: list, limit: int = 10) -> dict:
+        """Return {test_name: [status, ...]} for multiple tests in one query."""
+        if not test_names:
+            return {}
+        placeholders = ",".join("?" * len(test_names))
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT * FROM test_results WHERE app=? AND environment=? "
-            "ORDER BY finished_at DESC LIMIT ?",
-            (app, environment, limit)
+            f"SELECT test_name, status FROM test_results "
+            f"WHERE app=? AND environment=? AND test_name IN ({placeholders}) "
+            f"ORDER BY finished_at DESC",
+            [app, environment] + list(test_names)
         ).fetchall()
         conn.close()
-        return [dict(r) for r in rows]
+        result = {name: [] for name in test_names}
+        for row in rows:
+            hist = result[row["test_name"]]
+            if len(hist) < limit:
+                hist.append(row["status"])
+        return result
 
     def upsert_app_state(self, state: AppState) -> None:
         with self._connect() as conn:
