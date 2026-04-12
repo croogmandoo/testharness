@@ -149,6 +149,14 @@ class Database:
             ).fetchone()
             return row is not None
 
+    def get_recent_runs(self, app: str, environment: str, limit: int = 10) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM runs WHERE app=? AND environment=? ORDER BY started_at DESC LIMIT ?",
+                (app, environment, limit)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_app_summary(self, environment: str) -> list:
         with self._connect() as conn:
             rows = conn.execute(
@@ -160,7 +168,7 @@ class Database:
         for row in rows:
             app = row["app"]
             if app not in apps:
-                apps[app] = {"app": app, "total": 0, "passing": 0, "failing": 0, "unknown": 0}
+                apps[app] = {"app": app, "total": 0, "passing": 0, "failing": 0, "unknown": 0, "last_run": None}
             apps[app]["total"] += row["cnt"]
             apps[app][row["state"]] += row["cnt"]
         with self._connect() as conn:

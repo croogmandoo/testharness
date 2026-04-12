@@ -1,5 +1,4 @@
 import json
-import sqlite3
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
@@ -32,14 +31,7 @@ async def app_detail(request: Request, app: str, environment: str, run_id: str =
     db = get_db()
     config = get_config()
 
-    # Get recent runs for this app+environment (single connection)
-    conn = sqlite3.connect(db.path)
-    conn.row_factory = sqlite3.Row
-    runs = [dict(r) for r in conn.execute(
-        "SELECT * FROM runs WHERE app=? AND environment=? ORDER BY started_at DESC LIMIT 10",
-        (app, environment)
-    ).fetchall()]
-    conn.close()
+    runs = db.get_recent_runs(app, environment)
 
     selected_run = None
     test_results = []
