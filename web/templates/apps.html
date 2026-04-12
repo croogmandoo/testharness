@@ -1,4 +1,105 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>App Management</h1>
+<div class="toolbar">
+  <h1>App Management</h1>
+  <a href="/apps/new" class="btn btn-primary">+ New App</a>
+</div>
+
+{% if active_apps %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>App</th>
+      <th>URL</th>
+      <th>Tests</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for app in active_apps %}
+    <tr>
+      <td>{{ app.app }}</td>
+      <td><a href="{{ app.url }}" target="_blank">{{ app.url }}</a></td>
+      <td>{{ app.tests | length }}</td>
+      <td style="display:flex; gap:.5rem; justify-content:flex-end;">
+        <a href="/apps/{{ app.app }}/edit" class="btn btn-sm">Edit</a>
+        <button class="btn btn-sm" style="border-color:#ef4444;color:#f87171;"
+                data-action="archive" data-app="{{ app.app | e }}">Archive</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No apps defined yet. <a href="/apps/new">Create one.</a></p>
+{% endif %}
+
+{% if archived_apps %}
+<details style="margin-top:2rem;">
+  <summary style="cursor:pointer; color:#718096; font-size:.875rem; margin-bottom:.75rem;">
+    Archived Apps ({{ archived_apps | length }})
+  </summary>
+  <table class="table">
+    <thead>
+      <tr><th>App</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for app in archived_apps %}
+      <tr>
+        <td>{{ app.app }}</td>
+        <td style="display:flex; gap:.5rem; justify-content:flex-end;">
+          <button class="btn btn-sm"
+                  data-action="restore" data-app="{{ app.app | e }}">Restore</button>
+          <button class="btn btn-sm" style="border-color:#ef4444;color:#f87171;"
+                  data-action="delete-permanent" data-app="{{ app.app | e }}">Delete Permanently</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}
+
+<div id="status-msg" style="display:none; margin-top:1rem; padding:.75rem 1rem;
+     border-radius:6px; font-size:.875rem;"></div>
+
+<script>
+document.addEventListener('click', function(e) {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const action = btn.dataset.action;
+  const app = btn.dataset.app;
+  if (action === 'archive') handleArchive(app);
+  else if (action === 'restore') handleRestore(app);
+  else if (action === 'delete-permanent') handleDeletePermanent(app);
+});
+
+async function handleArchive(name) {
+  if (!confirm('Archive "' + name + '"?')) return;
+  const resp = await fetch('/api/apps/' + encodeURIComponent(name), { method: 'DELETE' });
+  if (resp.ok) { location.reload(); }
+  else { const d = await resp.json(); showError(d.detail || 'Archive failed'); }
+}
+
+async function handleRestore(name) {
+  const resp = await fetch('/api/apps/' + encodeURIComponent(name) + '/restore', { method: 'POST' });
+  if (resp.ok) { location.reload(); }
+  else { const d = await resp.json(); showError(d.detail || 'Restore failed'); }
+}
+
+async function handleDeletePermanent(name) {
+  if (!confirm('Permanently delete "' + name + '"? This cannot be undone.')) return;
+  const resp = await fetch('/api/apps/' + encodeURIComponent(name) + '/permanent', { method: 'DELETE' });
+  if (resp.ok) { location.reload(); }
+  else { const d = await resp.json(); showError(d.detail || 'Delete failed'); }
+}
+
+function showError(msg) {
+  const el = document.getElementById('status-msg');
+  el.textContent = msg;
+  el.style.display = 'block';
+  el.style.background = 'rgba(239,68,68,.15)';
+  el.style.color = '#f87171';
+}
+</script>
 {% endblock %}

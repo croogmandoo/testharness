@@ -1,4 +1,384 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>{{ "Edit" if mode == "edit" else "New App" }}</h1>
+<div class="breadcrumb">
+  <a href="/apps">Apps</a> / {{ ("Edit " + app_name) if mode == "edit" else "New App" }}
+</div>
+<h1 style="margin-bottom:1.5rem;">{{ ("Edit " + app_name) if mode == "edit" else "New App" }}</h1>
+
+<div id="error-banner" style="display:none; background:rgba(239,68,68,.15); color:#f87171;
+     padding:.75rem 1rem; border-radius:6px; margin-bottom:1rem; font-size:.875rem;"></div>
+
+<div style="display:flex; gap:.5rem; margin-bottom:1.5rem;">
+  <button type="button" id="btn-simple" class="btn btn-primary btn-sm"
+          onclick="switchMode('simple')">Simple</button>
+  <button type="button" id="btn-advanced" class="btn btn-sm"
+          onclick="switchMode('advanced')">Advanced (YAML)</button>
+</div>
+
+<div id="simple-mode">
+  <div style="margin-bottom:1rem;">
+    <label style="display:block; margin-bottom:.25rem; font-size:.8rem; color:#a0aec0;">App Name *</label>
+    <input id="f-name" type="text" class="search" style="max-width:400px;"
+           value="{{ app_def.app | default('') | e }}"
+           {{ 'readonly' if mode == 'edit' else '' }}
+           placeholder="my-app">
+    <div id="err-name" style="display:none; color:#f87171; font-size:.75rem; margin-top:.25rem;"></div>
+  </div>
+
+  <div style="margin-bottom:1rem;">
+    <label style="display:block; margin-bottom:.25rem; font-size:.8rem; color:#a0aec0;">URL *</label>
+    <input id="f-url" type="text" class="search" style="max-width:500px;"
+           value="{{ app_def.url | default('') | e }}"
+           placeholder="https://example.com">
+    <div id="err-url" style="display:none; color:#f87171; font-size:.75rem; margin-top:.25rem;"></div>
+  </div>
+
+  <div style="margin-bottom:1rem;">
+    <label style="display:block; margin-bottom:.5rem; font-size:.8rem; color:#a0aec0;">Environments</label>
+    <div id="envs-container">
+      {% for key, url in (app_def.environments or {}).items() %}
+      <div class="env-row" style="display:flex; gap:.5rem; margin-bottom:.5rem;">
+        <input class="search env-key" type="text" placeholder="staging"
+               value="{{ key | e }}" style="max-width:150px; margin-bottom:0;">
+        <input class="search env-url" type="text" placeholder="https://staging.example.com"
+               value="{{ url | e }}" style="flex:1; margin-bottom:0;">
+        <button type="button" class="btn btn-sm" style="border-color:#ef4444;color:#f87171;"
+                onclick="this.closest('.env-row').remove()">&#215;</button>
+      </div>
+      {% endfor %}
+    </div>
+    <button type="button" class="btn btn-sm" onclick="addEnvRow()" style="margin-top:.25rem;">+ Add Environment</button>
+  </div>
+
+  <div style="margin-bottom:1.5rem;">
+    <label style="display:block; margin-bottom:.5rem; font-size:.8rem; color:#a0aec0;">Tests</label>
+    <div id="tests-container">
+      {% for test in (app_def.tests or []) %}
+      <div class="test-block" style="border:1px solid #2d3748; border-radius:6px; padding:1rem; margin-bottom:.75rem;">
+        <div style="display:flex; gap:.5rem; margin-bottom:.75rem; align-items:center;">
+          <input class="search test-name" type="text" placeholder="Test name"
+                 value="{{ test.name | default('') | e }}" style="flex:1; margin-bottom:0;">
+          <select class="search test-type" style="max-width:150px; margin-bottom:0;" onchange="onTypeChange(this)">
+            <option value="">-- type --</option>
+            {% for t in ['availability', 'api', 'browser'] %}
+            <option value="{{ t }}" {{ 'selected' if test.type == t else '' }}>{{ t }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="btn btn-sm" style="border-color:#ef4444;color:#f87171;"
+                  onclick="this.closest('.test-block').remove()">&#215; Remove</button>
+        </div>
+        <div class="fields-availability" style="{{ '' if test.type == 'availability' else 'display:none;' }}">
+          <label style="font-size:.75rem; color:#718096;">Expect Status</label>
+          <input class="search field-expect-status" type="number"
+                 value="{{ test.expect_status | default(200) }}" style="max-width:100px; margin-bottom:0;">
+        </div>
+        <div class="fields-api" style="{{ '' if test.type == 'api' else 'display:none;' }}">
+          <div style="display:flex; gap:.5rem; margin-bottom:.5rem;">
+            <div style="flex:1;">
+              <label style="font-size:.75rem; color:#718096;">Endpoint</label>
+              <input class="search field-endpoint" type="text" placeholder="/api/health"
+                     value="{{ test.endpoint | default('') | e }}" style="margin-bottom:0;">
+            </div>
+            <div>
+              <label style="font-size:.75rem; color:#718096;">Method</label>
+              <select class="search field-method" style="margin-bottom:0;">
+                {% for m in ['GET','POST','PUT','DELETE'] %}
+                <option value="{{ m }}" {{ 'selected' if test.method == m else '' }}>{{ m }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label style="font-size:.75rem; color:#718096;">Expect Status</label>
+              <input class="search field-expect-status" type="number"
+                     value="{{ test.expect_status | default(200) }}" style="max-width:100px; margin-bottom:0;">
+            </div>
+          </div>
+          <label style="font-size:.75rem; color:#718096;">Expect JSON (optional)</label>
+          <textarea class="search field-expect-json" rows="2"
+                    style="margin-bottom:0; font-family:monospace; font-size:.8rem;">{{ test.expect_json | default('') | e }}</textarea>
+        </div>
+        <div class="fields-browser" style="{{ '' if test.type == 'browser' else 'display:none;' }}">
+          <label style="font-size:.75rem; color:#718096; display:block; margin-bottom:.5rem;">Steps</label>
+          <div class="steps-container">
+            {% for step in (test.steps or []) %}
+            {% set action = step.keys() | list | first %}
+            <div class="step-row" style="display:flex; gap:.5rem; margin-bottom:.5rem; align-items:flex-start;">
+              <select class="search step-action" style="max-width:200px; margin-bottom:0;" onchange="onStepActionChange(this)">
+                {% for a in ['navigate','fill','click','assert_text','assert_url_contains','wait_for_selector','wait_for_url','wait'] %}
+                <option value="{{ a }}" {{ 'selected' if action == a else '' }}>{{ a }}</option>
+                {% endfor %}
+              </select>
+              {% if action == 'fill' %}
+              <input class="search step-fill-field" type="text" placeholder="CSS selector"
+                     value="{{ step.fill.field | default('') | e }}" style="flex:1; margin-bottom:0;">
+              <input class="search step-fill-value" type="text" placeholder="value"
+                     value="{{ step.fill.value | default('') | e }}" style="flex:1; margin-bottom:0;">
+              {% else %}
+              <input class="search step-value" type="text" placeholder="value"
+                     value="{{ step[action] | default('') | e }}" style="flex:1; margin-bottom:0;">
+              <span style="flex:1;"></span>
+              {% endif %}
+              <button type="button" class="btn btn-sm" style="border-color:#ef4444;color:#f87171;"
+                      onclick="this.closest('.step-row').remove()">&#215;</button>
+            </div>
+            {% endfor %}
+          </div>
+          <button type="button" class="btn btn-sm" onclick="addStepRow(this)" style="margin-top:.25rem;">+ Add Step</button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <button type="button" class="btn btn-sm" onclick="addTestBlock()" style="margin-top:.25rem;">+ Add Test</button>
+  </div>
+</div>
+
+<div id="advanced-mode" style="display:none;">
+  <div id="yaml-error" style="display:none; color:#f87171; font-size:.8rem; margin-bottom:.5rem;"></div>
+  <textarea id="yaml-textarea" class="search" rows="20"
+            style="font-family:monospace; font-size:.8rem; white-space:pre;">{{ raw_yaml | e }}</textarea>
+</div>
+
+<div style="display:flex; gap:.75rem; margin-top:1.5rem;">
+  <button type="button" class="btn btn-primary" onclick="submitForm()">Save</button>
+  <a href="/apps" class="btn">Cancel</a>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+const FORM_MODE = {{ '"edit"' if mode == 'edit' else '"create"' }};
+const APP_NAME = {{ ('"' + app_name + '"') if app_name else '""' }};
+let currentMode = 'simple';
+
+function switchMode(target) {
+  if (target === 'advanced') {
+    document.getElementById('yaml-textarea').value = buildYaml();
+    document.getElementById('simple-mode').style.display = 'none';
+    document.getElementById('advanced-mode').style.display = 'block';
+    document.getElementById('btn-simple').classList.remove('btn-primary');
+    document.getElementById('btn-advanced').classList.add('btn-primary');
+    currentMode = 'advanced';
+  } else {
+    if (currentMode === 'advanced') {
+      showBanner('Switching back to Simple mode is not supported. Edit the YAML directly or reload the page to start over.');
+      return;
+    }
+    document.getElementById('simple-mode').style.display = 'block';
+    document.getElementById('advanced-mode').style.display = 'none';
+    document.getElementById('btn-simple').classList.add('btn-primary');
+    document.getElementById('btn-advanced').classList.remove('btn-primary');
+    currentMode = 'simple';
+  }
+}
+
+function buildYaml() {
+  return jsyaml.dump(collectSimpleFormData(), { lineWidth: -1 });
+}
+
+function collectSimpleFormData() {
+  const obj = {};
+  obj.app = document.getElementById('f-name').value.trim();
+  obj.url = document.getElementById('f-url').value.trim();
+  const envRows = document.querySelectorAll('#envs-container .env-row');
+  if (envRows.length > 0) {
+    obj.environments = {};
+    envRows.forEach(function(row) {
+      const k = row.querySelector('.env-key').value.trim();
+      const v = row.querySelector('.env-url').value.trim();
+      if (k) obj.environments[k] = v;
+    });
+  }
+  obj.tests = [];
+  document.querySelectorAll('#tests-container .test-block').forEach(function(block) {
+    const test = {};
+    test.name = block.querySelector('.test-name').value.trim();
+    test.type = block.querySelector('.test-type').value;
+    if (test.type === 'availability') {
+      test.expect_status = parseInt(block.querySelector('.field-expect-status').value) || 200;
+    } else if (test.type === 'api') {
+      test.endpoint = block.querySelector('.field-endpoint').value.trim();
+      test.method = block.querySelector('.field-method').value;
+      test.expect_status = parseInt(block.querySelector('.field-expect-status').value) || 200;
+      const ej = block.querySelector('.field-expect-json').value.trim();
+      if (ej) test.expect_json = ej;
+    } else if (test.type === 'browser') {
+      test.steps = [];
+      block.querySelectorAll('.step-row').forEach(function(stepRow) {
+        const action = stepRow.querySelector('.step-action').value;
+        if (action === 'fill') {
+          test.steps.push({ fill: { field: stepRow.querySelector('.step-fill-field').value.trim(), value: stepRow.querySelector('.step-fill-value').value.trim() }});
+        } else {
+          const val = stepRow.querySelector('.step-value').value.trim();
+          const step = {}; step[action] = val; test.steps.push(step);
+        }
+      });
+    }
+    obj.tests.push(test);
+  });
+  return obj;
+}
+
+function validateSimple(obj) {
+  let ok = true;
+  function setErr(id, msg) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = msg ? 'block' : 'none';
+    if (msg) ok = false;
+  }
+  setErr('err-name', obj.app ? '' : 'App name is required');
+  if (!obj.url) { setErr('err-url', 'URL is required'); }
+  else if (!obj.url.startsWith('http://') && !obj.url.startsWith('https://')) { setErr('err-url', 'URL must start with http:// or https://'); }
+  else { setErr('err-url', ''); }
+  for (const t of obj.tests) {
+    if (!t.name) { showBanner('Each test must have a name'); ok = false; break; }
+    if (!t.type) { showBanner('Each test must have a type'); ok = false; break; }
+    if (t.type === 'browser' && (!t.steps || t.steps.length === 0)) { showBanner('Browser tests must have at least one step'); ok = false; break; }
+    if (t.type === 'api' && !t.endpoint) { showBanner('API tests must have an endpoint'); ok = false; break; }
+  }
+  return ok;
+}
+
+async function submitForm() {
+  clearBanner();
+  let appDef;
+  if (currentMode === 'simple') {
+    appDef = collectSimpleFormData();
+    if (!validateSimple(appDef)) return;
+  } else {
+    const raw = document.getElementById('yaml-textarea').value;
+    try { appDef = jsyaml.load(raw); }
+    catch (e) {
+      const yamlErr = document.getElementById('yaml-error');
+      yamlErr.textContent = 'Invalid YAML: ' + e.message;
+      yamlErr.style.display = 'block';
+      showBanner('Invalid YAML: ' + e.message);
+      return;
+    }
+    document.getElementById('yaml-error').style.display = 'none';
+  }
+  const url = FORM_MODE === 'edit' ? '/api/apps/' + encodeURIComponent(APP_NAME) : '/api/apps';
+  const method = FORM_MODE === 'edit' ? 'PUT' : 'POST';
+  const resp = await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app_def: appDef }) });
+  if (resp.ok) { window.location.href = '/apps'; }
+  else { const err = await resp.json(); showBanner(err.detail || 'Save failed'); }
+}
+
+function addEnvRow() {
+  const container = document.getElementById('envs-container');
+  const row = document.createElement('div');
+  row.className = 'env-row';
+  row.style.cssText = 'display:flex; gap:.5rem; margin-bottom:.5rem;';
+  const k = makeInput('search env-key', 'text', 'staging', 'max-width:150px; margin-bottom:0;');
+  const v = makeInput('search env-url', 'text', 'https://staging.example.com', 'flex:1; margin-bottom:0;');
+  const rm = makeRemoveBtn(function() { row.remove(); });
+  row.appendChild(k); row.appendChild(v); row.appendChild(rm);
+  container.appendChild(row);
+}
+
+function addTestBlock() {
+  const container = document.getElementById('tests-container');
+  const block = document.createElement('div');
+  block.className = 'test-block';
+  block.style.cssText = 'border:1px solid #2d3748; border-radius:6px; padding:1rem; margin-bottom:.75rem;';
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'display:flex; gap:.5rem; margin-bottom:.75rem; align-items:center;';
+  const nameInp = makeInput('search test-name', 'text', 'Test name', 'flex:1; margin-bottom:0;');
+  const typeSel = document.createElement('select');
+  typeSel.className = 'search test-type'; typeSel.style.cssText = 'max-width:150px; margin-bottom:0;';
+  typeSel.onchange = function() { onTypeChange(typeSel); };
+  [['','-- type --'],['availability','availability'],['api','api'],['browser','browser']].forEach(function(p) {
+    const o = document.createElement('option'); o.value = p[0]; o.textContent = p[1]; typeSel.appendChild(o);
+  });
+  const rmBtn = makeRemoveBtn(function() { block.remove(); }); rmBtn.textContent = '\u00d7 Remove';
+  hdr.appendChild(nameInp); hdr.appendChild(typeSel); hdr.appendChild(rmBtn);
+  block.appendChild(hdr);
+  block.appendChild(makeAvailFields()); block.appendChild(makeApiFields()); block.appendChild(makeBrowserFields());
+  container.appendChild(block);
+}
+
+function makeAvailFields() {
+  const d = document.createElement('div'); d.className = 'fields-availability'; d.style.display = 'none';
+  const l = makeLbl('Expect Status'); const i = makeInput('search field-expect-status', 'number', '', 'max-width:100px; margin-bottom:0;'); i.value = '200';
+  d.appendChild(l); d.appendChild(i); return d;
+}
+
+function makeApiFields() {
+  const d = document.createElement('div'); d.className = 'fields-api'; d.style.display = 'none';
+  const row = document.createElement('div'); row.style.cssText = 'display:flex; gap:.5rem; margin-bottom:.5rem;';
+  const ew = document.createElement('div'); ew.style.flex = '1';
+  ew.appendChild(makeLbl('Endpoint')); ew.appendChild(makeInput('search field-endpoint', 'text', '/api/health', 'margin-bottom:0;'));
+  const mw = document.createElement('div'); mw.appendChild(makeLbl('Method'));
+  const ms = document.createElement('select'); ms.className = 'search field-method'; ms.style.marginBottom = '0';
+  ['GET','POST','PUT','DELETE'].forEach(function(m) { const o = document.createElement('option'); o.value = m; o.textContent = m; ms.appendChild(o); });
+  mw.appendChild(ms);
+  const sw = document.createElement('div'); sw.appendChild(makeLbl('Expect Status'));
+  const si = makeInput('search field-expect-status', 'number', '', 'max-width:100px; margin-bottom:0;'); si.value = '200'; sw.appendChild(si);
+  row.appendChild(ew); row.appendChild(mw); row.appendChild(sw);
+  const jl = makeLbl('Expect JSON (optional)'); const jt = document.createElement('textarea');
+  jt.className = 'search field-expect-json'; jt.rows = 2; jt.style.cssText = 'margin-bottom:0; font-family:monospace; font-size:.8rem;';
+  d.appendChild(row); d.appendChild(jl); d.appendChild(jt); return d;
+}
+
+function makeBrowserFields() {
+  const d = document.createElement('div'); d.className = 'fields-browser'; d.style.display = 'none';
+  const l = document.createElement('label'); l.style.cssText = 'font-size:.75rem; color:#718096; display:block; margin-bottom:.5rem;'; l.textContent = 'Steps';
+  const sc = document.createElement('div'); sc.className = 'steps-container';
+  const ab = document.createElement('button'); ab.type = 'button'; ab.className = 'btn btn-sm'; ab.style.marginTop = '.25rem'; ab.textContent = '+ Add Step';
+  ab.onclick = function() { addStepRow(ab); };
+  d.appendChild(l); d.appendChild(sc); d.appendChild(ab); return d;
+}
+
+function addStepRow(btn) {
+  const sc = btn.previousElementSibling;
+  const row = document.createElement('div'); row.className = 'step-row'; row.style.cssText = 'display:flex; gap:.5rem; margin-bottom:.5rem; align-items:flex-start;';
+  const sel = makeStepActionSelect();
+  const vi = makeInput('search step-value', 'text', 'value', 'flex:1; margin-bottom:0;');
+  const sp = document.createElement('span'); sp.style.flex = '1';
+  const rm = makeRemoveBtn(function() { row.remove(); });
+  row.appendChild(sel); row.appendChild(vi); row.appendChild(sp); row.appendChild(rm);
+  sc.appendChild(row);
+}
+
+function makeStepActionSelect() {
+  const sel = document.createElement('select'); sel.className = 'search step-action'; sel.style.cssText = 'max-width:200px; margin-bottom:0;';
+  sel.onchange = function() { onStepActionChange(sel); };
+  ['navigate','fill','click','assert_text','assert_url_contains','wait_for_selector','wait_for_url','wait'].forEach(function(a) {
+    const o = document.createElement('option'); o.value = a; o.textContent = a; sel.appendChild(o);
+  });
+  return sel;
+}
+
+function onTypeChange(sel) {
+  const b = sel.closest('.test-block');
+  b.querySelector('.fields-availability').style.display = sel.value === 'availability' ? '' : 'none';
+  b.querySelector('.fields-api').style.display = sel.value === 'api' ? '' : 'none';
+  b.querySelector('.fields-browser').style.display = sel.value === 'browser' ? '' : 'none';
+}
+
+function onStepActionChange(sel) {
+  const row = sel.closest('.step-row'); const rm = row.querySelector('button');
+  row.querySelectorAll('.step-value,.step-fill-field,.step-fill-value,span').forEach(function(el) { el.remove(); });
+  if (sel.value === 'fill') {
+    row.insertBefore(makeInput('search step-fill-field', 'text', 'CSS selector', 'flex:1; margin-bottom:0;'), rm);
+    row.insertBefore(makeInput('search step-fill-value', 'text', 'value', 'flex:1; margin-bottom:0;'), rm);
+  } else {
+    row.insertBefore(makeInput('search step-value', 'text', 'value', 'flex:1; margin-bottom:0;'), rm);
+    const sp = document.createElement('span'); sp.style.flex = '1'; row.insertBefore(sp, rm);
+  }
+}
+
+function makeInput(cls, type, placeholder, style) {
+  const i = document.createElement('input'); i.className = cls; i.type = type; i.placeholder = placeholder; i.style.cssText = style; return i;
+}
+function makeLbl(text) {
+  const l = document.createElement('label'); l.style.cssText = 'font-size:.75rem; color:#718096;'; l.textContent = text; return l;
+}
+function makeRemoveBtn(fn) {
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-sm'; b.style.cssText = 'border-color:#ef4444;color:#f87171;'; b.textContent = '\u00d7'; b.onclick = fn; return b;
+}
+function showBanner(msg) { const el = document.getElementById('error-banner'); el.textContent = msg; el.style.display = 'block'; }
+function clearBanner() { const el = document.getElementById('error-banner'); el.textContent = ''; el.style.display = 'none'; }
+</script>
 {% endblock %}
