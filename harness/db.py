@@ -75,7 +75,8 @@ class Database:
 
     def insert_test_result(self, tr: TestResult) -> None:
         step_log_json = json.dumps([
-            {"step": s.step, "status": s.status, "duration_ms": s.duration_ms, "error": s.error}
+            {"step": s.step, "status": s.status, "duration_ms": s.duration_ms,
+             "error": s.error, "screenshot": s.screenshot}
             for s in tr.step_log
         ])
         with self._connect() as conn:
