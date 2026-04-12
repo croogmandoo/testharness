@@ -1,5 +1,4 @@
 import asyncio
-from enum import Enum
 from datetime import datetime, timezone
 from typing import Optional
 from harness.db import Database
@@ -8,10 +7,7 @@ from harness.loader import resolve_base_url
 from harness.api import run_api_test
 from harness.browser import run_browser_test, run_availability_test
 from harness.alerts import dispatch_alerts
-
-class AlertType(Enum):
-    FAIL = "fail"
-    RESOLVE = "resolve"
+from harness.types import AlertType
 
 def determine_alert(previous_state: str, new_status: str) -> Optional[AlertType]:
     is_fail = new_status in ("fail", "error")
