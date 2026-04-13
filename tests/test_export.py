@@ -132,3 +132,71 @@ def test_export_pdf_skips_missing_step_screenshot(tmp_path):
     }]
     result = export_pdf(SAMPLE_RUN, results, screenshots_dir=str(tmp_path))
     assert result[:4] == b"%PDF"
+
+
+# ---- Route tests ----
+
+from fastapi.testclient import TestClient
+from web.main import create_app
+from harness.db import Database
+from harness.models import Run, TestResult
+
+
+@pytest.fixture
+def export_db(tmp_path):
+    d = Database(str(tmp_path / "test.db"))
+    d.init_schema()
+    run = Run(app="myapp", environment="production", triggered_by="test", status="complete")
+    d.insert_run(run)
+    tr = TestResult(
+        run_id=run.id,
+        app="myapp",
+        environment="production",
+        test_name="health",
+        status="pass",
+        duration_ms=120,
+    )
+    d.insert_test_result(tr)
+    return d, run.id
+
+
+@pytest.fixture
+def export_client(export_db, tmp_path):
+    db, run_id = export_db
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    config = {}
+    app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    return TestClient(app)
+
+
+@pytest.fixture
+def export_run_id(export_db):
+    db, run_id = export_db
+    return run_id
+
+
+def test_export_route_pdf(export_client, export_run_id):
+    resp = export_client.get(f"/api/runs/{export_run_id}/export?format=pdf")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/pdf"
+
+
+def test_export_route_docx(export_client, export_run_id):
+    resp = export_client.get(f"/api/runs/{export_run_id}/export?format=docx")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+
+
+def test_export_route_unknown_run(export_client):
+    resp = export_client.get("/api/runs/nonexistent/export?format=pdf")
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Run not found"
+
+
+def test_export_route_bad_format(export_client, export_run_id):
+    resp = export_client.get(f"/api/runs/{export_run_id}/export?format=xml")
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "format must be pdf or docx"

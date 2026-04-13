@@ -55,6 +55,9 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     from web.routes.apps import router as apps_router
     app.include_router(apps_router)
 
+    from web.routes.export import router as export_router
+    app.include_router(export_router)
+
     screenshots_dir = "data/screenshots"
     os.makedirs(screenshots_dir, exist_ok=True)
     app.mount("/screenshots", StaticFiles(directory=screenshots_dir), name="screenshots")
@@ -83,7 +86,7 @@ def main():
 
     config = load_config("config.yaml")
     app = create_app(config=config)
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=9552)
 
 
 if __name__ == "__main__":
