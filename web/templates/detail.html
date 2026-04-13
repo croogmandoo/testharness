@@ -28,6 +28,8 @@
   <span>Status: <strong>{{ selected_run.status }}</strong></span>
   <span>Started: {{ selected_run.started_at or "—" }}</span>
   <button class="btn btn-sm" onclick="triggerRun()">Re-run All</button>
+  <a href="/api/runs/{{ selected_run.id }}/export?format=pdf" class="btn btn-sm">Export PDF</a>
+  <a href="/api/runs/{{ selected_run.id }}/export?format=docx" class="btn btn-sm">Export DOCX</a>
 </div>
 
 {# Progress bar — only shown while run is active #}

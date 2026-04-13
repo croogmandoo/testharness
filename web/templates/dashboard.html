@@ -36,6 +36,10 @@
       <td>{{ row.last_run or "—" }}</td>
       <td>
         <button class="btn btn-sm" onclick="triggerRun('{{ row.app }}')">Run</button>
+        {% if row.last_run_id %}
+        <a href="/api/runs/{{ row.last_run_id }}/export?format=pdf" class="btn btn-sm">PDF</a>
+        <a href="/api/runs/{{ row.last_run_id }}/export?format=docx" class="btn btn-sm">DOCX</a>
+        {% endif %}
       </td>
     </tr>
     {% else %}

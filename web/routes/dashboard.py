@@ -29,6 +29,7 @@ async def dashboard(request: Request, environment: str = None):
                 "failing": 0,
                 "unknown": 0,
                 "last_run": None,
+                "last_run_id": None,
             })
 
     return templates.TemplateResponse("dashboard.html", {
