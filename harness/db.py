@@ -174,13 +174,17 @@ class Database:
             apps[app][row["state"]] += row["cnt"]
         with self._connect() as conn:
             last_runs = conn.execute(
-                "SELECT app, MAX(finished_at) as last_run FROM runs "
+                "SELECT app, id, MAX(finished_at) as last_run FROM runs "
                 "WHERE environment=? AND status='complete' GROUP BY app",
                 (environment,)
             ).fetchall()
         for row in last_runs:
             if row["app"] in apps:
                 apps[row["app"]]["last_run"] = row["last_run"]
+                apps[row["app"]]["last_run_id"] = row["id"]
+        # Ensure last_run_id is always present (None for apps with no completed run)
+        for app_dict in apps.values():
+            app_dict.setdefault("last_run_id", None)
         with self._connect() as conn:
             active_rows = conn.execute(
                 "SELECT app, id FROM runs "
