@@ -19,7 +19,9 @@
   </thead>
   <tbody>
     {% for row in summary %}
-    <tr class="{% if row.failing > 0 %}row-fail{% endif %}" data-app="{{ row.app }}">
+    <tr class="{% if row.failing > 0 %}row-fail{% endif %}"
+        data-app="{{ row.app }}"
+        data-run-id="{{ row.active_run_id or '' }}">
       <td><a href="/app/{{ row.app }}/{{ environment }}">{{ row.app }}</a></td>
       <td>
         {% if row.failing > 0 %}
@@ -34,6 +36,10 @@
       <td>{{ row.last_run or "—" }}</td>
       <td>
         <button class="btn btn-sm" onclick="triggerRun('{{ row.app }}')">Run</button>
+        {% if row.last_run_id %}
+        <a href="/api/runs/{{ row.last_run_id }}/export?format=pdf" class="btn btn-sm">PDF</a>
+        <a href="/api/runs/{{ row.last_run_id }}/export?format=docx" class="btn btn-sm">DOCX</a>
+        {% endif %}
       </td>
     </tr>
     {% else %}
@@ -45,36 +51,117 @@
 <script>
 const ENV = {{ environment | tojson }};
 
+const activeRunIds = new Set();
+const runAppMap = {};  // run_id → app name
+
+// Seed from server-rendered data (runs already active on page load)
+document.querySelectorAll('#app-table tbody tr[data-run-id]').forEach(function(row) {
+  var runId = row.dataset.runId;
+  if (runId) {
+    activeRunIds.add(runId);
+    runAppMap[runId] = row.dataset.app;
+    setRowRunning(row.dataset.app);
+  }
+});
+if (activeRunIds.size > 0) startPolling();
+
 async function triggerRun(app) {
-  const btn = event.target;
+  var btn = event.target;
   btn.textContent = "Running…";
   btn.disabled = true;
-  const resp = await fetch("/api/runs", {
+  var resp = await fetch("/api/runs", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({app, environment: ENV, triggered_by: "ui"})
+    body: JSON.stringify({app: app, environment: ENV, triggered_by: "ui"})
   });
   if (!resp.ok) {
-    const err = await resp.json();
+    var err = await resp.json();
     alert(err.detail || "Failed to start run");
     btn.textContent = "Run";
     btn.disabled = false;
-  } else {
-    setTimeout(() => location.reload(), 3000);
+    return;
   }
+  var data = await resp.json();
+  data.run_ids.forEach(function(id) {
+    activeRunIds.add(id);
+    runAppMap[id] = app;
+  });
+  setRowRunning(app);
+  startPolling();
 }
 
 async function runAll() {
-  await fetch("/api/runs", {
+  var resp = await fetch("/api/runs", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({environment: ENV, triggered_by: "ui"})
   });
-  setTimeout(() => location.reload(), 3000);
+  if (!resp.ok) return;
+  var data = await resp.json();
+  data.run_ids.forEach(function(id, i) {
+    activeRunIds.add(id);
+    runAppMap[id] = data.apps[i];
+    setRowRunning(data.apps[i]);
+  });
+  startPolling();
+}
+
+function setRowRunning(appName) {
+  var row = document.querySelector('tr[data-app="' + appName + '"]');
+  if (!row) return;
+  var badge = row.querySelector('.badge');
+  if (badge) { badge.className = 'badge badge-unknown'; badge.textContent = '⟳ Running'; }
+  var btn = row.querySelector('button');
+  if (btn) { btn.textContent = 'Running…'; btn.disabled = true; }
+}
+
+var polling = false;
+
+function startPolling() {
+  if (polling) return;
+  polling = true;
+  pollLoop();
+}
+
+async function pollLoop() {
+  while (activeRunIds.size > 0) {
+    await new Promise(function(r) { setTimeout(r, 2000); });
+    var toRemove = [];
+    for (var runId of activeRunIds) {
+      var resp = await fetch('/api/runs/' + runId);
+      if (!resp.ok) { toRemove.push(runId); continue; }
+      var data = await resp.json();
+      updateRow(runAppMap[runId], data);
+      if (data.status === 'complete') toRemove.push(runId);
+    }
+    toRemove.forEach(function(id) { activeRunIds.delete(id); });
+  }
+  polling = false;
+  location.reload();
+}
+
+function updateRow(appName, runData) {
+  var row = document.querySelector('tr[data-app="' + appName + '"]');
+  if (!row) return;
+  var results = runData.results || [];
+  var passing = results.filter(function(r) { return r.status === 'pass'; }).length;
+  var total = results.length;
+  var hasFail = results.some(function(r) { return r.status === 'fail' || r.status === 'error'; });
+  var badge = row.querySelector('.badge');
+  if (badge) {
+    if (runData.status === 'complete') {
+      if (hasFail) { badge.className = 'badge badge-fail'; badge.textContent = '✗ Fail'; }
+      else { badge.className = 'badge badge-pass'; badge.textContent = '✓ Pass'; }
+    }
+  }
+  if (row.cells[2]) row.cells[2].textContent = passing + '/' + total;
+  if (row.cells[3] && runData.started_at) {
+    row.cells[3].textContent = runData.started_at.slice(0, 16).replace('T', ' ');
+  }
 }
 
 function filterTable(query) {
-  document.querySelectorAll("#app-table tbody tr[data-app]").forEach(row => {
+  document.querySelectorAll("#app-table tbody tr[data-app]").forEach(function(row) {
     row.style.display = row.dataset.app.toLowerCase().includes(query.toLowerCase()) ? "" : "none";
   });
 }

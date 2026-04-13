@@ -11,6 +11,7 @@ class StepResult:
     status: str
     duration_ms: int
     error: Optional[str] = None
+    screenshot: Optional[str] = None
 
 @dataclass
 class TestResult:

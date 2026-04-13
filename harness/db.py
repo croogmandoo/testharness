@@ -75,7 +75,8 @@ class Database:
 
     def insert_test_result(self, tr: TestResult) -> None:
         step_log_json = json.dumps([
-            {"step": s.step, "status": s.status, "duration_ms": s.duration_ms, "error": s.error}
+            {"step": s.step, "status": s.status, "duration_ms": s.duration_ms,
+             "error": s.error, "screenshot": s.screenshot}
             for s in tr.step_log
         ])
         with self._connect() as conn:
@@ -173,11 +174,24 @@ class Database:
             apps[app][row["state"]] += row["cnt"]
         with self._connect() as conn:
             last_runs = conn.execute(
-                "SELECT app, MAX(finished_at) as last_run FROM runs "
+                "SELECT app, id, MAX(finished_at) as last_run FROM runs "
                 "WHERE environment=? AND status='complete' GROUP BY app",
                 (environment,)
             ).fetchall()
         for row in last_runs:
             if row["app"] in apps:
                 apps[row["app"]]["last_run"] = row["last_run"]
+                apps[row["app"]]["last_run_id"] = row["id"]
+        # Ensure last_run_id is always present (None for apps with no completed run)
+        for app_dict in apps.values():
+            app_dict.setdefault("last_run_id", None)
+        with self._connect() as conn:
+            active_rows = conn.execute(
+                "SELECT app, id FROM runs "
+                "WHERE environment=? AND status IN ('pending','running')",
+                (environment,)
+            ).fetchall()
+        active_map = {row["app"]: row["id"] for row in active_rows}
+        for app_dict in apps.values():
+            app_dict["active_run_id"] = active_map.get(app_dict["app"])
         return list(apps.values())

@@ -104,7 +104,7 @@
             {% set action = step.keys() | list | first %}
             <div class="step-row" style="display:flex; gap:.5rem; margin-bottom:.5rem; align-items:flex-start;">
               <select class="search step-action" style="max-width:200px; margin-bottom:0;" onchange="onStepActionChange(this)">
-                {% for a in ['navigate','fill','click','assert_text','assert_url_contains','wait_for_selector','wait_for_url','wait'] %}
+                {% for a in ['navigate','fill','click','assert_text','assert_url_contains','wait_for_selector','wait_for_url','wait','screenshot'] %}
                 <option value="{{ a }}" {{ 'selected' if action == a else '' }}>{{ a }}</option>
                 {% endfor %}
               </select>
@@ -113,6 +113,8 @@
                      value="{{ step.fill.field | default('') | e }}" style="flex:1; margin-bottom:0;">
               <input class="search step-fill-value" type="text" placeholder="value"
                      value="{{ step.fill.value | default('') | e }}" style="flex:1; margin-bottom:0;" list="var-options">
+              {% elif action == 'screenshot' %}
+              <span style="flex:2;"></span>
               {% else %}
               <input class="search step-value" type="text" placeholder="value"
                      value="{{ step[action] | default('') | e }}" style="flex:1; margin-bottom:0;" list="var-options">
@@ -207,8 +209,10 @@ function collectSimpleFormData() {
         const action = stepRow.querySelector('.step-action').value;
         if (action === 'fill') {
           test.steps.push({ fill: { field: stepRow.querySelector('.step-fill-field').value.trim(), value: stepRow.querySelector('.step-fill-value').value.trim() }});
+        } else if (action === 'screenshot') {
+          test.steps.push({ screenshot: null });
         } else {
-          const val = stepRow.querySelector('.step-value').value.trim();
+          const val = stepRow.querySelector('.step-value') ? stepRow.querySelector('.step-value').value.trim() : '';
           const step = {}; step[action] = val; test.steps.push(step);
         }
       });
@@ -347,7 +351,7 @@ function addStepRow(btn) {
 function makeStepActionSelect() {
   const sel = document.createElement('select'); sel.className = 'search step-action'; sel.style.cssText = 'max-width:200px; margin-bottom:0;';
   sel.onchange = function() { onStepActionChange(sel); };
-  ['navigate','fill','click','assert_text','assert_url_contains','wait_for_selector','wait_for_url','wait'].forEach(function(a) {
+  ['navigate','fill','click','assert_text','assert_url_contains','wait_for_selector','wait_for_url','wait','screenshot'].forEach(function(a) {
     const o = document.createElement('option'); o.value = a; o.textContent = a; sel.appendChild(o);
   });
   return sel;
@@ -366,6 +370,8 @@ function onStepActionChange(sel) {
   if (sel.value === 'fill') {
     row.insertBefore(makeInput('search step-fill-field', 'text', 'CSS selector', 'flex:1; margin-bottom:0;'), rm);
     row.insertBefore(makeInput('search step-fill-value', 'text', 'value', 'flex:1; margin-bottom:0;'), rm);
+  } else if (sel.value === 'screenshot') {
+    const sp = document.createElement('span'); sp.style.flex = '2'; row.insertBefore(sp, rm);
   } else {
     row.insertBefore(makeInput('search step-value', 'text', 'value', 'flex:1; margin-bottom:0;'), rm);
     const sp = document.createElement('span'); sp.style.flex = '1'; row.insertBefore(sp, rm);

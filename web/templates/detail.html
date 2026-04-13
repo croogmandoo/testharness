@@ -5,13 +5,53 @@
 </div>
 
 {% if selected_run %}
+
+{# Run history strip #}
+{% if runs %}
+<div id="run-history-strip" style="display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:1rem;">
+  {% for run in runs[:5] %}
+  <a href="/app/{{ app }}/{{ environment }}?run_id={{ run.id }}"
+     style="padding:.2rem .55rem; border-radius:4px; font-size:.75rem; text-decoration:none;
+            border:1px solid {{ '#3b82f6' if run.id == selected_run.id else '#2d3748' }};
+            color:{{ '#e2e8f0' if run.id == selected_run.id else '#718096' }};">
+    {% if run.status == 'complete' %}✓
+    {% elif run.status in ('pending', 'running') %}⟳
+    {% else %}✗{% endif %}
+    {{ (run.started_at or '')[:10] }}
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
 <div class="run-meta">
   <span>Run: {{ selected_run.id[:8] }}</span>
   <span>Status: <strong>{{ selected_run.status }}</strong></span>
   <span>Started: {{ selected_run.started_at or "—" }}</span>
   <button class="btn btn-sm" onclick="triggerRun()">Re-run All</button>
+  <a href="/api/runs/{{ selected_run.id }}/export?format=pdf" class="btn btn-sm">Export PDF</a>
+  <a href="/api/runs/{{ selected_run.id }}/export?format=docx" class="btn btn-sm">Export DOCX</a>
 </div>
 
+{# Progress bar — only shown while run is active #}
+{% if is_live %}
+{% set total = test_results|length + pending_test_names|length %}
+{% set done = test_results|length %}
+<div id="progress-bar" style="margin-bottom:1rem;">
+  <div style="display:flex; align-items:center; gap:1rem; margin-bottom:.4rem;">
+    <span id="progress-text" style="font-size:.875rem; color:#a0aec0;">
+      {{ done }} / {{ total }} tests complete
+    </span>
+    <span id="elapsed-timer" style="font-size:.8rem; color:#718096;">00:00</span>
+  </div>
+  <div style="height:4px; background:#2d3748; border-radius:2px;">
+    <div id="progress-fill"
+         style="height:4px; background:#3b82f6; border-radius:2px; transition:width .3s;
+                width:{{ ((done / total * 100) | int) if total > 0 else 0 }}%;"></div>
+  </div>
+</div>
+{% endif %}
+
+{# Completed test cards #}
 {% for tr in test_results %}
 <div class="test-card {% if tr.status == 'fail' or tr.status == 'error' %}test-card--fail{% elif tr.status == 'pass' %}test-card--pass{% endif %}">
   <div class="test-card-header">
@@ -41,6 +81,12 @@
       <span class="step-name">{{ step.step }}</span>
       <span class="step-duration">{{ step.duration_ms }}ms</span>
       {% if step.error %}<span class="step-error">{{ step.error }}</span>{% endif %}
+      {% if step.screenshot %}
+      <div style="margin-top:.4rem;">
+        <img src="/screenshots/{{ step.screenshot }}" class="screenshot"
+             style="max-width:320px; border-radius:4px; display:block;">
+      </div>
+      {% endif %}
     </div>
     {% endfor %}
   </div>
@@ -57,6 +103,16 @@
 </div>
 {% endfor %}
 
+{# Pending test placeholders #}
+{% for name in pending_test_names %}
+<div class="test-card" style="opacity:.45;">
+  <div class="test-card-header">
+    <span class="test-name">{{ name }}</span>
+    <span class="test-status" style="color:#718096;">⏳ Pending</span>
+  </div>
+</div>
+{% endfor %}
+
 {% else %}
 <p>No runs yet for {{ app }} ({{ environment }}). <button class="btn" onclick="triggerRun()">Run now</button></p>
 {% endif %}
@@ -64,13 +120,48 @@
 <script>
 const APP = {{ app | tojson }};
 const ENV = {{ environment | tojson }};
+
 async function triggerRun() {
   await fetch("/api/runs", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({app: APP, environment: ENV, triggered_by: "ui"})
   });
-  setTimeout(() => location.reload(), 3000);
+  location.reload();
 }
+
+{% if is_live %}
+const RUN_ID = {{ selected_run.id | tojson }};
+const TOTAL_TESTS = {{ test_results|length + pending_test_names|length }};
+
+var elapsedSeconds = 0;
+var timer = setInterval(function() {
+  elapsedSeconds++;
+  var m = String(Math.floor(elapsedSeconds / 60)).padStart(2, '0');
+  var s = String(elapsedSeconds % 60).padStart(2, '0');
+  var el = document.getElementById('elapsed-timer');
+  if (el) el.textContent = m + ':' + s;
+}, 1000);
+
+(async function pollRun() {
+  while (true) {
+    await new Promise(function(r) { setTimeout(r, 2000); });
+    var resp = await fetch('/api/runs/' + RUN_ID);
+    if (!resp.ok) break;
+    var data = await resp.json();
+    var done = data.results ? data.results.length : 0;
+    var pct = TOTAL_TESTS > 0 ? Math.round(done / TOTAL_TESTS * 100) : 0;
+    var fill = document.getElementById('progress-fill');
+    var text = document.getElementById('progress-text');
+    if (fill) fill.style.width = pct + '%';
+    if (text) text.textContent = done + ' / ' + TOTAL_TESTS + ' tests complete';
+    if (data.status === 'complete') {
+      clearInterval(timer);
+      location.reload();
+      return;
+    }
+  }
+})();
+{% endif %}
 </script>
 {% endblock %}
