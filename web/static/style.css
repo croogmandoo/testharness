@@ -1,23 +1,23 @@
 @import url('https://fonts.googleapis.com/css2?family=Martian+Mono:wght@100..800&display=swap');
 
 :root {
-  --bg:      #0b0a08;
-  --bg-1:    #100f0c;
-  --bg-2:    #171612;
-  --bg-3:    #201e18;
-  --bg-4:    #2a2820;
-  --border:  #272520;
-  --border-2:#343028;
-  --text:    #d8c898;
-  --text-2:  #7a7055;
-  --text-3:  #4a4535;
-  --amber:   #e89a0c;
-  --amber-hi:#f5b030;
-  --amber-lo:#6a4608;
+  --bg:      #0b0b0c;
+  --bg-1:    #111113;
+  --bg-2:    #18181a;
+  --bg-3:    #202022;
+  --bg-4:    #2a2a2c;
+  --border:  #272728;
+  --border-2:#343436;
+  --text:    #ffffff;
+  --text-2:  #787778;
+  --text-3:  #4a494a;
+  --amber:   #d11f44;
+  --amber-hi:#e8304f;
+  --amber-lo:#5c0d1e;
   --pass:    #2dd680;
   --pass-dim:rgba(45,214,128,.1);
-  --fail:    #f04848;
-  --fail-dim:rgba(240,72,72,.1);
+  --fail:    #d11f44;
+  --fail-dim:rgba(209,31,68,.1);
   --run:     #5ba0f0;
   --run-dim: rgba(91,160,240,.1);
 }
@@ -529,7 +529,7 @@ select.input option { background: var(--bg-2); }
   padding: 2rem;
   background: var(--bg);
   /* Subtle radial warmth */
-  background-image: radial-gradient(ellipse 60% 50% at 50% 100%, rgba(232,154,12,.04) 0%, transparent 70%);
+  background-image: radial-gradient(ellipse 60% 50% at 50% 100%, rgba(209,31,68,.04) 0%, transparent 70%);
 }
 .auth-box { width: 100%; max-width: 340px; }
 
