@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Setup — Testing Harness</title>
+<link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<div class="main" style="max-width:400px;margin:4rem auto;">
+  <h1 style="margin-bottom:1.5rem;">Create Admin Account</h1>
+  {% if error %}<p style="color:#f87171;margin-bottom:1rem;">{{ error }}</p>{% endif %}
+  <form method="post" action="/setup">
+    <div style="margin-bottom:1rem;">
+      <label style="display:block;color:#a0aec0;margin-bottom:.25rem;">Username</label>
+      <input name="username" required autofocus
+             style="width:100%;padding:.5rem .75rem;background:#1a1f2e;border:1px solid #2d3748;
+                    border-radius:6px;color:#e2e8f0;font-size:.875rem;">
+    </div>
+    <div style="margin-bottom:1rem;">
+      <label style="display:block;color:#a0aec0;margin-bottom:.25rem;">Display name (optional)</label>
+      <input name="display_name"
+             style="width:100%;padding:.5rem .75rem;background:#1a1f2e;border:1px solid #2d3748;
+                    border-radius:6px;color:#e2e8f0;font-size:.875rem;">
+    </div>
+    <div style="margin-bottom:1rem;">
+      <label style="display:block;color:#a0aec0;margin-bottom:.25rem;">Password</label>
+      <input name="password" type="password" required
+             style="width:100%;padding:.5rem .75rem;background:#1a1f2e;border:1px solid #2d3748;
+                    border-radius:6px;color:#e2e8f0;font-size:.875rem;">
+    </div>
+    <div style="margin-bottom:1.5rem;">
+      <label style="display:block;color:#a0aec0;margin-bottom:.25rem;">Confirm password</label>
+      <input name="confirm" type="password" required
+             style="width:100%;padding:.5rem .75rem;background:#1a1f2e;border:1px solid #2d3748;
+                    border-radius:6px;color:#e2e8f0;font-size:.875rem;">
+    </div>
+    <button type="submit" class="btn btn-primary" style="width:100%;padding:.6rem;">
+      Create admin &amp; sign in
+    </button>
+  </form>
+</div>
+</body>
+</html>

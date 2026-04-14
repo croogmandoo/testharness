@@ -51,6 +51,15 @@ CREATE TABLE IF NOT EXISTS users (
     created_at    TEXT NOT NULL,
     last_login_at TEXT
 );
+CREATE TABLE IF NOT EXISTS secrets (
+    id              TEXT PRIMARY KEY,
+    name            TEXT UNIQUE NOT NULL,
+    encrypted_value TEXT NOT NULL,
+    description     TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    updated_by      TEXT REFERENCES users(id)
+);
 """
 
 class Database:
@@ -304,3 +313,39 @@ class Database:
         user = self.get_user_by_username(username)
         user.pop("password_hash", None)
         return user
+
+    # ── Secrets ────────────────────────────────────────────────────────────────
+
+    def upsert_secret(self, name: str, encrypted_value: str,
+                      description: Optional[str] = None,
+                      user_id: Optional[str] = None) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO secrets (id, name, encrypted_value, description, created_at, updated_at, updated_by) "
+                "VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(name) DO UPDATE SET "
+                "encrypted_value=excluded.encrypted_value, description=excluded.description, "
+                "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+                (str(uuid.uuid4()), name, encrypted_value, description, now, now, user_id),
+            )
+
+    def get_secret(self, name: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM secrets WHERE name=?", (name,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def delete_secret(self, name: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM secrets WHERE name=?", (name,))
+
+    def list_secrets(self) -> list:
+        """Returns all secrets. encrypted_value is excluded."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, name, description, created_at, updated_at, updated_by "
+                "FROM secrets ORDER BY name"
+            ).fetchall()
+            return [dict(r) for r in rows]
