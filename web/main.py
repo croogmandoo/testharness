@@ -53,6 +53,7 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     from harness.secrets_store import SecretsStore
     from web.auth import set_auth_config
     _secrets_store = SecretsStore(_db)
+    _secrets_store.inject_to_env()
     auth_cfg = _config.get("auth", {})
     set_auth_config(
         signing_key=_secrets_store.session_signing_key,
