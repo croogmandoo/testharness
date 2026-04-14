@@ -1,0 +1,14 @@
+app: Example Web App
+environments:
+  production: https://google.com
+  staging: https://google.ca
+tests:
+- expect_status: 200
+  name: Page is reachable
+  type: availability
+- name: Homepage loads
+  steps:
+  - navigate: /
+  - assert_text: Google
+  type: browser
+url: https://google.com

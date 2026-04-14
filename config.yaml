@@ -7,8 +7,8 @@ environments:
     label: "Production"
 
 alerts:
-  teams:
-    webhook_url: "$TEAMS_WEBHOOK_URL"
+#  teams:
+ #   webhook_url: "$TEAMS_WEBHOOK_URL"
   # email:
   #   smtp_host: "mail.company.com"
   #   smtp_port: 587
@@ -16,6 +16,7 @@ alerts:
   #   to: ["ops-team@company.com"]
   #   username: "$SMTP_USERNAME"
   #   password: "$SMTP_PASSWORD"
+
 
 browser:
   headless: true

@@ -1,0 +1,18 @@
+app: radarr
+environments:
+  Production: https://radarr.croogmandoo.xyz
+tests:
+- name: '1'
+  steps:
+  - navigate: /
+  - fill:
+      field: input[name=username]
+      value: $RADARR_USERNAME
+  - fill:
+      field: input[name=password]
+      value: $RADARR_PASSWORD
+  - click: button:has-text('Login')
+  - wait_for_selector: .PageSidebar-sidebarContainer-aQa5n
+  - assert_text: Wanted
+  type: browser
+url: https://radarr.croogmandoo.xyz

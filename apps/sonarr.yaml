@@ -1,0 +1,29 @@
+app: Sonarr
+environments:
+  production: https://sonarr.croogmandoo.xyz
+  staging: http://172.20.1.247:8989
+tests:
+- expect_status: 302
+  name: Page is reachable
+  type: availability
+- name: Homepage loads
+  steps:
+  - navigate: /
+  - assert_text: SIGN IN TO CONTINUE
+  - screenshot: null
+  type: browser
+- name: Login Flow
+  steps:
+  - navigate: /login
+  - fill:
+      field: input[name=username]
+      value: $SONARR_USERNAME
+  - fill:
+      field: input[name=password]
+      value: $SONARR_PASSWORD
+  - click: button:has-text('Login')
+  - wait_for_selector: .PageSidebar-sidebar-KUJeR
+  - assert_text: Wanted
+  - screenshot: null
+  type: browser
+url: https://sonarr.croogmandoo.xyz
