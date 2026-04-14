@@ -78,6 +78,7 @@ async def secrets_create(
     if store:
         store.set(name, value, description=description.strip() or None,
                   user_id=current_user["id"])
+        os.environ[name] = value
     return RedirectResponse("/secrets", status_code=303)
 
 
@@ -91,4 +92,5 @@ async def secrets_delete(
     store = get_secrets_store()
     if store:
         store.delete(name)
+        os.environ.pop(name, None)
     return RedirectResponse("/secrets", status_code=303)

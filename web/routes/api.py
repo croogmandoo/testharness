@@ -18,7 +18,7 @@ class RunRequest(BaseModel):
 @router.post("/runs", status_code=202)
 async def trigger_run(req: RunRequest, background_tasks: BackgroundTasks,
                       current_user: dict = Depends(require_role("admin", "runner"))):
-    from web.main import get_db, get_config, get_apps
+    from web.main import get_db, get_config, get_apps, get_secrets_store
     db = get_db()
     config = get_config()
     all_apps = get_apps()
@@ -48,7 +48,7 @@ async def trigger_run(req: RunRequest, background_tasks: BackgroundTasks,
         run = Run(app=app_def["app"], environment=req.environment, triggered_by=req.triggered_by)
         db.insert_run(run)
         background_tasks.add_task(run_app, app_def, req.environment, req.triggered_by, db, config,
-                                  run_id=run.id)
+                                  run_id=run.id, secrets_store=get_secrets_store())
         queued.append(run.id)
 
     return {"run_id": queued[0] if queued else None, "run_ids": queued, "apps": [a["app"] for a in target_apps]}
