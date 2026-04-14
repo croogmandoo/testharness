@@ -68,6 +68,8 @@ async def get_current_user(request: Request) -> dict:
             _not_authed()
         if matched["expires_at"]:
             expires = datetime.fromisoformat(matched["expires_at"])
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
             if expires < datetime.now(timezone.utc):
                 _not_authed()
         user = db.get_user_by_id(matched["user_id"])

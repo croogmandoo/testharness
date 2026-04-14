@@ -22,7 +22,7 @@ def client(tmp_path):
     return TestClient(app, raise_server_exceptions=True)
 
 
-def _make_and_store_key(client_fixture, *, expires_at=None, is_active=1):
+def _make_and_store_key(*, expires_at=None, is_active=1):
     """Helper: insert a key row directly into DB and return the plaintext key."""
     from web.main import get_db
     db = get_db()
@@ -44,14 +44,14 @@ def _make_and_store_key(client_fixture, *, expires_at=None, is_active=1):
 
 
 def test_bearer_auth_succeeds(client):
-    plaintext, _ = _make_and_store_key(client)
+    plaintext, _ = _make_and_store_key()
     resp = client.get("/api/apps",
                       headers={"Authorization": f"Bearer {plaintext}"})
     assert resp.status_code == 200
 
 
 def test_x_api_key_header_auth_succeeds(client):
-    plaintext, _ = _make_and_store_key(client)
+    plaintext, _ = _make_and_store_key()
     resp = client.get("/api/apps",
                       headers={"X-API-Key": plaintext})
     assert resp.status_code == 200
@@ -64,7 +64,7 @@ def test_invalid_key_returns_401(client):
 
 
 def test_revoked_key_returns_401(client):
-    plaintext, key_id = _make_and_store_key(client, is_active=0)
+    plaintext, key_id = _make_and_store_key(is_active=0)
     resp = client.get("/api/apps",
                       headers={"Authorization": f"Bearer {plaintext}"})
     assert resp.status_code == 401
@@ -72,7 +72,7 @@ def test_revoked_key_returns_401(client):
 
 def test_expired_key_returns_401(client):
     past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-    plaintext, _ = _make_and_store_key(client, expires_at=past)
+    plaintext, _ = _make_and_store_key(expires_at=past)
     resp = client.get("/api/apps",
                       headers={"Authorization": f"Bearer {plaintext}"})
     assert resp.status_code == 401
@@ -85,3 +85,10 @@ def test_session_cookie_still_works(client):
     token = make_session_token("user1", _signing_key, _session_hours)
     resp = client.get("/api/apps", cookies={"session": token})
     assert resp.status_code == 200
+
+
+def test_x_api_key_without_hth_prefix_ignored(client):
+    """X-API-Key header without hth_ prefix is ignored (falls through to cookie check)."""
+    resp = client.get("/api/apps",
+                      headers={"X-API-Key": "mytoken_without_prefix"})
+    assert resp.status_code == 401
