@@ -298,4 +298,6 @@ class Database:
             if not existing.get("role_override"):
                 updates["role"] = role
             self.update_user(existing["id"], **updates)
-        return self.get_user_by_username(username)
+        user = self.get_user_by_username(username)
+        user.pop("password_hash", None)
+        return user

@@ -112,3 +112,8 @@ def test_upsert_ldap_user_respects_role_override(db):
     result = db.upsert_ldap_user("bob", "Bob Smith", "bob@corp.com", "runner")
     # Role should still be admin because role_override=1
     assert result["role"] == "admin"
+
+
+def test_upsert_ldap_user_excludes_password_hash(db):
+    user = db.upsert_ldap_user("bob", "Bob Smith", "bob@corp.com", "runner")
+    assert "password_hash" not in user
