@@ -18,7 +18,9 @@
   <tbody>
     {% for app in active_apps %}
     <tr>
-      <td style="font-weight:600;">{{ app.app }}</td>
+      <td style="font-weight:600;">
+        <a href="/app/{{ app.app }}/{{ environment or (environments.keys()|list|first) or 'production' }}">{{ app.app }}</a>
+      </td>
       <td><a href="{{ app.url }}" target="_blank" style="color:var(--text-2);">{{ app.url }}</a></td>
       <td style="color:var(--text-2);">{{ app.tests | length }}</td>
       <td style="text-align:right;">
