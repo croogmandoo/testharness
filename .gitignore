@@ -6,3 +6,4 @@ __pycache__/
 .pytest_cache/
 .superpowers/
 harness-task-*.xml
+.worktrees/
