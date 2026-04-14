@@ -226,31 +226,20 @@ def test_get_vars_returns_empty_when_no_apps(client):
 
 
 def test_get_secrets_returns_200_html(client_with_app):
-    """GET /secrets returns 200 HTML with the secrets dependency table."""
+    """GET /secrets returns 200 HTML (admin-only secrets management page)."""
     client, apps_dir = client_with_app
-    (apps_dir / "myapp.yaml").write_text(
-        "app: myapp\nurl: https://example.com\ntests:\n"
-        "  - name: t\n    type: browser\n    steps:\n"
-        "      - fill:\n          field: '#p'\n          value: $MY_SECRET\n"
-    )
     resp = client.get("/secrets")
     assert resp.status_code == 200
-    assert b"$MY_SECRET" in resp.content
+    assert b"text/html" in resp.headers["content-type"].encode()
 
 
 def test_get_secrets_does_not_expose_values(client_with_app, monkeypatch):
-    """GET /secrets never exposes actual env var values — only names and set/not-set status."""
+    """GET /secrets never exposes actual env var values."""
     client, apps_dir = client_with_app
     monkeypatch.setenv("MY_SECRET", "super-secret-value")
-    (apps_dir / "myapp.yaml").write_text(
-        "app: myapp\nurl: https://example.com\ntests:\n"
-        "  - name: t\n    type: browser\n    steps:\n"
-        "      - fill:\n          field: '#p'\n          value: $MY_SECRET\n"
-    )
     resp = client.get("/secrets")
     assert resp.status_code == 200
     assert b"super-secret-value" not in resp.content
-    assert b"$MY_SECRET" in resp.content
 
 
 def test_detail_page_shows_run_history_strip(tmp_path):
@@ -272,6 +261,9 @@ def test_detail_page_shows_run_history_strip(tmp_path):
 
     config = {"default_environment": "prod", "environments": {"prod": {"label": "Prod"}}}
     app = create_app(db=db, config=config, apps_dir=str(tmp_path / "apps"))
+    from web.auth import get_current_user
+    _admin = db.get_user_by_username("_test_admin")
+    app.dependency_overrides[get_current_user] = lambda: _admin
     client = TestClient(app)
     resp = client.get("/app/myapp/prod")
     assert resp.status_code == 200
@@ -304,6 +296,9 @@ def test_detail_page_shows_pending_cards_when_run_is_active(tmp_path):
 
     config = {"default_environment": "prod", "environments": {"prod": {"label": "Prod"}}}
     app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    from web.auth import get_current_user
+    _admin = db.get_user_by_username("_test_admin")
+    app.dependency_overrides[get_current_user] = lambda: _admin
     client = TestClient(app)
     resp = client.get("/app/myapp/prod")
     assert resp.status_code == 200

@@ -1,8 +1,9 @@
 """Secrets management routes — stub router for Phase 2 wiring."""
 import os
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from web.auth import require_role
 
 router = APIRouter()
 templates = Jinja2Templates(
@@ -11,7 +12,8 @@ templates = Jinja2Templates(
 
 
 @router.get("/secrets", response_class=HTMLResponse)
-async def secrets_list(request: Request):
+async def secrets_list(request: Request,
+                       current_user: dict = Depends(require_role("admin"))):
     from web.main import get_db, get_secrets_store, get_config
     store = get_secrets_store()
     config = get_config()

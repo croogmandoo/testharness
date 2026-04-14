@@ -62,6 +62,9 @@ def test_trigger_run_returns_run_id(db, tmp_path):
     }))
     config = {"default_environment": "production", "environments": {"production": {"label": "Production"}}}
     app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    from web.auth import get_current_user
+    _admin = db.get_user_by_username("_test_admin")
+    app.dependency_overrides[get_current_user] = lambda: _admin
     client = TestClient(app)
     with patch("web.routes.api.run_app", new=AsyncMock(return_value="run-123")):
         resp = client.post("/api/runs", json={"app": "myapp", "environment": "production"})

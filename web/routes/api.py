@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Any, Optional
 from harness.models import Run
 from harness.runner import run_app
 from harness.app_manager import get_known_vars
+from web.auth import get_current_user, require_role
 
 router = APIRouter(prefix="/api")
 
@@ -15,7 +16,8 @@ class RunRequest(BaseModel):
 
 
 @router.post("/runs", status_code=202)
-async def trigger_run(req: RunRequest, background_tasks: BackgroundTasks):
+async def trigger_run(req: RunRequest, background_tasks: BackgroundTasks,
+                      current_user: dict = Depends(require_role("admin", "runner"))):
     from web.main import get_db, get_config, get_apps
     db = get_db()
     config = get_config()
@@ -53,7 +55,7 @@ async def trigger_run(req: RunRequest, background_tasks: BackgroundTasks):
 
 
 @router.get("/runs/{run_id}")
-async def get_run(run_id: str):
+async def get_run(run_id: str, current_user: dict = Depends(get_current_user)):
     from web.main import get_db
     db = get_db()
     run = db.get_run(run_id)
@@ -64,21 +66,23 @@ async def get_run(run_id: str):
 
 
 @router.get("/apps")
-async def list_apps(environment: str = "production"):
+async def list_apps(environment: str = "production",
+                    current_user: dict = Depends(get_current_user)):
     from web.main import get_db
     db = get_db()
     return db.get_app_summary(environment)
 
 
 @router.get("/vars")
-async def list_vars():
+async def list_vars(current_user: dict = Depends(get_current_user)):
     """Return all $VAR names referenced in app YAML files. Never returns values."""
     from web.main import get_apps_dir
     return {"vars": get_known_vars(apps_dir=get_apps_dir())}
 
 
 @router.get("/results/{app}/{environment}")
-async def get_results(app: str, environment: str, limit: int = 20):
+async def get_results(app: str, environment: str, limit: int = 20,
+                      current_user: dict = Depends(get_current_user)):
     from web.main import get_db
     db = get_db()
     return db.get_results_for_app(app, environment, limit)
@@ -92,7 +96,8 @@ class AppDefRequest(BaseModel):
 
 
 @router.post("/apps", status_code=201)
-async def create_app_def(req: AppDefRequest):
+async def create_app_def(req: AppDefRequest,
+                         current_user: dict = Depends(require_role("admin", "runner"))):
     from web.main import get_apps_dir, reload_apps
     import harness.app_manager as mgr
     try:
@@ -107,7 +112,8 @@ async def create_app_def(req: AppDefRequest):
 
 
 @router.put("/apps/{app_name}", status_code=200)
-async def update_app_def(app_name: str, req: AppDefRequest):
+async def update_app_def(app_name: str, req: AppDefRequest,
+                         current_user: dict = Depends(require_role("admin", "runner"))):
     from web.main import get_apps_dir, reload_apps
     import harness.app_manager as mgr
     if req.app_def.get("app") and req.app_def["app"] != app_name:
@@ -127,7 +133,8 @@ async def update_app_def(app_name: str, req: AppDefRequest):
 
 
 @router.delete("/apps/{app_name}", status_code=200)
-async def archive_app_def(app_name: str):
+async def archive_app_def(app_name: str,
+                          current_user: dict = Depends(require_role("admin", "runner"))):
     from web.main import get_apps_dir, reload_apps
     import harness.app_manager as mgr
     try:
@@ -142,7 +149,8 @@ async def archive_app_def(app_name: str):
 
 
 @router.post("/apps/{app_name}/restore", status_code=200)
-async def restore_app_def(app_name: str):
+async def restore_app_def(app_name: str,
+                          current_user: dict = Depends(require_role("admin", "runner"))):
     from web.main import get_apps_dir, reload_apps
     import harness.app_manager as mgr
     try:
@@ -157,7 +165,8 @@ async def restore_app_def(app_name: str):
 
 
 @router.delete("/apps/{app_name}/permanent", status_code=204)
-async def delete_app_permanently(app_name: str) -> None:
+async def delete_app_permanently(app_name: str,
+                                 current_user: dict = Depends(require_role("admin", "runner"))) -> None:
     from web.main import get_apps_dir
     import harness.app_manager as mgr
     try:
