@@ -366,3 +366,59 @@ class Database:
                 "FROM secrets ORDER BY name"
             ).fetchall()
             return [dict(r) for r in rows]
+
+    # ── API Keys ────────────────────────────────────────────────────────────
+
+    def insert_api_key(self, row: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO api_keys "
+                "(id, user_id, name, key_prefix, key_hash, expires_at, "
+                "created_at, last_used_at, is_active) "
+                "VALUES (:id,:user_id,:name,:key_prefix,:key_hash,:expires_at,"
+                ":created_at,:last_used_at,:is_active)",
+                row,
+            )
+
+    def get_api_key_by_prefix(self, prefix: str) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM api_keys WHERE key_prefix=?", (prefix,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def revoke_api_key(self, key_id: str, user_id: Optional[str] = None) -> None:
+        with self._connect() as conn:
+            if user_id is None:
+                conn.execute(
+                    "UPDATE api_keys SET is_active=0 WHERE id=?", (key_id,)
+                )
+            else:
+                conn.execute(
+                    "UPDATE api_keys SET is_active=0 WHERE id=? AND user_id=?",
+                    (key_id, user_id),
+                )
+
+    def list_api_keys_for_user(self, user_id: str) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM api_keys WHERE user_id=? ORDER BY created_at DESC",
+                (user_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def list_all_api_keys(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT k.*, u.username FROM api_keys k "
+                "JOIN users u ON k.user_id = u.id "
+                "ORDER BY k.created_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def touch_api_key_last_used(self, key_id: str, timestamp: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE api_keys SET last_used_at=? WHERE id=?",
+                (timestamp, key_id),
+            )
