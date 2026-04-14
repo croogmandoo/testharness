@@ -22,6 +22,8 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
                   secrets_store=None) -> str:
     if secrets_store is not None:
         secrets_store.inject_to_env()
+    from harness.config import resolve_env_vars
+    app_def = resolve_env_vars(app_def, strict=True)
     if run_id:
         run = Run(id=run_id, app=app_def["app"], environment=environment, triggered_by=triggered_by)
     else:

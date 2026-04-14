@@ -29,7 +29,7 @@ def load_apps(apps_dir: str = "apps") -> list:
     for path in paths:
         with open(path) as f:
             raw = yaml.safe_load(f)
-        resolved = resolve_env_vars(raw)
+        resolved = resolve_env_vars(raw, strict=False)
         resolved["_source"] = path
         resolved["_type"] = "yaml"
         apps.append(resolved)

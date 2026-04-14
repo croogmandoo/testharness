@@ -5,16 +5,18 @@ from typing import Any
 class ConfigError(Exception):
     pass
 
-def resolve_env_vars(obj: Any) -> Any:
+def resolve_env_vars(obj: Any, strict: bool = True) -> Any:
     if isinstance(obj, dict):
-        return {k: resolve_env_vars(v) for k, v in obj.items()}
+        return {k: resolve_env_vars(v, strict) for k, v in obj.items()}
     if isinstance(obj, list):
-        return [resolve_env_vars(v) for v in obj]
+        return [resolve_env_vars(v, strict) for v in obj]
     if isinstance(obj, str) and obj.startswith("$"):
         var = obj[1:]
         val = os.environ.get(var)
         if val is None:
-            raise ConfigError(f"Environment variable '{var}' is not set")
+            if strict:
+                raise ConfigError(f"Environment variable '{var}' is not set")
+            return obj  # leave $VAR placeholder in place
         return val
     return obj
 
