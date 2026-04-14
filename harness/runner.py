@@ -18,7 +18,10 @@ def determine_alert(previous_state: str, new_status: str) -> Optional[AlertType]
     return None
 
 async def run_app(app_def: dict, environment: str, triggered_by: str,
-                  db: Database, config: dict, run_id: str = None) -> str:
+                  db: Database, config: dict, run_id: str = None,
+                  secrets_store=None) -> str:
+    if secrets_store is not None:
+        secrets_store.inject_to_env()
     if run_id:
         run = Run(id=run_id, app=app_def["app"], environment=environment, triggered_by=triggered_by)
     else:

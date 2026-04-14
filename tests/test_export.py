@@ -142,10 +142,31 @@ from harness.db import Database
 from harness.models import Run, TestResult
 
 
+def _seed_export_admin(db):
+    import uuid
+    from datetime import datetime, timezone
+    user = {
+        "id": str(uuid.uuid4()),
+        "username": "_test_admin",
+        "display_name": "Test Admin",
+        "email": None,
+        "password_hash": None,
+        "role": "admin",
+        "auth_provider": "local",
+        "role_override": 0,
+        "is_active": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    }
+    db.insert_user(user)
+    return user
+
+
 @pytest.fixture
 def export_db(tmp_path):
     d = Database(str(tmp_path / "test.db"))
     d.init_schema()
+    _seed_export_admin(d)
     run = Run(app="myapp", environment="production", triggered_by="test", status="complete")
     d.insert_run(run)
     tr = TestResult(
@@ -167,6 +188,9 @@ def export_client(export_db, tmp_path):
     apps_dir.mkdir()
     config = {}
     app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    from web.auth import get_current_user
+    _admin = db.get_user_by_username("_test_admin")
+    app.dependency_overrides[get_current_user] = lambda: _admin
     return TestClient(app)
 
 

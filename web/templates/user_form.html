@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="breadcrumb">
+  <a href="/users">Users</a> / {% if mode == "create" %}New User{% else %}Edit {{ user.username }}{% endif %}
+</div>
+
+<div style="max-width:480px;">
+  <h1 style="margin-bottom:1.25rem;">{% if mode == "create" %}New User{% else %}Edit User{% endif %}</h1>
+
+  {% if error %}
+  <div class="form-error">{{ error }}</div>
+  {% endif %}
+
+  <form method="post">
+    {% if mode == "create" %}
+    <div class="field">
+      <label class="label">Username</label>
+      <input class="input" name="username" required autofocus value="{{ user.username or '' }}">
+    </div>
+    {% endif %}
+
+    <div class="field">
+      <label class="label">Display Name</label>
+      <input class="input" name="display_name" value="{{ user.display_name or '' }}">
+    </div>
+
+    <div class="field">
+      <label class="label">Email</label>
+      <input class="input" name="email" type="email" value="{{ user.email or '' }}">
+    </div>
+
+    <div class="field">
+      <label class="label">Role</label>
+      <select class="input" name="role">
+        {% for r in ["admin","runner","reporting","read_only"] %}
+        <option value="{{ r }}" {% if user.role == r %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    {% if mode == "edit" %}
+    <div class="field">
+      <label class="checkbox-label">
+        <input type="checkbox" name="role_override" value="1" {% if user.role_override %}checked{% endif %}>
+        Lock role (skip LDAP sync)
+      </label>
+    </div>
+    <div class="field">
+      <label class="checkbox-label">
+        <input type="checkbox" name="is_active" value="1" {% if user.is_active %}checked{% endif %}>
+        Active
+      </label>
+    </div>
+    {% endif %}
+
+    <div class="field" style="margin-bottom:1.5rem;">
+      <label class="label">
+        {% if mode == "create" %}Password{% else %}New password <span style="color:var(--text-3);font-weight:400;">(leave blank to keep)</span>{% endif %}
+      </label>
+      <input class="input" name="password" type="password" {% if mode == "create" %}required{% endif %}>
+    </div>
+
+    <div style="display:flex;gap:.5rem;">
+      <button type="submit" class="btn btn-primary">
+        {% if mode == "create" %}Create User{% else %}Save Changes{% endif %}
+      </button>
+      <a href="/users" class="btn">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

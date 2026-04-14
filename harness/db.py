@@ -1,5 +1,7 @@
 import sqlite3
 import json
+import uuid
+from datetime import datetime, timezone
 from typing import Optional
 from harness.models import Run, TestResult, AppState
 
@@ -35,6 +37,28 @@ CREATE TABLE IF NOT EXISTS app_state (
     state       TEXT NOT NULL,
     since       TEXT NOT NULL,
     PRIMARY KEY (app, environment, test_name)
+);
+CREATE TABLE IF NOT EXISTS users (
+    id            TEXT PRIMARY KEY,
+    username      TEXT UNIQUE NOT NULL,
+    display_name  TEXT,
+    email         TEXT,
+    password_hash TEXT,
+    role          TEXT NOT NULL,
+    auth_provider TEXT NOT NULL DEFAULT 'local',
+    role_override INTEGER DEFAULT 0,
+    is_active     INTEGER DEFAULT 1,
+    created_at    TEXT NOT NULL,
+    last_login_at TEXT
+);
+CREATE TABLE IF NOT EXISTS secrets (
+    id              TEXT PRIMARY KEY,
+    name            TEXT UNIQUE NOT NULL,
+    encrypted_value TEXT NOT NULL,
+    description     TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    updated_by      TEXT REFERENCES users(id)
 );
 """
 
@@ -195,3 +219,137 @@ class Database:
         for app_dict in apps.values():
             app_dict["active_run_id"] = active_map.get(app_dict["app"])
         return list(apps.values())
+
+    # ── Users ──────────────────────────────────────────────────────────────
+
+    def insert_user(self, user: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO users (id, username, display_name, email, password_hash, "
+                "role, auth_provider, role_override, is_active, created_at, last_login_at) "
+                "VALUES (:id,:username,:display_name,:email,:password_hash,"
+                ":role,:auth_provider,:role_override,:is_active,:created_at,:last_login_at)",
+                user,
+            )
+
+    def get_user_by_username(self, username: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM users WHERE username=?", (username,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_user_by_id(self, user_id: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM users WHERE id=?", (user_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def count_users(self) -> int:
+        with self._connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+    def list_users(self) -> list:
+        """Returns all users. password_hash is excluded."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id,username,display_name,email,role,auth_provider,"
+                "role_override,is_active,created_at,last_login_at FROM users "
+                "ORDER BY username"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def update_user(self, user_id: str, **kwargs) -> None:
+        """Update specified fields. Accepted keys: display_name, email, role,
+        role_override, is_active, password_hash."""
+        allowed = {"display_name", "email", "role", "role_override",
+                   "is_active", "password_hash"}
+        updates = {k: v for k, v in kwargs.items() if k in allowed}
+        if not updates:
+            return
+        pairs = list(updates.items())
+        sets = ", ".join(f"{k}=?" for k, _ in pairs)
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE users SET {sets} WHERE id=?",
+                [v for _, v in pairs] + [user_id],
+            )
+
+    def update_user_last_login(self, user_id: str, timestamp: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET last_login_at=? WHERE id=?",
+                (timestamp, user_id),
+            )
+
+    def delete_user(self, user_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+
+    def upsert_ldap_user(self, username: str, display_name: str,
+                         email: Optional[str], role: str) -> dict:
+        """Create or update an LDAP user. Skips role update if role_override=1.
+        Returns the up-to-date user dict (no password_hash)."""
+        import uuid
+        from datetime import datetime, timezone
+        existing = self.get_user_by_username(username)
+        if existing is None:
+            new_id = str(uuid.uuid4())
+            self.insert_user({
+                "id": new_id,
+                "username": username,
+                "display_name": display_name,
+                "email": email,
+                "password_hash": None,
+                "role": role,
+                "auth_provider": "ldap",
+                "role_override": 0,
+                "is_active": 1,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_login_at": None,
+            })
+        else:
+            updates: dict = {"display_name": display_name, "email": email}
+            if not existing.get("role_override"):
+                updates["role"] = role
+            self.update_user(existing["id"], **updates)
+        user = self.get_user_by_username(username)
+        user.pop("password_hash", None)
+        return user
+
+    # ── Secrets ────────────────────────────────────────────────────────────────
+
+    def upsert_secret(self, name: str, encrypted_value: str,
+                      description: Optional[str] = None,
+                      user_id: Optional[str] = None) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO secrets (id, name, encrypted_value, description, created_at, updated_at, updated_by) "
+                "VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(name) DO UPDATE SET "
+                "encrypted_value=excluded.encrypted_value, description=excluded.description, "
+                "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+                (str(uuid.uuid4()), name, encrypted_value, description, now, now, user_id),
+            )
+
+    def get_secret(self, name: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM secrets WHERE name=?", (name,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def delete_secret(self, name: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM secrets WHERE name=?", (name,))
+
+    def list_secrets(self) -> list:
+        """Returns all secrets. encrypted_value is excluded."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, name, description, created_at, updated_at, updated_by "
+                "FROM secrets ORDER BY name"
+            ).fetchall()
+            return [dict(r) for r in rows]

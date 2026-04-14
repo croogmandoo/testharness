@@ -1,14 +1,35 @@
+import uuid
 import pytest
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 from unittest.mock import patch, AsyncMock, MagicMock
 from web.main import create_app
 from harness.db import Database
 
 
+def _seed_admin_user(db) -> dict:
+    user = {
+        "id": str(uuid.uuid4()),
+        "username": "_test_admin",
+        "display_name": "Test Admin",
+        "email": None,
+        "password_hash": None,
+        "role": "admin",
+        "auth_provider": "local",
+        "role_override": 0,
+        "is_active": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    }
+    db.insert_user(user)
+    return user
+
+
 @pytest.fixture
 def db(tmp_path):
     d = Database(str(tmp_path / "test.db"))
     d.init_schema()
+    _seed_admin_user(d)
     return d
 
 
@@ -18,6 +39,9 @@ def client(db, tmp_path):
     apps_dir.mkdir()
     config = {"default_environment": "production", "environments": {"production": {"label": "Production"}}}
     app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    from web.auth import get_current_user
+    _admin = db.get_user_by_username("_test_admin")
+    app.dependency_overrides[get_current_user] = lambda: _admin
     return TestClient(app)
 
 
@@ -38,6 +62,9 @@ def test_trigger_run_returns_run_id(db, tmp_path):
     }))
     config = {"default_environment": "production", "environments": {"production": {"label": "Production"}}}
     app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    from web.auth import get_current_user
+    _admin = db.get_user_by_username("_test_admin")
+    app.dependency_overrides[get_current_user] = lambda: _admin
     client = TestClient(app)
     with patch("web.routes.api.run_app", new=AsyncMock(return_value="run-123")):
         resp = client.post("/api/runs", json={"app": "myapp", "environment": "production"})

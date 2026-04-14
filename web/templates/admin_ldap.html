@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>LDAP / Active Directory</h1>
+</div>
+
+<div style="max-width:640px;">
+  <div class="card">
+    <div class="card-title">Current Configuration</div>
+    <p style="color:var(--text-3);font-size:.68rem;margin-bottom:.9rem;">
+      Managed in <code style="color:var(--amber);">config.yaml</code> under <code style="color:var(--amber);">auth.ldap</code>.
+    </p>
+    {% if ldap_cfg %}
+    <table class="table">
+      <tbody>
+        {% for k, v in ldap_cfg.items() %}
+        {% if k != "role_map" %}
+        <tr>
+          <td style="color:var(--text-3);width:40%;font-size:.7rem;letter-spacing:.06em;">{{ k }}</td>
+          <td style="font-weight:600;">{{ v }}</td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if ldap_cfg.get("role_map") %}
+    <div style="margin-top:1rem;">
+      <div class="label" style="margin-bottom:.5rem;">Role Map</div>
+      {% for dn, role in ldap_cfg.role_map.items() %}
+      <div style="font-size:.72rem;margin-bottom:.3rem;">
+        <span style="color:var(--text-2);">{{ dn }}</span>
+        <span style="color:var(--text-3);margin:0 .4rem;">→</span>
+        <span class="nav-role">{{ role }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% else %}
+    <p class="empty">LDAP is not configured.</p>
+    {% endif %}
+  </div>
+
+  {% if ldap_cfg and ldap_cfg.get("enabled") %}
+  <div class="card">
+    <div class="card-title">Test Connection</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:.75rem;">
+      <div>
+        <label class="label">Username</label>
+        <input id="ldap-user" class="input" placeholder="username">
+      </div>
+      <div>
+        <label class="label">Password</label>
+        <input id="ldap-pass" class="input" type="password" placeholder="password">
+      </div>
+    </div>
+    <button onclick="testLdap()" class="btn btn-primary">Test Connection</button>
+    <div id="ldap-result" style="margin-top:.75rem;font-size:.75rem;"></div>
+  </div>
+
+  <script>
+  async function testLdap() {
+    const u = document.getElementById('ldap-user').value;
+    const p = document.getElementById('ldap-pass').value;
+    const res = document.getElementById('ldap-result');
+    res.textContent = 'Testing…';
+    res.style.color = 'var(--text-2)';
+    try {
+      const r = await fetch('/admin/ldap/test', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username: u, password: p})
+      });
+      const d = await r.json();
+      if (d.ok) {
+        res.style.color = 'var(--pass)';
+        res.textContent = '✓ Authenticated as ' + d.display_name + ' — role: ' + d.role;
+      } else {
+        res.style.color = 'var(--fail)';
+        res.textContent = '✗ ' + d.error;
+      }
+    } catch(e) {
+      res.style.color = 'var(--fail)';
+      res.textContent = '✗ Request failed: ' + e;
+    }
+  }
+  </script>
+  {% endif %}
+</div>
+{% endblock %}

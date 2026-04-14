@@ -1,5 +1,24 @@
 default_environment: production
 
+auth:
+  session_hours: 8
+  secure_cookie: false   # set true for HTTPS deployments
+  # ldap:
+  #   enabled: false
+  #   server: ldap://dc.company.com
+  #   port: 389
+  #   use_tls: true
+  #   base_dn: "DC=company,DC=com"
+  #   user_search_filter: "(sAMAccountName={username})"
+  #   group_search_base: "OU=Groups,DC=company,DC=com"
+  #   group_attribute: "memberOf"
+  #   role_map:
+  #     "CN=Harness-Admins,OU=Groups,DC=company,DC=com": admin
+  #     "CN=Harness-Runners,OU=Groups,DC=company,DC=com": runner
+  #     "CN=Harness-Reporting,OU=Groups,DC=company,DC=com": reporting
+  #     "CN=Harness-ReadOnly,OU=Groups,DC=company,DC=com": read_only
+  #   default_role: read_only
+
 environments:
   staging:
     label: "Staging"

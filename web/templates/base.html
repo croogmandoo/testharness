@@ -8,18 +8,40 @@
 </head>
 <body>
   <nav class="nav">
-    <div style="display:flex; align-items:center; gap:1.5rem;">
-      <a href="/" class="nav-brand">Testing Harness</a>
-      <a href="/apps" style="color:#a0aec0; font-size:.875rem;">Apps</a>
-      <a href="/secrets" style="color:#a0aec0; font-size:.875rem;">Secrets</a>
+    <div class="nav-left">
+      <a href="/" class="nav-brand">Harness</a>
+      {% if current_user and current_user.role in ("admin", "runner") %}
+      <a href="/apps" class="nav-link">Apps</a>
+      {% endif %}
+      {% if current_user and current_user.role in ("admin", "runner") %}
+      <a href="/secrets" class="nav-link">Secrets</a>
+      {% endif %}
+      {% if current_user and current_user.role == "admin" %}
+      <a href="/users" class="nav-link">Users</a>
+      <a href="/admin/ldap" class="nav-link">LDAP</a>
+      {% endif %}
     </div>
-    <div class="env-switcher">
-      {% for key, env in environments.items() %}
-        <a href="?environment={{ key }}"
-           class="env-btn {% if environment == key %}active{% endif %}">
-          {{ env.label }}
-        </a>
-      {% endfor %}
+    <div class="nav-right">
+      <div class="env-switcher">
+        {% for key, env in environments.items() %}
+          <a href="?environment={{ key }}"
+             class="env-btn {% if environment == key %}active{% endif %}">
+            {{ env.label }}
+          </a>
+        {% endfor %}
+      </div>
+      {% if environments %}
+      <div class="nav-divider"></div>
+      {% endif %}
+      {% if current_user %}
+      <div class="nav-user">
+        <span class="nav-username">{{ current_user.display_name or current_user.username }}</span>
+        <span class="nav-role">{{ current_user.role }}</span>
+      </div>
+      <form method="post" action="/auth/logout" style="margin:0;">
+        <button type="submit" class="nav-signout">sign out</button>
+      </form>
+      {% endif %}
     </div>
   </nav>
   <main class="main">

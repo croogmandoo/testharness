@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="toolbar">
+<div class="page-header">
   <h1>App Management</h1>
   <a href="/apps/new" class="btn btn-primary">+ New App</a>
 </div>
@@ -18,13 +18,14 @@
   <tbody>
     {% for app in active_apps %}
     <tr>
-      <td>{{ app.app }}</td>
-      <td><a href="{{ app.url }}" target="_blank">{{ app.url }}</a></td>
-      <td>{{ app.tests | length }}</td>
-      <td style="display:flex; gap:.5rem; justify-content:flex-end;">
-        <a href="/apps/{{ app.app }}/edit" class="btn btn-sm">Edit</a>
-        <button class="btn btn-sm" style="border-color:#ef4444;color:#f87171;"
-                data-action="archive" data-app="{{ app.app | e }}">Archive</button>
+      <td style="font-weight:600;">{{ app.app }}</td>
+      <td><a href="{{ app.url }}" target="_blank" style="color:var(--text-2);">{{ app.url }}</a></td>
+      <td style="color:var(--text-2);">{{ app.tests | length }}</td>
+      <td style="text-align:right;">
+        <div style="display:flex;gap:.3rem;justify-content:flex-end;">
+          <a href="/apps/{{ app.app }}/edit" class="btn btn-sm">Edit</a>
+          <button class="btn btn-sm btn-danger" data-action="archive" data-app="{{ app.app | e }}">Archive</button>
+        </div>
       </td>
     </tr>
     {% endfor %}
@@ -36,22 +37,22 @@
 
 {% if archived_apps %}
 <details style="margin-top:2rem;">
-  <summary style="cursor:pointer; color:#718096; font-size:.875rem; margin-bottom:.75rem;">
-    Archived Apps ({{ archived_apps | length }})
+  <summary style="cursor:pointer;color:var(--text-3);font-size:.65rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;margin-bottom:.75rem;outline:none;">
+    Archived ({{ archived_apps | length }})
   </summary>
-  <table class="table">
+  <table class="table" style="margin-top:.5rem;">
     <thead>
       <tr><th>App</th><th></th></tr>
     </thead>
     <tbody>
       {% for app in archived_apps %}
       <tr>
-        <td>{{ app.app }}</td>
-        <td style="display:flex; gap:.5rem; justify-content:flex-end;">
-          <button class="btn btn-sm"
-                  data-action="restore" data-app="{{ app.app | e }}">Restore</button>
-          <button class="btn btn-sm" style="border-color:#ef4444;color:#f87171;"
-                  data-action="delete-permanent" data-app="{{ app.app | e }}">Delete Permanently</button>
+        <td style="color:var(--text-2);">{{ app.app }}</td>
+        <td style="text-align:right;">
+          <div style="display:flex;gap:.3rem;justify-content:flex-end;">
+            <button class="btn btn-sm" data-action="restore" data-app="{{ app.app | e }}">Restore</button>
+            <button class="btn btn-sm btn-danger" data-action="delete-permanent" data-app="{{ app.app | e }}">Delete</button>
+          </div>
         </td>
       </tr>
       {% endfor %}
@@ -60,8 +61,7 @@
 </details>
 {% endif %}
 
-<div id="status-msg" style="display:none; margin-top:1rem; padding:.75rem 1rem;
-     border-radius:6px; font-size:.875rem;"></div>
+<div id="status-msg" style="display:none;" class="status-msg"></div>
 
 <script>
 document.addEventListener('click', function(e) {
@@ -80,26 +80,22 @@ async function handleArchive(name) {
   if (resp.ok) { location.reload(); }
   else { const d = await resp.json(); showError(d.detail || 'Archive failed'); }
 }
-
 async function handleRestore(name) {
   const resp = await fetch('/api/apps/' + encodeURIComponent(name) + '/restore', { method: 'POST' });
   if (resp.ok) { location.reload(); }
   else { const d = await resp.json(); showError(d.detail || 'Restore failed'); }
 }
-
 async function handleDeletePermanent(name) {
   if (!confirm('Permanently delete "' + name + '"? This cannot be undone.')) return;
   const resp = await fetch('/api/apps/' + encodeURIComponent(name) + '/permanent', { method: 'DELETE' });
   if (resp.ok) { location.reload(); }
   else { const d = await resp.json(); showError(d.detail || 'Delete failed'); }
 }
-
 function showError(msg) {
   const el = document.getElementById('status-msg');
   el.textContent = msg;
+  el.className = 'status-msg status-msg-err';
   el.style.display = 'block';
-  el.style.background = 'rgba(239,68,68,.15)';
-  el.style.color = '#f87171';
 }
 </script>
 {% endblock %}

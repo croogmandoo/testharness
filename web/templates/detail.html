@@ -1,19 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="breadcrumb">
-  <a href="/?environment={{ environment }}">← Dashboard</a> / {{ app }}
+  <a href="/?environment={{ environment }}">← Status</a> / {{ app }}
 </div>
 
 {% if selected_run %}
 
-{# Run history strip #}
 {% if runs %}
-<div id="run-history-strip" style="display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:1rem;">
+<div class="run-strip">
   {% for run in runs[:5] %}
   <a href="/app/{{ app }}/{{ environment }}?run_id={{ run.id }}"
-     style="padding:.2rem .55rem; border-radius:4px; font-size:.75rem; text-decoration:none;
-            border:1px solid {{ '#3b82f6' if run.id == selected_run.id else '#2d3748' }};
-            color:{{ '#e2e8f0' if run.id == selected_run.id else '#718096' }};">
+     class="run-chip {% if run.id == selected_run.id %}active{% endif %}">
     {% if run.status == 'complete' %}✓
     {% elif run.status in ('pending', 'running') %}⟳
     {% else %}✗{% endif %}
@@ -24,55 +21,49 @@
 {% endif %}
 
 <div class="run-meta">
-  <span>Run: {{ selected_run.id[:8] }}</span>
-  <span>Status: <strong>{{ selected_run.status }}</strong></span>
-  <span>Started: {{ selected_run.started_at or "—" }}</span>
-  <button class="btn btn-sm" onclick="triggerRun()">Re-run All</button>
-  <a href="/api/runs/{{ selected_run.id }}/export?format=pdf" class="btn btn-sm">Export PDF</a>
-  <a href="/api/runs/{{ selected_run.id }}/export?format=docx" class="btn btn-sm">Export DOCX</a>
+  <span>Run <strong>{{ selected_run.id[:8] }}</strong></span>
+  <span>Status <strong>{{ selected_run.status }}</strong></span>
+  <span>{{ selected_run.started_at[:16].replace('T',' ') if selected_run.started_at else '—' }}</span>
+  <div style="margin-left:auto;display:flex;gap:.35rem;">
+    <button class="btn btn-sm" onclick="triggerRun()">Re-run</button>
+    <a href="/api/runs/{{ selected_run.id }}/export?format=pdf" class="btn btn-sm">PDF</a>
+    <a href="/api/runs/{{ selected_run.id }}/export?format=docx" class="btn btn-sm">DOCX</a>
+  </div>
 </div>
 
-{# Progress bar — only shown while run is active #}
 {% if is_live %}
 {% set total = test_results|length + pending_test_names|length %}
-{% set done = test_results|length %}
-<div id="progress-bar" style="margin-bottom:1rem;">
-  <div style="display:flex; align-items:center; gap:1rem; margin-bottom:.4rem;">
-    <span id="progress-text" style="font-size:.875rem; color:#a0aec0;">
-      {{ done }} / {{ total }} tests complete
-    </span>
-    <span id="elapsed-timer" style="font-size:.8rem; color:#718096;">00:00</span>
+{% set done  = test_results|length %}
+<div class="progress-wrap" id="progress-bar">
+  <div class="progress-info">
+    <span id="progress-text">{{ done }} / {{ total }} tests complete</span>
+    <span id="elapsed-timer" style="color:var(--text-3);">00:00</span>
   </div>
-  <div style="height:4px; background:#2d3748; border-radius:2px;">
-    <div id="progress-fill"
-         style="height:4px; background:#3b82f6; border-radius:2px; transition:width .3s;
-                width:{{ ((done / total * 100) | int) if total > 0 else 0 }}%;"></div>
+  <div class="progress-bar">
+    <div class="progress-fill" id="progress-fill"
+         style="width:{{ ((done / total * 100) | int) if total > 0 else 0 }}%;"></div>
   </div>
 </div>
 {% endif %}
 
-{# Completed test cards #}
 {% for tr in test_results %}
-<div class="test-card {% if tr.status == 'fail' or tr.status == 'error' %}test-card--fail{% elif tr.status == 'pass' %}test-card--pass{% endif %}">
+<div class="test-card {% if tr.status in ('fail','error') %}test-card--fail{% elif tr.status == 'pass' %}test-card--pass{% endif %}">
   <div class="test-card-header">
     <span class="test-name">{{ tr.test_name }}</span>
-    <span class="test-status">
+    <span class="test-status {% if tr.status == 'pass' %}test-status-pass{% elif tr.status == 'fail' %}test-status-fail{% else %}test-status-warn{% endif %}">
       {% if tr.status == 'pass' %}✓ Pass{% elif tr.status == 'fail' %}✗ Fail{% else %}⚠ Error{% endif %}
     </span>
     <span class="test-duration">{{ tr.duration_ms }}ms</span>
   </div>
-
   {% if tr.error_msg %}
   <div class="error-box">{{ tr.error_msg }}</div>
   {% endif %}
-
   {% if tr.screenshot %}
   <div class="screenshot-wrap">
     <div class="screenshot-label">Screenshot at failure</div>
     <img src="/screenshots/{{ tr.screenshot }}" alt="Screenshot" class="screenshot">
   </div>
   {% endif %}
-
   {% if tr.step_log %}
   <div class="step-log">
     {% for step in tr.step_log %}
@@ -83,38 +74,38 @@
       {% if step.error %}<span class="step-error">{{ step.error }}</span>{% endif %}
       {% if step.screenshot %}
       <div style="margin-top:.4rem;">
-        <img src="/screenshots/{{ step.screenshot }}" class="screenshot"
-             style="max-width:320px; border-radius:4px; display:block;">
+        <img src="/screenshots/{{ step.screenshot }}" class="screenshot" style="max-width:320px;">
       </div>
       {% endif %}
     </div>
     {% endfor %}
   </div>
   {% endif %}
-
   {% if history[tr.test_name] is defined %}
   <div class="history">
     {% for s in history[tr.test_name] %}
-      <span class="history-dot history-dot--{{ s }}" title="{{ s }}"></span>
+    <span class="history-dot history-dot--{{ s }}" title="{{ s }}"></span>
     {% endfor %}
-    <span class="history-label">recent runs</span>
+    <span class="history-label">recent</span>
   </div>
   {% endif %}
 </div>
 {% endfor %}
 
-{# Pending test placeholders #}
 {% for name in pending_test_names %}
-<div class="test-card" style="opacity:.45;">
+<div class="test-card test-card--pending">
   <div class="test-card-header">
     <span class="test-name">{{ name }}</span>
-    <span class="test-status" style="color:#718096;">⏳ Pending</span>
+    <span class="test-status" style="color:var(--text-3);">⏳ Pending</span>
   </div>
 </div>
 {% endfor %}
 
 {% else %}
-<p>No runs yet for {{ app }} ({{ environment }}). <button class="btn" onclick="triggerRun()">Run now</button></p>
+<p style="color:var(--text-2);font-size:.8rem;">
+  No runs yet for <strong>{{ app }}</strong> ({{ environment }}).
+  <button class="btn btn-sm" onclick="triggerRun()" style="margin-left:.5rem;">Run now</button>
+</p>
 {% endif %}
 
 <script>
@@ -122,10 +113,10 @@ const APP = {{ app | tojson }};
 const ENV = {{ environment | tojson }};
 
 async function triggerRun() {
-  await fetch("/api/runs", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({app: APP, environment: ENV, triggered_by: "ui"})
+  await fetch('/api/runs', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({app: APP, environment: ENV, triggered_by: 'ui'})
   });
   location.reload();
 }
@@ -155,11 +146,7 @@ var timer = setInterval(function() {
     var text = document.getElementById('progress-text');
     if (fill) fill.style.width = pct + '%';
     if (text) text.textContent = done + ' / ' + TOTAL_TESTS + ' tests complete';
-    if (data.status === 'complete') {
-      clearInterval(timer);
-      location.reload();
-      return;
-    }
+    if (data.status === 'complete') { clearInterval(timer); location.reload(); return; }
   }
 })();
 {% endif %}

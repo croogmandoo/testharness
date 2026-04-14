@@ -1,16 +1,19 @@
 import json
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import os
+
+from web.auth import get_current_user
 
 router = APIRouter()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "..", "templates"))
 
 
 @router.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, environment: str = None):
+async def dashboard(request: Request, environment: str = None,
+                    current_user: dict = Depends(get_current_user)):
     from web.main import get_db, get_config, get_apps
     db = get_db()
     config = get_config()
@@ -38,11 +41,13 @@ async def dashboard(request: Request, environment: str = None):
         "summary": summary,
         "environment": env,
         "environments": envs,
+        "current_user": current_user,
     })
 
 
 @router.get("/app/{app}/{environment}", response_class=HTMLResponse)
-async def app_detail(request: Request, app: str, environment: str, run_id: str = None):
+async def app_detail(request: Request, app: str, environment: str, run_id: str = None,
+                     current_user: dict = Depends(get_current_user)):
     from web.main import get_db, get_config, get_apps
     db = get_db()
     config = get_config()
@@ -83,4 +88,5 @@ async def app_detail(request: Request, app: str, environment: str, run_id: str =
         "history": history,
         "is_live": is_live,
         "pending_test_names": pending_test_names,
+        "current_user": current_user,
     })

@@ -1,6 +1,7 @@
 import json
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, Response
 from harness.export import export_pdf, export_docx
+from web.auth import require_role
 
 router = APIRouter(prefix="/api")
 
@@ -10,7 +11,8 @@ DOCX_MEDIA_TYPE = (
 
 
 @router.get("/runs/{run_id}/export")
-async def export_run(run_id: str, format: str = "pdf"):
+async def export_run(run_id: str, format: str = "pdf",
+                     current_user: dict = Depends(require_role("admin", "runner", "reporting"))):
     from web.main import get_db
 
     db = get_db()

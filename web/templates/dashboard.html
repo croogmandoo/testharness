@@ -1,122 +1,124 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="toolbar">
-  <h1>Application Status</h1>
-  <button class="btn btn-primary" onclick="runAll()">Run All</button>
+<div class="page-header">
+  <h1>Status</h1>
+  <div style="display:flex;gap:.5rem;align-items:center;">
+    <input type="text" class="search" style="width:200px;margin:0;"
+           placeholder="filter…" oninput="filterTiles(this.value)">
+    <button class="btn btn-primary" onclick="runAll()">Run All</button>
+  </div>
 </div>
 
-<input class="search" type="text" placeholder="Search apps…" oninput="filterTable(this.value)">
-
-<table class="table" id="app-table">
-  <thead>
-    <tr>
-      <th>Application</th>
-      <th>Status</th>
-      <th>Tests</th>
-      <th>Last Run</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for row in summary %}
-    <tr class="{% if row.failing > 0 %}row-fail{% endif %}"
-        data-app="{{ row.app }}"
-        data-run-id="{{ row.active_run_id or '' }}">
-      <td><a href="/app/{{ row.app }}/{{ environment }}">{{ row.app }}</a></td>
-      <td>
-        {% if row.failing > 0 %}
-          <span class="badge badge-fail">✗ Fail</span>
-        {% elif row.unknown == row.total %}
-          <span class="badge badge-unknown">— Unknown</span>
-        {% else %}
-          <span class="badge badge-pass">✓ Pass</span>
-        {% endif %}
-      </td>
-      <td>{{ row.passing }}/{{ row.total }}</td>
-      <td>{{ row.last_run or "—" }}</td>
-      <td>
-        <button class="btn btn-sm" onclick="triggerRun('{{ row.app }}')">Run</button>
-        {% if row.last_run_id %}
-        <a href="/api/runs/{{ row.last_run_id }}/export?format=pdf" class="btn btn-sm">PDF</a>
-        <a href="/api/runs/{{ row.last_run_id }}/export?format=docx" class="btn btn-sm">DOCX</a>
-        {% endif %}
-      </td>
-    </tr>
-    {% else %}
-    <tr><td colspan="5" class="empty">No apps configured. Add YAML files to the apps/ directory.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="app-grid" id="app-grid">
+  {% for row in summary %}
+  <div class="app-tile"
+       data-app="{{ row.app }}"
+       data-run-id="{{ row.active_run_id or '' }}">
+    <div class="app-tile-header">
+      {% if row.active_run_id %}
+        <span class="beacon beacon-running" id="beacon-{{ row.app }}"></span>
+      {% elif row.failing > 0 %}
+        <span class="beacon beacon-fail" id="beacon-{{ row.app }}"></span>
+      {% elif row.unknown == row.total %}
+        <span class="beacon beacon-unknown" id="beacon-{{ row.app }}"></span>
+      {% else %}
+        <span class="beacon beacon-pass" id="beacon-{{ row.app }}"></span>
+      {% endif %}
+      <a href="/app/{{ row.app }}/{{ environment }}" class="app-tile-name">{{ row.app }}</a>
+      {% if row.active_run_id %}
+        <span class="badge badge-running">running</span>
+      {% elif row.failing > 0 %}
+        <span class="badge badge-fail">fail</span>
+      {% elif row.unknown == row.total %}
+        <span class="badge badge-unknown">—</span>
+      {% else %}
+        <span class="badge badge-pass">pass</span>
+      {% endif %}
+    </div>
+    <div class="app-tile-meta">
+      <span class="app-tile-score">{{ row.passing }}/{{ row.total }} tests</span>
+      <span>{{ row.last_run[:16].replace('T',' ') if row.last_run else "no runs" }}</span>
+    </div>
+    <div class="app-tile-actions">
+      <button class="btn btn-sm" onclick="triggerRun('{{ row.app }}')">Run</button>
+      {% if row.last_run_id %}
+      <a href="/api/runs/{{ row.last_run_id }}/export?format=pdf" class="btn btn-sm">PDF</a>
+      <a href="/api/runs/{{ row.last_run_id }}/export?format=docx" class="btn btn-sm">DOCX</a>
+      {% endif %}
+    </div>
+  </div>
+  {% else %}
+  <div class="app-tile" style="grid-column:1/-1;">
+    <p class="empty">No apps configured — add YAML files to the apps/ directory.</p>
+  </div>
+  {% endfor %}
+</div>
 
 <script>
 const ENV = {{ environment | tojson }};
 
 const activeRunIds = new Set();
-const runAppMap = {};  // run_id → app name
+const runAppMap = {};
 
-// Seed from server-rendered data (runs already active on page load)
-document.querySelectorAll('#app-table tbody tr[data-run-id]').forEach(function(row) {
-  var runId = row.dataset.runId;
+document.querySelectorAll('#app-grid .app-tile[data-run-id]').forEach(function(tile) {
+  var runId = tile.dataset.runId;
   if (runId) {
     activeRunIds.add(runId);
-    runAppMap[runId] = row.dataset.app;
-    setRowRunning(row.dataset.app);
+    runAppMap[runId] = tile.dataset.app;
   }
 });
 if (activeRunIds.size > 0) startPolling();
 
 async function triggerRun(app) {
   var btn = event.target;
-  btn.textContent = "Running…";
+  btn.textContent = 'Running…';
   btn.disabled = true;
-  var resp = await fetch("/api/runs", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({app: app, environment: ENV, triggered_by: "ui"})
+  var resp = await fetch('/api/runs', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({app: app, environment: ENV, triggered_by: 'ui'})
   });
   if (!resp.ok) {
     var err = await resp.json();
-    alert(err.detail || "Failed to start run");
-    btn.textContent = "Run";
+    alert(err.detail || 'Failed to start run');
+    btn.textContent = 'Run';
     btn.disabled = false;
     return;
   }
   var data = await resp.json();
-  data.run_ids.forEach(function(id) {
-    activeRunIds.add(id);
-    runAppMap[id] = app;
-  });
-  setRowRunning(app);
+  data.run_ids.forEach(function(id) { activeRunIds.add(id); runAppMap[id] = app; });
+  setTileRunning(app);
   startPolling();
 }
 
 async function runAll() {
-  var resp = await fetch("/api/runs", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({environment: ENV, triggered_by: "ui"})
+  var resp = await fetch('/api/runs', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({environment: ENV, triggered_by: 'ui'})
   });
   if (!resp.ok) return;
   var data = await resp.json();
   data.run_ids.forEach(function(id, i) {
     activeRunIds.add(id);
     runAppMap[id] = data.apps[i];
-    setRowRunning(data.apps[i]);
+    setTileRunning(data.apps[i]);
   });
   startPolling();
 }
 
-function setRowRunning(appName) {
-  var row = document.querySelector('tr[data-app="' + appName + '"]');
-  if (!row) return;
-  var badge = row.querySelector('.badge');
-  if (badge) { badge.className = 'badge badge-unknown'; badge.textContent = '⟳ Running'; }
-  var btn = row.querySelector('button');
+function setTileRunning(appName) {
+  var tile = document.querySelector('.app-tile[data-app="' + appName + '"]');
+  if (!tile) return;
+  var badge = tile.querySelector('.badge');
+  if (badge) { badge.className = 'badge badge-running'; badge.textContent = 'running'; }
+  var beacon = tile.querySelector('.beacon');
+  if (beacon) { beacon.className = 'beacon beacon-running'; }
+  var btn = tile.querySelector('button');
   if (btn) { btn.textContent = 'Running…'; btn.disabled = true; }
 }
 
 var polling = false;
-
 function startPolling() {
   if (polling) return;
   polling = true;
@@ -131,7 +133,7 @@ async function pollLoop() {
       var resp = await fetch('/api/runs/' + runId);
       if (!resp.ok) { toRemove.push(runId); continue; }
       var data = await resp.json();
-      updateRow(runAppMap[runId], data);
+      updateTile(runAppMap[runId], data);
       if (data.status === 'complete') toRemove.push(runId);
     }
     toRemove.forEach(function(id) { activeRunIds.delete(id); });
@@ -140,29 +142,31 @@ async function pollLoop() {
   location.reload();
 }
 
-function updateRow(appName, runData) {
-  var row = document.querySelector('tr[data-app="' + appName + '"]');
-  if (!row) return;
+function updateTile(appName, runData) {
+  var tile = document.querySelector('.app-tile[data-app="' + appName + '"]');
+  if (!tile) return;
   var results = runData.results || [];
   var passing = results.filter(function(r) { return r.status === 'pass'; }).length;
   var total = results.length;
   var hasFail = results.some(function(r) { return r.status === 'fail' || r.status === 'error'; });
-  var badge = row.querySelector('.badge');
-  if (badge) {
-    if (runData.status === 'complete') {
-      if (hasFail) { badge.className = 'badge badge-fail'; badge.textContent = '✗ Fail'; }
-      else { badge.className = 'badge badge-pass'; badge.textContent = '✓ Pass'; }
+  if (runData.status === 'complete') {
+    var badge  = tile.querySelector('.badge');
+    var beacon = tile.querySelector('.beacon');
+    if (hasFail) {
+      if (badge)  { badge.className = 'badge badge-fail'; badge.textContent = 'fail'; }
+      if (beacon) { beacon.className = 'beacon beacon-fail'; }
+    } else {
+      if (badge)  { badge.className = 'badge badge-pass'; badge.textContent = 'pass'; }
+      if (beacon) { beacon.className = 'beacon beacon-pass'; }
     }
-  }
-  if (row.cells[2]) row.cells[2].textContent = passing + '/' + total;
-  if (row.cells[3] && runData.started_at) {
-    row.cells[3].textContent = runData.started_at.slice(0, 16).replace('T', ' ');
+    var score = tile.querySelector('.app-tile-score');
+    if (score) score.textContent = passing + '/' + total + ' tests';
   }
 }
 
-function filterTable(query) {
-  document.querySelectorAll("#app-table tbody tr[data-app]").forEach(function(row) {
-    row.style.display = row.dataset.app.toLowerCase().includes(query.toLowerCase()) ? "" : "none";
+function filterTiles(query) {
+  document.querySelectorAll('#app-grid .app-tile[data-app]').forEach(function(tile) {
+    tile.style.display = tile.dataset.app.toLowerCase().includes(query.toLowerCase()) ? '' : 'none';
   });
 }
 </script>
