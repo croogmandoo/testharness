@@ -1,5 +1,7 @@
 import sqlite3
 import json
+import uuid
+from datetime import datetime, timezone
 from typing import Optional
 from harness.models import Run, TestResult, AppState
 
@@ -257,11 +259,12 @@ class Database:
         updates = {k: v for k, v in kwargs.items() if k in allowed}
         if not updates:
             return
-        sets = ", ".join(f"{k}=?" for k in updates)
+        pairs = list(updates.items())
+        sets = ", ".join(f"{k}=?" for k, _ in pairs)
         with self._connect() as conn:
             conn.execute(
                 f"UPDATE users SET {sets} WHERE id=?",
-                list(updates.values()) + [user_id],
+                [v for _, v in pairs] + [user_id],
             )
 
     def update_user_last_login(self, user_id: str, timestamp: str) -> None:
