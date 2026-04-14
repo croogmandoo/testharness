@@ -60,6 +60,19 @@ CREATE TABLE IF NOT EXISTS secrets (
     updated_at      TEXT NOT NULL,
     updated_by      TEXT REFERENCES users(id)
 );
+CREATE TABLE IF NOT EXISTS api_keys (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id),
+    name         TEXT NOT NULL,
+    key_prefix   TEXT NOT NULL,
+    key_hash     TEXT NOT NULL,
+    expires_at   TEXT,
+    created_at   TEXT NOT NULL,
+    last_used_at TEXT,
+    is_active    INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user   ON api_keys(user_id);
 """
 
 class Database:
