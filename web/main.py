@@ -40,8 +40,9 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     global _db, _config, _apps, _apps_dir, _secrets_store
     _config = config or {}
     _apps_dir = apps_dir
-    _apps = load_apps(apps_dir) if os.path.isdir(apps_dir) else []
 
+    # Initialise DB and SecretsStore first so secrets are in os.environ
+    # before app YAML files are loaded and env vars are resolved.
     if db is None:
         os.makedirs("data", exist_ok=True)
         _db = Database("data/harness.db")
@@ -49,11 +50,12 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     else:
         _db = db
 
-    # Initialise SecretsStore and derive session signing key.
     from harness.secrets_store import SecretsStore
     from web.auth import set_auth_config
     _secrets_store = SecretsStore(_db)
     _secrets_store.inject_to_env()
+
+    _apps = load_apps(apps_dir) if os.path.isdir(apps_dir) else []
     auth_cfg = _config.get("auth", {})
     set_auth_config(
         signing_key=_secrets_store.session_signing_key,
