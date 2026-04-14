@@ -1,14 +1,35 @@
+import uuid
 import pytest
 import yaml
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 from web.main import create_app
 from harness.db import Database
+
+
+def _seed_admin_user(db) -> dict:
+    user = {
+        "id": str(uuid.uuid4()),
+        "username": "_test_admin",
+        "display_name": "Test Admin",
+        "email": None,
+        "password_hash": None,
+        "role": "admin",
+        "auth_provider": "local",
+        "role_override": 0,
+        "is_active": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    }
+    db.insert_user(user)
+    return user
 
 
 @pytest.fixture
 def db(tmp_path):
     d = Database(str(tmp_path / "test.db"))
     d.init_schema()
+    _seed_admin_user(d)
     return d
 
 
@@ -26,6 +47,9 @@ def client(db, apps_dir):
         "environments": {"production": {"label": "Production"}},
     }
     app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    from web.auth import get_current_user
+    _admin = db.get_user_by_username("_test_admin")
+    app.dependency_overrides[get_current_user] = lambda: _admin
     return TestClient(app)
 
 
@@ -43,6 +67,9 @@ def client_with_app(db, apps_dir):
         "environments": {"production": {"label": "Production"}},
     }
     app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    from web.auth import get_current_user
+    _admin = db.get_user_by_username("_test_admin")
+    app.dependency_overrides[get_current_user] = lambda: _admin
     return TestClient(app), apps_dir
 
 
@@ -235,6 +262,7 @@ def test_detail_page_shows_run_history_strip(tmp_path):
 
     db = Database(str(tmp_path / "h.db"))
     db.init_schema()
+    _seed_admin_user(db)
     for i in range(2):
         run = Run(app="myapp", environment="prod", triggered_by="test")
         db.insert_run(run)
@@ -260,6 +288,7 @@ def test_detail_page_shows_pending_cards_when_run_is_active(tmp_path):
 
     db = Database(str(tmp_path / "h.db"))
     db.init_schema()
+    _seed_admin_user(db)
     run = Run(app="myapp", environment="prod", triggered_by="test")
     db.insert_run(run)
     db.update_run_status(run.id, "running", started_at="2026-01-01T00:00:00")
