@@ -283,6 +283,10 @@ class Database:
                 (timestamp, user_id),
             )
 
+    def delete_user(self, user_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+
     def upsert_ldap_user(self, username: str, display_name: str,
                          email: Optional[str], role: str) -> dict:
         """Create or update an LDAP user. Skips role update if role_override=1.

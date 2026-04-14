@@ -1,10 +1,6 @@
-<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>LDAP Configuration — Testing Harness</title>
-<link rel="stylesheet" href="/static/style.css"></head>
-<body>
-{% include "nav.html" ignore missing %}
-<div class="main" style="max-width:700px;">
+{% extends "base.html" %}
+{% block content %}
+<div style="max-width:700px;">
   <h1 style="margin-bottom:.5rem;">LDAP / Active Directory</h1>
   <p style="color:#a0aec0;margin-bottom:1.5rem;">LDAP settings are managed in <code>config.yaml</code> under <code>auth.ldap</code>.</p>
 
@@ -76,5 +72,4 @@
   </script>
   {% endif %}
 </div>
-</body>
-</html>
+{% endblock %}

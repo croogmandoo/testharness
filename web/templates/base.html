@@ -10,9 +10,13 @@
   <nav class="nav">
     <div style="display:flex; align-items:center; gap:1.5rem;">
       <a href="/" class="nav-brand">Testing Harness</a>
+      {% if current_user and current_user.role in ("admin", "runner") %}
       <a href="/apps" style="color:#a0aec0; font-size:.875rem;">Apps</a>
-      {% if current_user and current_user.role == "admin" %}
+      {% endif %}
+      {% if current_user and current_user.role in ("admin", "runner") %}
       <a href="/secrets" style="color:#a0aec0; font-size:.875rem;">Secrets</a>
+      {% endif %}
+      {% if current_user and current_user.role == "admin" %}
       <a href="/users" style="color:#a0aec0; font-size:.875rem;">Users</a>
       <a href="/admin/ldap" style="color:#a0aec0; font-size:.875rem;">LDAP</a>
       {% endif %}

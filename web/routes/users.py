@@ -98,6 +98,20 @@ async def users_edit(request: Request, user_id: str,
                                            user=user, error=None))
 
 
+@router.post("/users/{user_id}/delete")
+async def users_delete(request: Request, user_id: str,
+                       current_user: dict = Depends(require_role("admin"))):
+    from web.main import get_db
+    from fastapi import HTTPException
+    if user_id == current_user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account.")
+    db = get_db()
+    if not db.get_user_by_id(user_id):
+        raise HTTPException(status_code=404)
+    db.delete_user(user_id)
+    return RedirectResponse("/users", status_code=303)
+
+
 @router.post("/users/{user_id}/edit")
 async def users_update(
     request: Request,

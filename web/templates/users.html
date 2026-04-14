@@ -1,46 +1,45 @@
-<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>Users — Testing Harness</title>
-<link rel="stylesheet" href="/static/style.css"></head>
-<body>
-{% include "nav.html" ignore missing %}
-<div class="main">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
-    <h1>Users</h1>
-    <a href="/users/new" class="btn btn-primary">+ New User</a>
-  </div>
-  <table style="width:100%;border-collapse:collapse;">
-    <thead>
-      <tr style="border-bottom:1px solid #2d3748;color:#a0aec0;font-size:.75rem;text-transform:uppercase;">
-        <th style="text-align:left;padding:.5rem .75rem;">Username</th>
-        <th style="text-align:left;padding:.5rem .75rem;">Display Name</th>
-        <th style="text-align:left;padding:.5rem .75rem;">Role</th>
-        <th style="text-align:left;padding:.5rem .75rem;">Provider</th>
-        <th style="text-align:left;padding:.5rem .75rem;">Active</th>
-        <th style="text-align:left;padding:.5rem .75rem;">Last Login</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for u in users %}
-      <tr style="border-bottom:1px solid #1a1f2e;">
-        <td style="padding:.5rem .75rem;font-family:monospace;">{{ u.username }}</td>
-        <td style="padding:.5rem .75rem;">{{ u.display_name or "—" }}</td>
-        <td style="padding:.5rem .75rem;">
-          <span style="background:#2d3748;border-radius:4px;padding:.1rem .4rem;font-size:.75rem;">{{ u.role }}</span>
-        </td>
-        <td style="padding:.5rem .75rem;color:#a0aec0;">{{ u.auth_provider }}</td>
-        <td style="padding:.5rem .75rem;">{{ "Yes" if u.is_active else "No" }}</td>
-        <td style="padding:.5rem .75rem;color:#a0aec0;font-size:.8rem;">{{ u.last_login_at or "Never" }}</td>
-        <td style="padding:.5rem .75rem;text-align:right;">
-          <a href="/users/{{ u.id }}/edit" class="btn" style="font-size:.75rem;padding:.25rem .6rem;">Edit</a>
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="7" style="padding:1rem .75rem;color:#a0aec0;">No users found.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+{% extends "base.html" %}
+{% block content %}
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
+  <h1>Users</h1>
+  <a href="/users/new" class="btn btn-primary">+ New User</a>
 </div>
-</body>
-</html>
+<table style="width:100%;border-collapse:collapse;">
+  <thead>
+    <tr style="border-bottom:1px solid #2d3748;color:#a0aec0;font-size:.75rem;text-transform:uppercase;">
+      <th style="text-align:left;padding:.5rem .75rem;">Username</th>
+      <th style="text-align:left;padding:.5rem .75rem;">Display Name</th>
+      <th style="text-align:left;padding:.5rem .75rem;">Role</th>
+      <th style="text-align:left;padding:.5rem .75rem;">Provider</th>
+      <th style="text-align:left;padding:.5rem .75rem;">Active</th>
+      <th style="text-align:left;padding:.5rem .75rem;">Last Login</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for u in users %}
+    <tr style="border-bottom:1px solid #1a1f2e;">
+      <td style="padding:.5rem .75rem;font-family:monospace;">{{ u.username }}</td>
+      <td style="padding:.5rem .75rem;">{{ u.display_name or "—" }}</td>
+      <td style="padding:.5rem .75rem;">
+        <span style="background:#2d3748;border-radius:4px;padding:.1rem .4rem;font-size:.75rem;">{{ u.role }}</span>
+      </td>
+      <td style="padding:.5rem .75rem;color:#a0aec0;">{{ u.auth_provider }}</td>
+      <td style="padding:.5rem .75rem;">{{ "Yes" if u.is_active else "No" }}</td>
+      <td style="padding:.5rem .75rem;color:#a0aec0;font-size:.8rem;">{{ u.last_login_at or "Never" }}</td>
+      <td style="padding:.5rem .75rem;text-align:right;white-space:nowrap;">
+        <a href="/users/{{ u.id }}/edit" class="btn" style="font-size:.75rem;padding:.25rem .6rem;">Edit</a>
+        {% if u.id != current_user.id %}
+        <form method="post" action="/users/{{ u.id }}/delete" style="display:inline;margin-left:.25rem;"
+              onsubmit="return confirm('Delete user {{ u.username }}?')">
+          <button type="submit" class="btn" style="font-size:.75rem;padding:.25rem .6rem;background:#742a2a;border-color:#9b2c2c;color:#feb2b2;">Delete</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" style="padding:1rem .75rem;color:#a0aec0;">No users found.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
