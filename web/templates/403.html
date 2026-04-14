@@ -1,19 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><title>Access Denied — Testing Harness</title>
-<link rel="stylesheet" href="/static/style.css"></head>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Access Denied — Harness</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
 <body>
-<nav class="nav">
-  <div style="display:flex;align-items:center;gap:1.5rem;">
-    <a href="/" class="nav-brand">Testing Harness</a>
-  </div>
-</nav>
-<div class="main" style="text-align:center;padding:4rem 1rem;">
-  <h1 style="font-size:3rem;margin-bottom:.5rem;">403</h1>
-  <p style="color:#a0aec0;margin-bottom:1.5rem;">
-    You don't have permission to access this page.
-  </p>
-  <a href="/" class="btn btn-primary">Go to dashboard</a>
+<div class="error-page">
+  <div class="error-code">403</div>
+  <div class="error-msg">You don't have permission to access this page.</div>
+  <a href="/" class="btn btn-primary" style="margin-top:.5rem;">Go to dashboard</a>
 </div>
 </body>
 </html>

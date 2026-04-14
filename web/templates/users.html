@@ -1,44 +1,45 @@
 {% extends "base.html" %}
 {% block content %}
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
+<div class="page-header">
   <h1>Users</h1>
   <a href="/users/new" class="btn btn-primary">+ New User</a>
 </div>
-<table style="width:100%;border-collapse:collapse;">
+
+<table class="table">
   <thead>
-    <tr style="border-bottom:1px solid #2d3748;color:#a0aec0;font-size:.75rem;text-transform:uppercase;">
-      <th style="text-align:left;padding:.5rem .75rem;">Username</th>
-      <th style="text-align:left;padding:.5rem .75rem;">Display Name</th>
-      <th style="text-align:left;padding:.5rem .75rem;">Role</th>
-      <th style="text-align:left;padding:.5rem .75rem;">Provider</th>
-      <th style="text-align:left;padding:.5rem .75rem;">Active</th>
-      <th style="text-align:left;padding:.5rem .75rem;">Last Login</th>
+    <tr>
+      <th>Username</th>
+      <th>Display Name</th>
+      <th>Role</th>
+      <th>Provider</th>
+      <th>Active</th>
+      <th>Last Login</th>
       <th></th>
     </tr>
   </thead>
   <tbody>
     {% for u in users %}
-    <tr style="border-bottom:1px solid #1a1f2e;">
-      <td style="padding:.5rem .75rem;font-family:monospace;">{{ u.username }}</td>
-      <td style="padding:.5rem .75rem;">{{ u.display_name or "—" }}</td>
-      <td style="padding:.5rem .75rem;">
-        <span style="background:#2d3748;border-radius:4px;padding:.1rem .4rem;font-size:.75rem;">{{ u.role }}</span>
+    <tr>
+      <td style="font-family:inherit;font-weight:600;">{{ u.username }}</td>
+      <td>{{ u.display_name or "—" }}</td>
+      <td><span class="nav-role">{{ u.role }}</span></td>
+      <td style="color:var(--text-3);">{{ u.auth_provider }}</td>
+      <td style="color:{% if u.is_active %}var(--pass){% else %}var(--text-3){% endif %};">
+        {{ "yes" if u.is_active else "no" }}
       </td>
-      <td style="padding:.5rem .75rem;color:#a0aec0;">{{ u.auth_provider }}</td>
-      <td style="padding:.5rem .75rem;">{{ "Yes" if u.is_active else "No" }}</td>
-      <td style="padding:.5rem .75rem;color:#a0aec0;font-size:.8rem;">{{ u.last_login_at or "Never" }}</td>
-      <td style="padding:.5rem .75rem;text-align:right;white-space:nowrap;">
-        <a href="/users/{{ u.id }}/edit" class="btn" style="font-size:.75rem;padding:.25rem .6rem;">Edit</a>
+      <td style="color:var(--text-3);font-size:.7rem;">{{ u.last_login_at[:16].replace('T',' ') if u.last_login_at else "never" }}</td>
+      <td style="text-align:right;white-space:nowrap;">
+        <a href="/users/{{ u.id }}/edit" class="btn btn-sm">Edit</a>
         {% if u.id != current_user.id %}
-        <form method="post" action="/users/{{ u.id }}/delete" style="display:inline;margin-left:.25rem;"
-              onsubmit="return confirm('Delete user {{ u.username }}?')">
-          <button type="submit" class="btn" style="font-size:.75rem;padding:.25rem .6rem;background:#742a2a;border-color:#9b2c2c;color:#feb2b2;">Delete</button>
+        <form method="post" action="/users/{{ u.id }}/delete" style="display:inline;margin-left:.3rem;"
+              onsubmit="return confirm('Delete {{ u.username }}?')">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
         </form>
         {% endif %}
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="7" style="padding:1rem .75rem;color:#a0aec0;">No users found.</td></tr>
+    <tr><td colspan="7" class="empty">No users found.</td></tr>
     {% endfor %}
   </tbody>
 </table>

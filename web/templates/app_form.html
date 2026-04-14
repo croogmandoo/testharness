@@ -5,8 +5,7 @@
 </div>
 <h1 style="margin-bottom:1.5rem;">{{ ("Edit " + app_name) if mode == "edit" else "New App" }}</h1>
 
-<div id="error-banner" style="display:none; background:rgba(239,68,68,.15); color:#f87171;
-     padding:.75rem 1rem; border-radius:6px; margin-bottom:1rem; font-size:.875rem;"></div>
+<div id="error-banner" style="display:none;" class="form-error"></div>
 
 <div style="display:flex; gap:.5rem; margin-bottom:1.5rem;">
   <button type="button" id="btn-simple" class="btn btn-primary btn-sm"
@@ -54,7 +53,7 @@
     <label style="display:block; margin-bottom:.5rem; font-size:.8rem; color:#a0aec0;">Tests</label>
     <div id="tests-container">
       {% for test in (app_def.tests or []) %}
-      <div class="test-block" style="border:1px solid #2d3748; border-radius:6px; padding:1rem; margin-bottom:.75rem;">
+      <div class="test-block" style="border:1px solid var(--border);padding:1rem;margin-bottom:.75rem;">
         <div style="display:flex; gap:.5rem; margin-bottom:.75rem; align-items:center;">
           <input class="search test-name" type="text" placeholder="Test name"
                  value="{{ test.name | default('') | e }}" style="flex:1; margin-bottom:0;">
@@ -68,19 +67,19 @@
                   onclick="this.closest('.test-block').remove()">&#215; Remove</button>
         </div>
         <div class="fields-availability" style="{{ '' if test.type == 'availability' else 'display:none;' }}">
-          <label style="font-size:.75rem; color:#718096;">Expect Status</label>
+          <label style="font-size:.68rem;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase;">Expect Status</label>
           <input class="search field-expect-status" type="number"
                  value="{{ test.expect_status | default(200) }}" style="max-width:100px; margin-bottom:0;">
         </div>
         <div class="fields-api" style="{{ '' if test.type == 'api' else 'display:none;' }}">
           <div style="display:flex; gap:.5rem; margin-bottom:.5rem;">
             <div style="flex:1;">
-              <label style="font-size:.75rem; color:#718096;">Endpoint</label>
+              <label style="font-size:.68rem;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase;">Endpoint</label>
               <input class="search field-endpoint" type="text" placeholder="/api/health"
                      value="{{ test.endpoint | default('') | e }}" style="margin-bottom:0;">
             </div>
             <div>
-              <label style="font-size:.75rem; color:#718096;">Method</label>
+              <label style="font-size:.68rem;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase;">Method</label>
               <select class="search field-method" style="margin-bottom:0;">
                 {% for m in ['GET','POST','PUT','DELETE'] %}
                 <option value="{{ m }}" {{ 'selected' if test.method == m else '' }}>{{ m }}</option>
@@ -88,17 +87,17 @@
               </select>
             </div>
             <div>
-              <label style="font-size:.75rem; color:#718096;">Expect Status</label>
+              <label style="font-size:.68rem;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase;">Expect Status</label>
               <input class="search field-expect-status" type="number"
                      value="{{ test.expect_status | default(200) }}" style="max-width:100px; margin-bottom:0;">
             </div>
           </div>
-          <label style="font-size:.75rem; color:#718096;">Expect JSON (optional)</label>
+          <label style="font-size:.68rem;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase;">Expect JSON (optional)</label>
           <textarea class="search field-expect-json" rows="2"
                     style="margin-bottom:0; font-family:monospace; font-size:.8rem;">{{ test.expect_json | default('') | e }}</textarea>
         </div>
         <div class="fields-browser" style="{{ '' if test.type == 'browser' else 'display:none;' }}">
-          <label style="font-size:.75rem; color:#718096; display:block; margin-bottom:.5rem;">Steps</label>
+          <label style="font-size:.68rem;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase; display:block; margin-bottom:.5rem;">Steps</label>
           <div class="steps-container">
             {% for step in (test.steps or []) %}
             {% set action = step.keys() | list | first %}
@@ -286,7 +285,7 @@ function addTestBlock() {
   const container = document.getElementById('tests-container');
   const block = document.createElement('div');
   block.className = 'test-block';
-  block.style.cssText = 'border:1px solid #2d3748; border-radius:6px; padding:1rem; margin-bottom:.75rem;';
+  block.style.cssText = 'border:1px solid var(--border);padding:1rem;margin-bottom:.75rem;';
   const hdr = document.createElement('div');
   hdr.style.cssText = 'display:flex; gap:.5rem; margin-bottom:.75rem; align-items:center;';
   const nameInp = makeInput('search test-name', 'text', 'Test name', 'flex:1; margin-bottom:0;');
@@ -329,7 +328,7 @@ function makeApiFields() {
 
 function makeBrowserFields() {
   const d = document.createElement('div'); d.className = 'fields-browser'; d.style.display = 'none';
-  const l = document.createElement('label'); l.style.cssText = 'font-size:.75rem; color:#718096; display:block; margin-bottom:.5rem;'; l.textContent = 'Steps';
+  const l = document.createElement('label'); l.style.cssText = 'font-size:.68rem;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase; display:block; margin-bottom:.5rem;'; l.textContent = 'Steps';
   const sc = document.createElement('div'); sc.className = 'steps-container';
   const ab = document.createElement('button'); ab.type = 'button'; ab.className = 'btn btn-sm'; ab.style.marginTop = '.25rem'; ab.textContent = '+ Add Step';
   ab.onclick = function() { addStepRow(ab); };
@@ -383,7 +382,7 @@ function makeInput(cls, type, placeholder, style) {
   const i = document.createElement('input'); i.className = cls; i.type = type; i.placeholder = placeholder; i.style.cssText = style; return i;
 }
 function makeLbl(text) {
-  const l = document.createElement('label'); l.style.cssText = 'font-size:.75rem; color:#718096;'; l.textContent = text; return l;
+  const l = document.createElement('label'); l.style.cssText = 'font-size:.68rem;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase;'; l.textContent = text; return l;
 }
 function makeRemoveBtn(fn) {
   const b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-sm'; b.style.cssText = 'border-color:#ef4444;color:#f87171;'; b.textContent = '\u00d7'; b.onclick = fn; return b;

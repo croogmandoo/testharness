@@ -267,7 +267,7 @@ def test_detail_page_shows_run_history_strip(tmp_path):
     client = TestClient(app)
     resp = client.get("/app/myapp/prod")
     assert resp.status_code == 200
-    assert b"run-history-strip" in resp.content
+    assert b"run-strip" in resp.content
 
 
 def test_detail_page_shows_pending_cards_when_run_is_active(tmp_path):
