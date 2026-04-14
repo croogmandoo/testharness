@@ -11,7 +11,22 @@
     <div style="display:flex; align-items:center; gap:1.5rem;">
       <a href="/" class="nav-brand">Testing Harness</a>
       <a href="/apps" style="color:#a0aec0; font-size:.875rem;">Apps</a>
+      {% if current_user and current_user.role == "admin" %}
       <a href="/secrets" style="color:#a0aec0; font-size:.875rem;">Secrets</a>
+      <a href="/users" style="color:#a0aec0; font-size:.875rem;">Users</a>
+      <a href="/admin/ldap" style="color:#a0aec0; font-size:.875rem;">LDAP</a>
+      {% endif %}
+    </div>
+    <div style="display:flex; align-items:center; gap:1rem;">
+    {% if current_user %}
+    <span style="color:#a0aec0; font-size:.8rem;">
+      {{ current_user.display_name or current_user.username }}
+      <span style="background:#2d3748; border-radius:4px; padding:.1rem .35rem; font-size:.7rem; margin-left:.25rem;">{{ current_user.role }}</span>
+    </span>
+    <form method="post" action="/auth/logout" style="margin:0;">
+      <button type="submit" style="background:none;border:none;color:#a0aec0;font-size:.8rem;cursor:pointer;padding:0;">Sign out</button>
+    </form>
+    {% endif %}
     </div>
     <div class="env-switcher">
       {% for key, env in environments.items() %}

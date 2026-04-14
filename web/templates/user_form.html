@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>{% if mode == "create" %}New User{% else %}Edit User{% endif %} — Testing Harness</title>
+<link rel="stylesheet" href="/static/style.css"></head>
+<body>
+{% include "nav.html" ignore missing %}
+<div class="main" style="max-width:500px;">
+  <h1 style="margin-bottom:1.5rem;">{% if mode == "create" %}New User{% else %}Edit User{% endif %}</h1>
+  {% if error %}<p style="color:#f87171;margin-bottom:1rem;">{{ error }}</p>{% endif %}
+  <form method="post">
+    {% if mode == "create" %}
+    <div style="margin-bottom:1rem;">
+      <label style="display:block;color:#a0aec0;margin-bottom:.25rem;">Username</label>
+      <input name="username" required value="{{ user.username or '' }}"
+             style="width:100%;padding:.5rem .75rem;background:#1a1f2e;border:1px solid #2d3748;border-radius:6px;color:#e2e8f0;font-size:.875rem;">
+    </div>
+    {% endif %}
+    <div style="margin-bottom:1rem;">
+      <label style="display:block;color:#a0aec0;margin-bottom:.25rem;">Display Name</label>
+      <input name="display_name" value="{{ user.display_name or '' }}"
+             style="width:100%;padding:.5rem .75rem;background:#1a1f2e;border:1px solid #2d3748;border-radius:6px;color:#e2e8f0;font-size:.875rem;">
+    </div>
+    <div style="margin-bottom:1rem;">
+      <label style="display:block;color:#a0aec0;margin-bottom:.25rem;">Email</label>
+      <input name="email" type="email" value="{{ user.email or '' }}"
+             style="width:100%;padding:.5rem .75rem;background:#1a1f2e;border:1px solid #2d3748;border-radius:6px;color:#e2e8f0;font-size:.875rem;">
+    </div>
+    <div style="margin-bottom:1rem;">
+      <label style="display:block;color:#a0aec0;margin-bottom:.25rem;">Role</label>
+      <select name="role" style="width:100%;padding:.5rem .75rem;background:#1a1f2e;border:1px solid #2d3748;border-radius:6px;color:#e2e8f0;font-size:.875rem;">
+        {% for r in ["admin","runner","reporting","read_only"] %}
+        <option value="{{ r }}" {% if user.role == r %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% if mode == "edit" %}
+    <div style="margin-bottom:1rem;">
+      <label style="display:flex;align-items:center;gap:.5rem;color:#a0aec0;cursor:pointer;">
+        <input type="checkbox" name="role_override" value="1" {% if user.role_override %}checked{% endif %}>
+        Lock role (skip LDAP sync)
+      </label>
+    </div>
+    <div style="margin-bottom:1rem;">
+      <label style="display:flex;align-items:center;gap:.5rem;color:#a0aec0;cursor:pointer;">
+        <input type="checkbox" name="is_active" value="1" {% if user.is_active %}checked{% endif %}>
+        Active
+      </label>
+    </div>
+    {% endif %}
+    <div style="margin-bottom:1.5rem;">
+      <label style="display:block;color:#a0aec0;margin-bottom:.25rem;">
+        {% if mode == "create" %}Password{% else %}New password (leave blank to keep current){% endif %}
+      </label>
+      <input name="password" type="password" {% if mode == "create" %}required{% endif %}
+             style="width:100%;padding:.5rem .75rem;background:#1a1f2e;border:1px solid #2d3748;border-radius:6px;color:#e2e8f0;font-size:.875rem;">
+    </div>
+    <div style="display:flex;gap:.75rem;">
+      <button type="submit" class="btn btn-primary">{% if mode == "create" %}Create User{% else %}Save Changes{% endif %}</button>
+      <a href="/users" class="btn">Cancel</a>
+    </div>
+  </form>
+</div>
+</body>
+</html>

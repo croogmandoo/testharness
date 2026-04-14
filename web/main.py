@@ -115,6 +115,12 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     from web.routes.secrets import router as secrets_router
     app.include_router(secrets_router)
 
+    from web.routes.users import router as users_router
+    app.include_router(users_router)
+
+    from web.routes.admin import router as admin_router
+    app.include_router(admin_router)
+
     screenshots_dir = "data/screenshots"
     os.makedirs(screenshots_dir, exist_ok=True)
     app.mount("/screenshots", StaticFiles(directory=screenshots_dir), name="screenshots")
