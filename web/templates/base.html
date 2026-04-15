@@ -16,6 +16,9 @@
       {% if current_user and current_user.role in ("admin", "runner") %}
       <a href="/secrets" class="nav-link">Secrets</a>
       {% endif %}
+      {% if current_user %}
+      <a href="/api-keys" class="nav-link">API Keys</a>
+      {% endif %}
       {% if current_user and current_user.role == "admin" %}
       <a href="/users" class="nav-link">Users</a>
       <a href="/admin/ldap" class="nav-link">LDAP</a>

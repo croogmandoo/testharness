@@ -1,3 +1,4 @@
+<!-- generated-by: gsd-doc-writer -->
 # Web Testing Harness — Approach Recommendations
 
 ## Context
@@ -51,3 +52,39 @@ Playwright Test (JS/TS framework) for browser + API testing, Express for the web
 ## Decision
 
 **Option A selected.** Python is universally readable, runs cleanly on Windows, and Playwright is the best tool for browser automation today. Full control over the UI without a heavyweight framework. The whole stack can grow into Azure without rearchitecting.
+
+---
+
+## Key Dependencies
+
+The following dependencies underpin the auth/RBAC and secrets subsystems added in Phase 2. Versions are pinned in `requirements.txt`.
+
+### `cryptography >= 42.0.0`
+
+Used by `harness/secrets_store.py` for all encryption operations.
+
+- **Fernet** (`cryptography.fernet.Fernet`): AES-128-CBC + HMAC-SHA256 symmetric encryption. Encrypts secret values stored in `harness.db`.
+- **HKDF** (`cryptography.hazmat.primitives.kdf.hkdf.HKDF`): Derives two independent 32-byte keys from the single raw key in `data/secret.key` — one for Fernet encryption and one for itsdangerous session signing. Using separate HKDF outputs (with distinct `info` labels `harness-secrets-v1` and `harness-sessions-v1`) ensures the encryption key and the session-signing key are cryptographically independent despite sharing one root key file.
+
+### `bcrypt >= 4.0.0`
+
+Used directly in `harness/auth_manager.py`, `web/routes/auth.py`, and `web/routes/users.py` for local password hashing and verification.
+
+**Critical:** import as `import bcrypt` — **do not use `passlib`**. `passlib`'s `bcrypt` handler is broken with `bcrypt` 5.x (the `__about__` attribute it inspects was removed). All password operations use `bcrypt.hashpw` / `bcrypt.checkpw` / `bcrypt.gensalt` directly.
+
+### `ldap3 >= 2.9.1`
+
+Used by `harness/auth_manager.py` (`ldap_authenticate`) for LDAP/Active Directory authentication.
+
+- Binds as `username@domain` (domain derived from `base_dn` DC components).
+- Searches for the user entry, reads `displayName`, `mail`, and the configurable group attribute (default `memberOf`).
+- Maps group DNs to harness roles via the `auth.ldap.role_map` config key.
+- Returns `None` on bind failure — falls through to a local auth 401.
+
+### `itsdangerous >= 2.1.2`
+
+Used by `web/auth.py` for session cookie signing.
+
+- `URLSafeTimedSerializer` signs a user UUID into the `session` HTTP-only cookie.
+- Signatures are verified on every request by `get_current_user`; expired or tampered tokens are rejected automatically.
+- The signing key is the HKDF-derived `session_signing_key` from `SecretsStore`, so cookie signatures are bound to the `data/secret.key` file. If that file is replaced, all existing sessions are immediately invalidated.
