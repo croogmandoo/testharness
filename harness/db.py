@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS secrets (
     updated_at      TEXT NOT NULL,
     updated_by      TEXT REFERENCES users(id)
 );
+CREATE TABLE IF NOT EXISTS ca_certs (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    pem_content TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    added_by    TEXT REFERENCES users(id)
+);
 """
 
 class Database:
