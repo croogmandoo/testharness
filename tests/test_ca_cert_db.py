@@ -86,3 +86,54 @@ def test_list_ca_certs_ordered_desc(db):
     certs = db.list_ca_certs()
     assert certs[0]["id"] == "cert-b"
     assert certs[1]["id"] == "cert-a"
+
+
+import ssl
+import os
+
+
+def test_get_ssl_context_no_certs(db):
+    from harness.ssl_context import get_ssl_context
+    ctx = get_ssl_context(db)
+    assert isinstance(ctx, ssl.SSLContext)
+
+
+def test_write_ca_bundle_creates_file(db, tmp_path):
+    from harness.ssl_context import write_ca_bundle
+    db.insert_ca_cert({
+        "id": "cert-bundle",
+        "name": "Bundle CA",
+        "pem_content": "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "added_by": None,
+    })
+    bundle_path = str(tmp_path / "ca-bundle.pem")
+    write_ca_bundle(db, path=bundle_path)
+    assert os.path.exists(bundle_path)
+    content = open(bundle_path).read()
+    assert "BEGIN CERTIFICATE" in content
+
+
+def test_write_ca_bundle_removes_file_when_empty(db, tmp_path):
+    from harness.ssl_context import write_ca_bundle
+    bundle_path = str(tmp_path / "ca-bundle.pem")
+    # Create a stale file
+    open(bundle_path, "w").write("old content")
+    write_ca_bundle(db, path=bundle_path)
+    assert not os.path.exists(bundle_path)
+
+
+def test_write_ca_bundle_multiple_certs(db, tmp_path):
+    from harness.ssl_context import write_ca_bundle
+    for i in range(3):
+        db.insert_ca_cert({
+            "id": f"cert-m{i}",
+            "name": f"CA {i}",
+            "pem_content": f"-----BEGIN CERTIFICATE-----\nfake{i}\n-----END CERTIFICATE-----",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "added_by": None,
+        })
+    bundle_path = str(tmp_path / "ca-bundle.pem")
+    write_ca_bundle(db, path=bundle_path)
+    content = open(bundle_path).read()
+    assert content.count("BEGIN CERTIFICATE") == 3
