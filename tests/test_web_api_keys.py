@@ -153,3 +153,8 @@ def test_revoke_own_key(client):
     assert resp.status_code == 303
     keys_after = get_db().list_api_keys_for_user("user1")
     assert keys_after[0]["is_active"] == 0
+
+
+def test_nav_link_visible_for_authenticated_user(client):
+    resp = client.get("/api-keys", cookies=_session_cookie())
+    assert b'href="/api-keys"' in resp.content
