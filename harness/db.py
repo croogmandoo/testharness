@@ -360,3 +360,31 @@ class Database:
                 "FROM secrets ORDER BY name"
             ).fetchall()
             return [dict(r) for r in rows]
+
+    # ── CA Certs ───────────────────────────────────────────────────────────────
+
+    def insert_ca_cert(self, row: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO ca_certs (id, name, pem_content, created_at, added_by) "
+                "VALUES (:id, :name, :pem_content, :created_at, :added_by)",
+                row,
+            )
+
+    def list_ca_certs(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM ca_certs ORDER BY created_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_ca_cert(self, cert_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM ca_certs WHERE id=?", (cert_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def delete_ca_cert(self, cert_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM ca_certs WHERE id=?", (cert_id,))
