@@ -177,3 +177,16 @@ def test_non_admin_cannot_post(runner_client):
                            data={"name": "Corp CA", "pem_content": FAKE_PEM},
                            follow_redirects=False)
     assert r.status_code == 403
+
+
+def test_add_cert_empty_file_falls_back_to_paste(admin_client, db):
+    """When file input is empty (no file selected), use the pem_content paste field."""
+    r = admin_client.post(
+        "/admin/ca-certs",
+        data={"name": "Paste CA", "pem_content": FAKE_PEM},
+        files={"pem_file": ("", b"", "application/octet-stream")},
+    )
+    assert r.status_code in (200, 303)
+    certs = db.list_ca_certs()
+    assert len(certs) == 1
+    assert certs[0]["pem_content"] == FAKE_PEM
