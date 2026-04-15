@@ -77,6 +77,9 @@ async def api_keys_create(
     if not name:
         raise HTTPException(status_code=422, detail="Name is required.")
 
+    if expiry_days not in _EXPIRY_MAP:
+        raise HTTPException(status_code=422, detail=f"Invalid expiry option.")
+
     days = _EXPIRY_MAP.get(expiry_days)
     expires_at: Optional[str] = None
     if days is not None:
