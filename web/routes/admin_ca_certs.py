@@ -58,7 +58,7 @@ async def ca_certs_add(
     # File upload takes priority over paste
     if pem_file and pem_file.filename:
         raw = await pem_file.read()
-        pem_content = raw.decode("utf-8", errors="replace")
+        pem_content = raw.decode("utf-8", errors="replace").replace("\r\n", "\n").strip()
 
     name = name.strip()
     pem_content = pem_content.strip()
