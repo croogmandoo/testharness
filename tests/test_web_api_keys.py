@@ -92,3 +92,64 @@ def test_x_api_key_without_hth_prefix_ignored(client):
     resp = client.get("/api/apps",
                       headers={"X-API-Key": "mytoken_without_prefix"})
     assert resp.status_code == 401
+
+
+# ── Route tests ──────────────────────────────────────────────────────────
+
+def _session_cookie(user_id="user1"):
+    from web.auth import make_session_token, _signing_key, _session_hours
+    return {"session": make_session_token(user_id, _signing_key, _session_hours)}
+
+
+def test_get_api_keys_page_requires_auth(client):
+    resp = client.get("/api-keys", follow_redirects=False)
+    assert resp.status_code in (307, 401)
+
+
+def test_get_api_keys_page_authenticated(client):
+    resp = client.get("/api-keys", cookies=_session_cookie(), follow_redirects=False)
+    assert resp.status_code == 200
+    assert b"API Keys" in resp.content
+
+
+def test_create_key_returns_redirect_with_flash(client):
+    resp = client.post(
+        "/api-keys",
+        data={"name": "My CI", "expiry_days": "30"},
+        cookies=_session_cookie(),
+        follow_redirects=False,
+    )
+    # Should redirect back to /api-keys
+    assert resp.status_code == 303
+    assert resp.headers["location"].endswith("/api-keys") or "api-keys" in resp.headers["location"]
+
+
+def test_created_key_appears_in_list(client):
+    client.post(
+        "/api-keys",
+        data={"name": "Deploy key", "expiry_days": "7"},
+        cookies=_session_cookie(),
+        follow_redirects=False,
+    )
+    resp = client.get("/api-keys", cookies=_session_cookie())
+    assert b"Deploy key" in resp.content
+
+
+def test_revoke_own_key(client):
+    client.post(
+        "/api-keys",
+        data={"name": "To revoke", "expiry_days": "never"},
+        cookies=_session_cookie(),
+        follow_redirects=False,
+    )
+    from web.main import get_db
+    keys = get_db().list_api_keys_for_user("user1")
+    key_id = keys[0]["id"]
+    resp = client.post(
+        f"/api-keys/{key_id}/revoke",
+        cookies=_session_cookie(),
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    keys_after = get_db().list_api_keys_for_user("user1")
+    assert keys_after[0]["is_active"] == 0
