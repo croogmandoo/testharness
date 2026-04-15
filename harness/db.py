@@ -378,7 +378,7 @@ class Database:
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def get_ca_cert(self, cert_id: str) -> dict | None:
+    def get_ca_cert(self, cert_id: str) -> Optional[dict]:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM ca_certs WHERE id=?", (cert_id,)
