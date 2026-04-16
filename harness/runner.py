@@ -8,6 +8,7 @@ from harness.api import run_api_test
 from harness.browser import run_browser_test, run_availability_test
 from harness.alerts import dispatch_alerts
 from harness.types import AlertType
+from harness.ssl_context import get_ssl_context, write_ca_bundle
 
 def determine_alert(previous_state: str, new_status: str) -> Optional[AlertType]:
     is_fail = new_status in ("fail", "error")
@@ -36,16 +37,20 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
     headless = browser_cfg.get("headless", True)
     timeout_ms = browser_cfg.get("timeout_ms", 30000)
     alerts_cfg = config.get("alerts", {})
+    ssl_ctx = get_ssl_context(db)
+    write_ca_bundle(db)
     alerts_to_send = []
     for test_def in app_def.get("tests", []):
         test_type = test_def.get("type", "availability")
         if test_type == "api":
-            result = await run_api_test(run.id, run.app, environment, base_url, test_def)
+            result = await run_api_test(run.id, run.app, environment, base_url, test_def,
+                                        ssl_ctx=ssl_ctx)
         elif test_type == "browser":
             result = await run_browser_test(run.id, run.app, environment, base_url,
                                             test_def, headless=headless, timeout_ms=timeout_ms)
         else:
-            result = await run_availability_test(run.id, run.app, environment, base_url, test_def)
+            result = await run_availability_test(run.id, run.app, environment, base_url,
+                                                 test_def, ssl_ctx=ssl_ctx)
         db.insert_test_result(result)
         prev = db.get_app_state(run.app, environment, test_def["name"])
         prev_state = prev["state"] if prev else "unknown"

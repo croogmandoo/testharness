@@ -1,10 +1,13 @@
+import ssl
 import time
 import httpx
+from typing import Optional
 from datetime import datetime, timezone
 from harness.models import TestResult, StepResult
 
 async def run_api_test(run_id: str, app: str, environment: str,
-                       base_url: str, test_def: dict) -> TestResult:
+                       base_url: str, test_def: dict,
+                       ssl_ctx: Optional[ssl.SSLContext] = None) -> TestResult:
     result = TestResult(run_id=run_id, app=app, environment=environment,
                         test_name=test_def["name"])
     start = time.monotonic()
@@ -15,7 +18,7 @@ async def run_api_test(run_id: str, app: str, environment: str,
         expect_status = test_def.get("expect_status", 200)
         expect_json = test_def.get("expect_json")
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=ssl_ctx or True) as client:
             response = await client.request(method, url)
 
         step = StepResult(step=f"{method} {endpoint}", status="pass",

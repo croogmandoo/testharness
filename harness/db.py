@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS secrets (
     updated_at      TEXT NOT NULL,
     updated_by      TEXT REFERENCES users(id)
 );
+CREATE TABLE IF NOT EXISTS ca_certs (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    pem_content TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    added_by    TEXT REFERENCES users(id)
+);
 CREATE TABLE IF NOT EXISTS api_keys (
     id           TEXT PRIMARY KEY,
     user_id      TEXT NOT NULL REFERENCES users(id),
@@ -367,6 +374,33 @@ class Database:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    # ── CA Certs ───────────────────────────────────────────────────────────────
+
+    def insert_ca_cert(self, row: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO ca_certs (id, name, pem_content, created_at, added_by) "
+                "VALUES (:id, :name, :pem_content, :created_at, :added_by)",
+                row,
+            )
+
+    def list_ca_certs(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM ca_certs ORDER BY created_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_ca_cert(self, cert_id: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM ca_certs WHERE id=?", (cert_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def delete_ca_cert(self, cert_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM ca_certs WHERE id=?", (cert_id,))
     # ── API Keys ────────────────────────────────────────────────────────────
 
     def insert_api_key(self, row: dict) -> None:

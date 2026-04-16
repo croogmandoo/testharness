@@ -124,6 +124,8 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     from web.routes.admin import router as admin_router
     app.include_router(admin_router)
 
+    from web.routes.admin_ca_certs import router as admin_ca_certs_router
+    app.include_router(admin_ca_certs_router)
     from web.routes.api_keys import router as api_keys_router
     app.include_router(api_keys_router)
 

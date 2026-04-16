@@ -1,10 +1,12 @@
 import os
+import ssl
 import time
 from datetime import datetime, timezone
 from typing import Optional
 from playwright.async_api import async_playwright, Page
 from harness.models import TestResult, StepResult
 from harness.loader import slugify_test_name
+from harness.ssl_context import BUNDLE_PATH
 
 async def execute_step(page: Page, step: dict, base_url: str,
                        screenshot_path: Optional[str] = None) -> StepResult:
@@ -76,6 +78,8 @@ async def run_browser_test(run_id: str, app: str, environment: str,
                         test_name=test_def["name"])
     step_log = []
     start = time.monotonic()
+    if os.path.exists(BUNDLE_PATH):
+        os.environ["SSL_CERT_FILE"] = BUNDLE_PATH
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=headless)
         page = await browser.new_page()
@@ -106,14 +110,15 @@ async def run_browser_test(run_id: str, app: str, environment: str,
     return result
 
 async def run_availability_test(run_id: str, app: str, environment: str,
-                                base_url: str, test_def: dict) -> TestResult:
+                                base_url: str, test_def: dict,
+                                ssl_ctx: Optional[ssl.SSLContext] = None) -> TestResult:
     import httpx
     result = TestResult(run_id=run_id, app=app, environment=environment,
                         test_name=test_def["name"])
     start = time.monotonic()
     expect_status = test_def.get("expect_status", 200)
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=ssl_ctx or True) as client:
             resp = await client.get(base_url)
         elapsed = int((time.monotonic() - start) * 1000)
         if resp.status_code == expect_status:
