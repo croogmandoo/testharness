@@ -190,3 +190,16 @@ def test_add_cert_empty_file_falls_back_to_paste(admin_client, db):
     certs = db.list_ca_certs()
     assert len(certs) == 1
     assert certs[0]["pem_content"] == FAKE_PEM
+
+
+def test_non_admin_cannot_delete(runner_client, db):
+    db.insert_ca_cert({
+        "id": "cert-prot",
+        "name": "Protected",
+        "pem_content": FAKE_PEM,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "added_by": None,
+    })
+    r = runner_client.post("/admin/ca-certs/cert-prot/delete", follow_redirects=False)
+    assert r.status_code == 403
+    assert db.get_ca_cert("cert-prot") is not None  # cert was NOT deleted

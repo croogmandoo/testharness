@@ -137,3 +137,42 @@ def test_write_ca_bundle_multiple_certs(db, tmp_path):
     write_ca_bundle(db, path=bundle_path)
     content = open(bundle_path).read()
     assert content.count("BEGIN CERTIFICATE") == 3
+
+
+def test_get_ssl_context_with_valid_cert(db):
+    """get_ssl_context loads a real CA cert without raising."""
+    try:
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        import datetime as dt
+    except ImportError:
+        pytest.skip("cryptography package not available")
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test-ca")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(dt.datetime.now(dt.timezone.utc))
+        .not_valid_after(dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=365))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    pem = cert.public_bytes(serialization.Encoding.PEM).decode()
+
+    db.insert_ca_cert({
+        "id": "cert-real",
+        "name": "Real Test CA",
+        "pem_content": pem,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "added_by": None,
+    })
+
+    from harness.ssl_context import get_ssl_context
+    ctx = get_ssl_context(db)
+    assert isinstance(ctx, ssl.SSLContext)
