@@ -1,0 +1,99 @@
+# Test the harness's own API
+# This app definition shows how to test the internal harness API endpoints
+
+app: "Harness API"
+url: "http://localhost:8000"
+environments:
+  local: "http://localhost:8000"
+  production: "https://your-harness.com"
+
+tests:
+  # ──────────────────────────────────────────────────────────────────
+  # INFO ENDPOINTS — retrieve configuration and state
+  # ──────────────────────────────────────────────────────────────────
+
+  - name: "API responds to /api/apps"
+    type: api
+    endpoint: /api/apps
+    method: GET
+    expect_status: 200
+    # Note: Returns a list of app summaries with state and counts
+    # Response structure: [{ app: string, total: int, passing: int, failing: int, ... }]
+
+  - name: "API responds to /api/vars"
+    type: api
+    endpoint: /api/vars
+    method: GET
+    expect_status: 200
+    # Returns all $VAR_NAME references found in app YAML files
+    # Response structure: { vars: [list of variable names] }
+
+  - name: "Availability check — harness is up"
+    type: availability
+    expect_status: 200
+
+  # ──────────────────────────────────────────────────────────────────
+  # BROWSER TESTS — interact with the dashboard UI
+  # ──────────────────────────────────────────────────────────────────
+
+  - name: "Dashboard homepage loads"
+    type: browser
+    steps:
+      - navigate: /
+      - assert_text: "Test Harness"
+      - screenshot: null
+
+  - name: "Apps page displays"
+    type: browser
+    steps:
+      - navigate: /apps
+      - assert_text: "Apps"
+      - wait_for_selector: ".card"  # Wait for app cards to load
+      - screenshot: null
+
+  - name: "Secrets page accessible"
+    type: browser
+    steps:
+      - navigate: /admin/secrets
+      - assert_text: "Secrets"
+      - screenshot: null
+
+  - name: "Can navigate to app detail"
+    type: browser
+    steps:
+      - navigate: /
+      - wait_for_selector: "a[href*='/apps']"
+      - click: "a[href*='/apps']"
+      - assert_url_contains: /apps
+      - screenshot: null
+
+  # ──────────────────────────────────────────────────────────────────
+  # AUTHENTICATED API TESTS — using Bearer tokens and API keys
+  # ──────────────────────────────────────────────────────────────────
+
+  - name: "Unauthenticated request is denied"
+    type: api
+    method: GET
+    endpoint: /api/runs
+    expect_status: 403
+    # Demonstrates that protected endpoints reject requests without auth headers
+
+  - name: "Request with API key succeeds"
+    type: api
+    method: GET
+    endpoint: /api/apps
+    headers:
+      Authorization: "Bearer $HARNESS_API_KEY"
+    expect_status: 200
+    # Requires $HARNESS_API_KEY secret to be created in /admin/secrets
+
+  - name: "Trigger a test run via API"
+    type: api
+    method: POST
+    endpoint: /api/runs
+    headers:
+      Authorization: "Bearer $HARNESS_API_KEY"
+      Content-Type: "application/json"
+    expect_status: 202
+    # Requires $HARNESS_API_KEY secret for authentication
+

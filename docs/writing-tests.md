@@ -112,6 +112,7 @@ and key/value pairs inside a JSON response body.
 | `endpoint` | `/` | Path appended to the base URL |
 | `expect_status` | `200` | Expected HTTP status code |
 | `expect_json` | — | Key-value pairs that must match exactly in the JSON body |
+| `headers` | — | Map of custom HTTP headers; values support `$VAR_NAME` substitution |
 
 **Examples:**
 
@@ -153,6 +154,16 @@ and key/value pairs inside a JSON response body.
   endpoint: /api/me
   expect_status: 401
 
+# API with custom headers (Bearer token authentication)
+- name: "Authenticated API call with token"
+  type: api
+  method: POST
+  endpoint: /api/runs
+  headers:
+    Authorization: "Bearer $API_KEY"
+    Content-Type: "application/json"
+  expect_status: 202
+
 # Nested JSON: only top-level keys are checked
 - name: "Feature flags present"
   type: api
@@ -162,6 +173,26 @@ and key/value pairs inside a JSON response body.
     environment: "production"
     maintenance_mode: false
 ```
+
+#### Headers
+
+Add custom HTTP headers to any API request using the `headers` field, which accepts a map of header names to values.
+Header values support `$VAR_NAME` substitution, making it easy to inject secrets (like API keys or auth tokens).
+
+```yaml
+- name: "Call protected endpoint"
+  type: api
+  endpoint: /api/secure
+  headers:
+    Authorization: "Bearer $API_TOKEN"
+    X-Custom-Header: "value"
+  expect_status: 200
+```
+
+**Common use cases:**
+- Bearer token authentication: `Authorization: "Bearer $API_KEY"`
+- API keys: `X-API-Key: "$API_KEY_SECRET"`
+- Custom headers: `X-My-Header: "custom-value"`
 
 > **Note:** `expect_json` matches top-level keys only. Each key must equal the
 > expected value exactly (type-aware comparison). Missing or extra keys in the

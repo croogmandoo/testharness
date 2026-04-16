@@ -17,9 +17,10 @@ async def run_api_test(run_id: str, app: str, environment: str,
         url = base_url.rstrip("/") + endpoint
         expect_status = test_def.get("expect_status", 200)
         expect_json = test_def.get("expect_json")
+        headers = test_def.get("headers", {})
 
         async with httpx.AsyncClient(timeout=30, verify=ssl_ctx or True) as client:
-            response = await client.request(method, url)
+            response = await client.request(method, url, headers=headers)
 
         step = StepResult(step=f"{method} {endpoint}", status="pass",
                           duration_ms=int((time.monotonic() - start) * 1000))

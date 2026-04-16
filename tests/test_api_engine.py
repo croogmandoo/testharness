@@ -35,3 +35,26 @@ async def test_api_test_checks_expect_json(httpx_mock: HTTPXMock):
                                 "https://api.example.com", test_def)
     assert result.status == "fail"
     assert "status" in result.error_msg
+
+@pytest.mark.asyncio
+async def test_api_test_includes_custom_headers(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(url="https://api.example.com/protected", status_code=200,
+                            json={"data": "secret"})
+    test_def = {
+        "name": "Protected endpoint",
+        "type": "api",
+        "endpoint": "/protected",
+        "method": "GET",
+        "expect_status": 200,
+        "headers": {
+            "Authorization": "Bearer token123",
+            "X-Custom-Header": "custom-value"
+        }
+    }
+    result = await run_api_test("run-1", "myapi", "production",
+                                "https://api.example.com", test_def)
+    assert result.status == "pass"
+    # Verify the request was made with the headers
+    request = httpx_mock.get_request()
+    assert request.headers["Authorization"] == "Bearer token123"
+    assert request.headers["X-Custom-Header"] == "custom-value"
