@@ -137,6 +137,10 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     if os.path.isdir(static_dir):
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+    graphify_dir = "graphify-out"
+    if os.path.isdir(graphify_dir):
+        app.mount("/graphify-out", StaticFiles(directory=graphify_dir), name="graphify-out")
+
     return app
 
 
