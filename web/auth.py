@@ -14,6 +14,14 @@ def set_auth_config(signing_key: bytes, session_hours: int, secure_cookie: bool)
     _secure_cookie = secure_cookie
 
 
+def get_auth_config() -> dict:
+    return {
+        "signing_key": _signing_key,
+        "session_hours": _session_hours,
+        "secure_cookie": _secure_cookie,
+    }
+
+
 def make_session_token(user_id: str, signing_key: bytes, session_hours: int) -> str:
     return URLSafeTimedSerializer(signing_key).dumps(user_id)
 

@@ -1,5 +1,7 @@
 import uuid
 import os
+import secrets as _secrets
+import httpx
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Form, Request
@@ -95,7 +97,14 @@ async def setup_post(
 
 @router.get("/auth/login", response_class=HTMLResponse)
 async def login_get(request: Request):
-    return templates.TemplateResponse(request, "login.html", _nav_ctx(request))
+    from web.main import get_config
+    ctx = {
+        **_nav_ctx(request),
+        "github_oauth_enabled": bool(
+            get_config().get("auth", {}).get("github", {}).get("client_id")
+        ),
+    }
+    return templates.TemplateResponse(request, "login.html", ctx)
 
 
 @router.post("/auth/login")
@@ -148,4 +157,105 @@ async def login_post(
 async def logout(request: Request):
     response = RedirectResponse("/auth/login", status_code=303)
     response.delete_cookie("session")
+    return response
+
+
+@router.get("/auth/oauth/github/login")
+async def github_oauth_login(request: Request):
+    from web.main import get_config
+    config = get_config()
+    github_cfg = config.get("auth", {}).get("github", {})
+    client_id = github_cfg.get("client_id")
+    if not client_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="GitHub OAuth not configured")
+    state = _secrets.token_urlsafe(16)
+    url = (
+        f"https://github.com/login/oauth/authorize"
+        f"?client_id={client_id}&state={state}&scope=user:email"
+    )
+    response = RedirectResponse(url, status_code=302)
+    response.set_cookie("oauth_state", state, max_age=300, httponly=True, samesite="lax")
+    return response
+
+
+@router.get("/auth/oauth/github/callback")
+async def github_oauth_callback(request: Request, code: str = "", state: str = ""):
+    from fastapi import HTTPException
+    from web.main import get_config, get_db
+    from web.auth import make_session_token, get_auth_config
+
+    stored_state = request.cookies.get("oauth_state", "")
+    if not stored_state or stored_state != state:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state parameter")
+
+    config = get_config()
+    github_cfg = config.get("auth", {}).get("github", {})
+    client_id = github_cfg.get("client_id")
+    client_secret = github_cfg.get("client_secret")
+    default_role = github_cfg.get("default_role", "read_only")
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        token_resp = await client.post(
+            "https://github.com/login/oauth/access_token",
+            json={"client_id": client_id, "client_secret": client_secret, "code": code},
+            headers={"Accept": "application/json"},
+        )
+    token_data = token_resp.json()
+    access_token = token_data.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=400, detail="GitHub OAuth failed — no access token")
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        user_resp = await client.get(
+            "https://api.github.com/user",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/vnd.github.v3+json",
+            },
+        )
+    github_user = user_resp.json()
+    github_id = str(github_user["id"])
+    username = f"github:{github_user['login']}"
+    display_name = github_user.get("name") or github_user["login"]
+    email = github_user.get("email")
+
+    db = get_db()
+    existing = db.get_user_by_oauth_provider_id("github", github_id)
+    if existing:
+        user = existing
+        db.update_user_last_login(user["id"], datetime.now(timezone.utc).isoformat())
+    else:
+        existing_by_name = db.get_user_by_username(username)
+        if existing_by_name:
+            user = existing_by_name
+            db.update_user_last_login(user["id"], datetime.now(timezone.utc).isoformat())
+        else:
+            user = {
+                "id": str(uuid.uuid4()),
+                "username": username,
+                "display_name": display_name,
+                "email": email,
+                "password_hash": None,
+                "role": default_role,
+                "auth_provider": "github",
+                "oauth_provider_id": github_id,
+                "role_override": 0,
+                "is_active": 1,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_login_at": datetime.now(timezone.utc).isoformat(),
+            }
+            db.insert_user(user)
+
+    auth_config = get_auth_config()
+    token = make_session_token(
+        user["id"], auth_config["signing_key"], auth_config["session_hours"]
+    )
+    response = RedirectResponse("/", status_code=302)
+    response.set_cookie(
+        "session", token,
+        httponly=True, samesite="lax",
+        secure=auth_config.get("secure_cookie", False),
+    )
+    response.delete_cookie("oauth_state")
     return response

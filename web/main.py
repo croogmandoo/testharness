@@ -71,7 +71,8 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
 
     class _FirstRunMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
-            skip = {"/setup", "/auth/login", "/auth/logout"}
+            skip = {"/setup", "/auth/login", "/auth/logout",
+                    "/auth/oauth/github/login", "/auth/oauth/github/callback"}
             skip_prefix = ("/static", "/screenshots", "/api", "/health")
             if (request.url.path not in skip and
                     not request.url.path.startswith(skip_prefix)):

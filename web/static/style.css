@@ -640,3 +640,37 @@ select.input option { background: var(--bg-2); }
   font-size: .65rem;
   color: var(--text-3);
 }
+
+/* ─── OAUTH BUTTONS ─────────────────────────────── */
+.oauth-divider {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  margin: 1rem 0;
+  color: var(--text-3);
+  font-size: .75rem;
+}
+.oauth-divider::before,
+.oauth-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
+.btn-oauth {
+  display: block;
+  width: 100%;
+  padding: .5rem 1rem;
+  text-align: center;
+  border-radius: 4px;
+  font-size: .8rem;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  color: var(--text);
+  background: var(--bg-2);
+  transition: background .15s;
+}
+.btn-oauth:hover {
+  background: var(--bg-3);
+}

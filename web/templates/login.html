@@ -27,6 +27,12 @@
         Sign in
       </button>
     </form>
+    {% if github_oauth_enabled %}
+    <div class="oauth-divider"><span>or</span></div>
+    <a href="/auth/oauth/github/login" class="btn-oauth btn-oauth--github">
+      Login with GitHub
+    </a>
+    {% endif %}
   </div>
 </div>
 </body>

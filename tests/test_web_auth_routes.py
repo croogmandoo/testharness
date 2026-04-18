@@ -88,3 +88,93 @@ def test_logout_redirects(client, db):
     db.upsert_ldap_user("bob", "Bob", None, "admin")
     resp = client.post("/auth/logout")
     assert resp.status_code in (302, 303)
+
+
+def test_github_oauth_login_redirects_to_github(db, tmp_path):
+    """GET /auth/oauth/github/login redirects to GitHub with client_id."""
+    from fastapi.testclient import TestClient
+    from web.main import create_app
+
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    config = {
+        "auth": {
+            "github": {
+                "client_id": "test_client_id",
+                "client_secret": "test_secret",
+            }
+        },
+        "environments": {"production": {"label": "Production"}},
+    }
+    app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    c = TestClient(app, follow_redirects=False)
+    r = c.get("/auth/oauth/github/login")
+    assert r.status_code in (302, 307)
+    location = r.headers["location"]
+    assert "github.com/login/oauth/authorize" in location
+    assert "test_client_id" in location
+
+
+def test_github_oauth_login_returns_404_when_not_configured(db, tmp_path):
+    from fastapi.testclient import TestClient
+    from web.main import create_app
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    app = create_app(db=db, config={}, apps_dir=str(apps_dir))
+    c = TestClient(app, follow_redirects=False)
+    r = c.get("/auth/oauth/github/login")
+    assert r.status_code == 404
+
+
+def test_github_oauth_callback_creates_user_and_sets_session(db, tmp_path):
+    """Callback with valid code creates the user and redirects to /."""
+    import uuid
+    from unittest.mock import patch, AsyncMock, MagicMock
+    from fastapi.testclient import TestClient
+    from web.main import create_app
+
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    config = {
+        "auth": {
+            "github": {
+                "client_id": "cid",
+                "client_secret": "csecret",
+                "default_role": "read_only",
+            }
+        },
+        "environments": {"production": {"label": "Production"}},
+    }
+    app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    c = TestClient(app, follow_redirects=False)
+
+    token_response = MagicMock()
+    token_response.json = MagicMock(return_value={"access_token": "gha_test_token"})
+    user_response = MagicMock()
+    user_response.json = MagicMock(return_value={
+        "id": 12345,
+        "login": "testuser",
+        "name": "Test User",
+        "email": "test@example.com",
+    })
+
+    c.cookies.set("oauth_state", "teststate")
+
+    with patch("web.routes.auth.httpx") as mock_httpx:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=token_response)
+        mock_client.get = AsyncMock(return_value=user_response)
+        mock_httpx.AsyncClient.return_value = mock_client
+
+        r = c.get("/auth/oauth/github/callback?code=abc123&state=teststate")
+
+    assert r.status_code in (302, 307)
+    assert r.headers["location"] == "/"
+
+    user = db.get_user_by_oauth_provider_id("github", "12345")
+    assert user is not None
+    assert user["username"] == "github:testuser"
+    assert user["role"] == "read_only"
+    assert user["auth_provider"] == "github"

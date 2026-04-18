@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS users (
     role_override INTEGER DEFAULT 0,
     is_active     INTEGER DEFAULT 1,
     created_at    TEXT NOT NULL,
-    last_login_at TEXT
+    last_login_at TEXT,
+    oauth_provider_id TEXT
 );
 CREATE TABLE IF NOT EXISTS secrets (
     id              TEXT PRIMARY KEY,
@@ -94,6 +95,11 @@ class Database:
     def init_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN oauth_provider_id TEXT")
+                conn.commit()
+            except Exception:
+                pass
 
     def insert_run(self, run: Run) -> None:
         with self._connect() as conn:
@@ -246,11 +252,21 @@ class Database:
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO users (id, username, display_name, email, password_hash, "
-                "role, auth_provider, role_override, is_active, created_at, last_login_at) "
+                "role, auth_provider, role_override, is_active, created_at, last_login_at, "
+                "oauth_provider_id) "
                 "VALUES (:id,:username,:display_name,:email,:password_hash,"
-                ":role,:auth_provider,:role_override,:is_active,:created_at,:last_login_at)",
-                user,
+                ":role,:auth_provider,:role_override,:is_active,:created_at,:last_login_at,"
+                ":oauth_provider_id)",
+                {**user, "oauth_provider_id": user.get("oauth_provider_id")},
             )
+
+    def get_user_by_oauth_provider_id(self, provider: str, provider_id: str):
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM users WHERE auth_provider=? AND oauth_provider_id=?",
+                (provider, provider_id),
+            ).fetchone()
+            return dict(row) if row else None
 
     def get_user_by_username(self, username: str) -> Optional[dict]:
         with self._connect() as conn:
