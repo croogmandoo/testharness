@@ -359,3 +359,43 @@ def test_dashboard_renders_app_tags(db, tmp_path):
     assert r.status_code == 200
     assert b"media" in r.content
     assert b"critical" in r.content
+
+
+def test_detail_page_renders_sparkline_svg(db, tmp_path):
+    import yaml
+    from datetime import datetime, timezone
+    from fastapi.testclient import TestClient
+    from web.main import create_app
+    from web.auth import get_current_user
+    from harness.models import Run, TestResult
+
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    (apps_dir / "sonarr.yaml").write_text(yaml.dump({
+        "app": "Sonarr",
+        "environments": {"production": "https://sonarr.example.com"},
+        "tests": [{"name": "login", "type": "availability"}],
+    }))
+    config = {"default_environment": "production",
+              "environments": {"production": {"label": "Production"}}}
+    app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    _admin = db.get_user_by_username("_test_admin")
+    app.dependency_overrides[get_current_user] = lambda: _admin
+
+    # Insert 3 runs with test results so history exists
+    for i in range(3):
+        run = Run(app="Sonarr", environment="production", triggered_by="test",
+                  status="complete")
+        db.insert_run(run)
+        db.update_run_status(run.id, "complete",
+                             finished_at=datetime.now(timezone.utc).isoformat())
+        tr = TestResult(run_id=run.id, app="Sonarr", environment="production",
+                        test_name="login", status="pass", duration_ms=100,
+                        finished_at=datetime.now(timezone.utc).isoformat())
+        db.insert_test_result(tr)
+
+    c = TestClient(app)
+    r = c.get("/app/Sonarr/production")
+    assert r.status_code == 200
+    assert b"sparkline" in r.content
+    assert b"<polyline" in r.content

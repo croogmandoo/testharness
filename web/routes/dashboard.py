@@ -62,6 +62,7 @@ async def app_detail(request: Request, app: str, environment: str, run_id: str =
     selected_run = None
     test_results = []
     history = {}
+    sparkline_data = {}
 
     if runs:
         selected_run = next((r for r in runs if r["id"] == run_id), runs[0])
@@ -70,6 +71,20 @@ async def app_detail(request: Request, app: str, environment: str, run_id: str =
             tr["step_log"] = json.loads(tr["step_log"] or "[]")
         test_names = [tr["test_name"] for tr in test_results]
         history = db.get_run_history_batch(app, environment, test_names)
+
+        # Compute SVG sparkline point lists for each test
+        for test_name, statuses in history.items():
+            n = len(statuses)
+            if n < 2:
+                continue
+            # statuses is most-recent-first; reverse to draw left=oldest, right=newest
+            ordered = list(reversed(statuses))
+            points = []
+            for i, s in enumerate(ordered):
+                x = round(i / (n - 1) * 76 + 2)
+                y = 2 if s == "pass" else 18
+                points.append({"x": x, "y": y, "status": s})
+            sparkline_data[test_name] = points
 
     is_live = bool(selected_run and selected_run["status"] in ("pending", "running"))
     pending_test_names = []
@@ -91,6 +106,7 @@ async def app_detail(request: Request, app: str, environment: str, run_id: str =
         "selected_run": selected_run,
         "test_results": test_results,
         "history": history,
+        "sparkline_data": sparkline_data,
         "is_live": is_live,
         "pending_test_names": pending_test_names,
         "current_user": current_user,

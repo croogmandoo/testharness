@@ -622,3 +622,21 @@ select.input option { background: var(--bg-2); }
   border: 1px solid var(--border);
   cursor: default;
 }
+
+/* ─── SPARKLINE ─────────────────────────────────── */
+.sparkline {
+  display: block;
+  overflow: visible;
+}
+
+.history {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin-top: .5rem;
+}
+
+.history-label {
+  font-size: .65rem;
+  color: var(--text-3);
+}

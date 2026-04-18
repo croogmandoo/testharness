@@ -81,12 +81,21 @@
     {% endfor %}
   </div>
   {% endif %}
-  {% if history[tr.test_name] is defined %}
+  {% if sparkline_data[tr.test_name] is defined and sparkline_data[tr.test_name] %}
+  {% set pts = sparkline_data[tr.test_name] %}
   <div class="history">
-    {% for s in history[tr.test_name] %}
-    <span class="history-dot history-dot--{{ s }}" title="{{ s }}"></span>
-    {% endfor %}
-    <span class="history-label">recent</span>
+    <svg class="sparkline" viewBox="0 0 80 20" width="80" height="20"
+         aria-label="Recent results trend">
+      <polyline
+        points="{% for p in pts %}{{ p.x }},{{ p.y }} {% endfor %}"
+        fill="none" stroke="var(--text-3)" stroke-width="1.5"
+        stroke-linejoin="round" stroke-linecap="round"/>
+      {% for p in pts %}
+      <circle cx="{{ p.x }}" cy="{{ p.y }}" r="2.5"
+        fill="{% if p.status == 'pass' %}var(--pass){% else %}var(--fail){% endif %}"/>
+      {% endfor %}
+    </svg>
+    <span class="history-label">{{ pts | length }} runs</span>
   </div>
   {% endif %}
 </div>
