@@ -2,13 +2,16 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 from harness.db import Database
-from harness.models import Run, AppState
+from harness.models import Run, AppState, StepResult
 from harness.loader import resolve_base_url
 from harness.api import run_api_test
 from harness.browser import run_browser_test, run_availability_test
 from harness.alerts import dispatch_alerts, dispatch_run_webhook
 from harness.types import AlertType
 from harness.ssl_context import get_ssl_context, write_ca_bundle
+from harness.screenshot_diff import compute_diff
+
+SCREENSHOTS_DIR = "data/screenshots"
 
 def determine_alert(previous_state: str, new_status: str) -> Optional[AlertType]:
     is_fail = new_status in ("fail", "error")
@@ -19,7 +22,7 @@ def determine_alert(previous_state: str, new_status: str) -> Optional[AlertType]
     return None
 
 async def _execute_test(test_def: dict, run_id: str, app: str, environment: str,
-                        base_url: str, ssl_ctx, browser_cfg: dict):
+                        base_url: str, ssl_ctx, browser_cfg: dict, db=None):
     """Run a single test with optional retry. Returns TestResult."""
     max_retries = int(test_def.get("retry", 0))
     test_type = test_def.get("type", "availability")
@@ -35,6 +38,26 @@ async def _execute_test(test_def: dict, run_id: str, app: str, environment: str,
                                             test_def,
                                             headless=browser_cfg.get("headless", True),
                                             timeout_ms=test_timeout_ms)
+            # Screenshot diff check (only on pass, only if previous screenshot exists)
+            if result.screenshot and result.status == "pass" and db is not None:
+                prev_shot = db.get_last_screenshot(app, environment, test_def["name"])
+                if prev_shot:
+                    diff_threshold = browser_cfg.get("screenshot_diff_threshold", 0.05)
+                    diff = compute_diff(
+                        f"{SCREENSHOTS_DIR}/{prev_shot}",
+                        f"{SCREENSHOTS_DIR}/{result.screenshot}",
+                    )
+                    if diff > diff_threshold:
+                        result.step_log.append(StepResult(
+                            step=f"Screenshot diff: {diff:.1%} pixels changed "
+                                 f"(threshold {diff_threshold:.0%})",
+                            status="fail",
+                            duration_ms=0,
+                        ))
+                        result.status = "fail"
+                        result.error_msg = (
+                            f"Visual regression: {diff:.1%} pixels changed"
+                        )
         else:
             result = await run_availability_test(run_id, app, environment, base_url,
                                                  test_def, ssl_ctx=ssl_ctx)
@@ -65,7 +88,7 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
     test_defs = app_def.get("tests", [])
     results = await asyncio.gather(
         *[_execute_test(td, run.id, run.app, environment, base_url,
-                        ssl_ctx, browser_cfg)
+                        ssl_ctx, browser_cfg, db=db)
           for td in test_defs],
         return_exceptions=True,
     )

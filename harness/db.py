@@ -472,3 +472,14 @@ class Database:
                 "UPDATE api_keys SET last_used_at=? WHERE id=?",
                 (timestamp, key_id),
             )
+
+    def get_last_screenshot(self, app: str, environment: str, test_name: str):
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT screenshot FROM test_results "
+                "WHERE app=? AND environment=? AND test_name=? "
+                "AND screenshot IS NOT NULL "
+                "ORDER BY finished_at DESC LIMIT 1",
+                (app, environment, test_name),
+            ).fetchone()
+            return row["screenshot"] if row else None

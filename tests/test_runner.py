@@ -172,3 +172,71 @@ async def test_tests_run_concurrently(db):
 
     # If sequential: >= 0.30 s. Parallel: < 0.25 s.
     assert elapsed < 0.25, f"Tests ran sequentially (elapsed {elapsed:.3f}s)"
+
+
+@pytest.mark.asyncio
+async def test_screenshot_diff_appends_fail_step_when_over_threshold(db, tmp_path):
+    """If screenshot changes by more than threshold, a fail step is added."""
+    from PIL import Image
+
+    screenshots_dir = tmp_path / "data" / "screenshots"
+    screenshots_dir.mkdir(parents=True)
+
+    app_def = {
+        "app": "myapp", "url": "https://example.com",
+        "environments": {"production": "https://example.com"},
+        "_type": "yaml",
+        "tests": [{"name": "visual-test", "type": "browser", "steps": []}],
+    }
+
+    # Previous screenshot: white 10×10
+    prev_rel = "myapp/production/run_prev/visual-test.png"
+    prev_path = screenshots_dir / "myapp" / "production" / "run_prev"
+    prev_path.mkdir(parents=True)
+    Image.new("RGB", (10, 10), color=(255, 255, 255)).save(
+        str(prev_path / "visual-test.png")
+    )
+
+    from harness.models import Run, TestResult
+    prev_run = Run(app="myapp", environment="production",
+                   triggered_by="test", status="complete", id="run_prev")
+    db.insert_run(prev_run)
+    prev_tr = TestResult(run_id="run_prev", app="myapp", environment="production",
+                         test_name="visual-test", status="pass",
+                         screenshot=prev_rel,
+                         finished_at="2026-04-17T00:00:00Z")
+    db.insert_test_result(prev_tr)
+
+    curr_rel = "myapp/production/run_curr/visual-test.png"
+
+    async def fake_browser(run_id, app, env, base_url, test_def, **kwargs):
+        curr_path = screenshots_dir / "myapp" / "production" / "run_curr"
+        curr_path.mkdir(parents=True)
+        Image.new("RGB", (10, 10), color=(0, 0, 0)).save(
+            str(curr_path / "visual-test.png")
+        )
+        result = TestResult(run_id=run_id, app=app, environment=env,
+                            test_name="visual-test", status="pass")
+        result.screenshot = curr_rel
+        return result
+
+    config = {
+        "browser": {"screenshot_diff_threshold": 0.01},
+    }
+    screenshots_path = str(screenshots_dir)
+
+    with patch("harness.runner.run_browser_test", new=fake_browser), \
+         patch("harness.runner.dispatch_alerts", new=AsyncMock()), \
+         patch("harness.runner.dispatch_run_webhook", new=AsyncMock()), \
+         patch("harness.runner.SCREENSHOTS_DIR", screenshots_path):
+        await run_app(app_def, "production", "api", db, config=config)
+
+    results = db.get_results_for_run(
+        db.get_recent_runs("myapp", "production")[0]["id"]
+    )
+    assert len(results) == 1
+    import json
+    step_log = json.loads(results[0]["step_log"] or "[]")
+    diff_steps = [s for s in step_log if "diff" in s.get("step", "").lower()]
+    assert len(diff_steps) == 1
+    assert diff_steps[0]["status"] == "fail"
