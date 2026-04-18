@@ -1,6 +1,10 @@
 <!-- generated-by: gsd-doc-writer -->
 # Web Testing Harness — Approach Recommendations
 
+## Knowledge Graph
+
+An interactive graph of this codebase is available at [`/graphify-out/graph.html`](/graphify-out/graph.html) when the app is running. Run `/graphify` in Claude Code to rebuild it after significant changes.
+
 ## Context
 
 - **Users**: Developers (configure tests) and non-technical ops/QA staff (trigger runs, view results)
