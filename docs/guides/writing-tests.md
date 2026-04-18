@@ -592,6 +592,30 @@ Any YAML string value that starts with `$` is resolved from the process
 environment at startup. If the variable is not set, the harness refuses to
 start and logs a `ConfigError`.
 
+### Per-environment secrets
+
+Use `$VAR#env` to prefer an environment-specific value with automatic fallback
+to the global `VAR`:
+
+```yaml
+tests:
+  - name: Login
+    type: browser
+    steps:
+      - fill:
+          field: input[name=password]
+          value: $SONARR_PASSWORD#staging   # uses SONARR_PASSWORD#staging if set, else SONARR_PASSWORD
+```
+
+Set the scoped variable in your `.env` file or environment:
+
+```bash
+SONARR_PASSWORD=global-password
+SONARR_PASSWORD#staging=staging-only-password
+```
+
+If neither `$VAR#env` nor `$VAR` is set, the harness raises a `ConfigError` at startup.
+
 ```yaml
 url: $MYAPP_BASE_URL
 
@@ -902,7 +926,62 @@ exactly what went wrong.
 
 ---
 
-## 7. Config Reference
+## 7. Per-Test Options
+
+The following fields can be added to any test definition regardless of type:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `timeout_ms` | `browser.timeout_ms` | Override the global timeout for this test only |
+| `retry` | `0` | Number of additional attempts on failure (e.g. `retry: 2` = 3 total attempts) |
+
+```yaml
+tests:
+  - name: Slow export
+    type: api
+    endpoint: /export
+    timeout_ms: 60000    # 60 s for this test only
+
+  - name: Flaky background job
+    type: api
+    endpoint: /status
+    retry: 2             # retry up to 2 times on failure
+    timeout_ms: 10000
+
+  - name: Login flow
+    type: browser
+    timeout_ms: 45000    # browser steps allowed 45 s
+    retry: 1
+    steps:
+      - navigate: /login
+      - fill:
+          field: input[name=username]
+          value: admin
+```
+
+Retry stops as soon as a passing result is returned. The last result (pass or fail) is the one stored.
+
+---
+
+## 8. App Tags
+
+Add a `tags` list to any app YAML to group and filter apps on the dashboard:
+
+```yaml
+app: Sonarr
+tags: [media, production-critical]
+environments:
+  production: https://sonarr.example.com
+tests:
+  - name: Homepage
+    type: availability
+```
+
+Tags appear as chips on the dashboard app tile. The search box filters by tag as well as by app name.
+
+---
+
+## 9. Config Reference
 
 Global settings live in `config.yaml` in the project root.
 

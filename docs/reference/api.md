@@ -3,7 +3,7 @@
 
 All endpoints are served by the FastAPI application. Browser-facing routes return HTML responses; JSON API endpoints are prefixed `/api/`.
 
-**Authentication:** All endpoints (except `/setup`, `/auth/login`, `/auth/logout`) require a valid `session` cookie issued at login. Unauthenticated requests to `/api/*` paths receive `401 Not authenticated`. Unauthenticated requests to browser paths receive `307 → /auth/login`. Insufficient role returns `403`.
+**Authentication:** All endpoints (except `/setup`, `/auth/login`, `/auth/logout`, `/health`) require a valid `session` cookie issued at login. Unauthenticated requests to `/api/*` paths receive `401 Not authenticated`. Unauthenticated requests to browser paths receive `307 → /auth/login`. Insufficient role returns `403`.
 
 **Session cookie:** `HttpOnly`, `SameSite=lax`. Set `auth.secure_cookie: true` in `config.yaml` for HTTPS deployments.
 
@@ -21,6 +21,21 @@ All endpoints are served by the FastAPI application. Browser-facing routes retur
 - [Users](#users)
 - [Secrets](#secrets)
 - [Admin / LDAP](#admin--ldap)
+
+---
+
+## Health
+
+### `GET /health`
+
+Returns `{"status": "ok"}`. No authentication required. Used by Docker healthchecks, load balancers, and uptime monitors.
+
+**Auth required:** None
+
+**Response (200):**
+```json
+{"status": "ok"}
+```
 
 ---
 
@@ -93,6 +108,40 @@ Authenticates a user and sets a session cookie.
 |---|---|
 | `303` | Authenticated; redirects to `/` with `session` cookie set |
 | `401` | Invalid username or password |
+
+---
+
+### `GET /auth/oauth/github/login`
+
+Initiates GitHub OAuth2 login. Redirects to GitHub's authorization page. Only available when `auth.github.client_id` is set in `config.yaml`.
+
+**Auth required:** None
+
+**Responses:**
+
+| Status | Description |
+|---|---|
+| `302` | Redirect to `https://github.com/login/oauth/authorize` |
+| `404` | GitHub OAuth not configured |
+
+---
+
+### `GET /auth/oauth/github/callback`
+
+OAuth2 callback. Exchanges the authorization code for a token, fetches the GitHub user profile, upserts the user in the database, sets a session cookie, and redirects to `/`.
+
+**Auth required:** None
+
+**Query params:** `code`, `state` (set by GitHub)
+
+**Responses:**
+
+| Status | Description |
+|---|---|
+| `302` | Authenticated; redirects to `/` |
+| `400` | Invalid or missing OAuth state (CSRF protection) |
+
+New GitHub users are assigned the role from `auth.github.default_role` (default: `read_only`).
 
 ---
 
@@ -469,6 +518,7 @@ Returns recent test results for an app and environment.
 | Param | Default | Description |
 |---|---|---|
 | `limit` | `20` | Maximum number of results to return |
+| `offset` | `0` | Number of results to skip (for pagination) |
 
 **Response (200):** Array of test result objects.
 
@@ -511,7 +561,7 @@ Downloads a PDF or DOCX report for a completed run.
 
 | Param | Default | Description |
 |---|---|---|
-| `format` | `"pdf"` | Export format: `pdf` or `docx` |
+| `format` | `"pdf"` | Export format: `pdf`, `docx`, or `csv` |
 
 **Response:** Binary file download.
 
@@ -519,6 +569,7 @@ Downloads a PDF or DOCX report for a completed run.
 |---|---|
 | `pdf` | `application/pdf` |
 | `docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` |
+| `csv` | `text/csv` |
 
 `Content-Disposition` header: `attachment; filename="run-{run_id[:8]}-{app}.{ext}"`
 
