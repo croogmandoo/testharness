@@ -125,3 +125,29 @@ def test_health_check_requires_no_auth(db, tmp_path):
     r = c.get("/health")
     assert r.status_code == 200
     assert r.json() == {"status": "ok"}
+
+
+def test_results_pagination(client, db):
+    from harness.models import Run, TestResult
+    from datetime import datetime, timezone
+    run = Run(app="PaginApp", environment="production", triggered_by="test")
+    db.insert_run(run)
+    for i in range(7):
+        tr = TestResult(
+            run_id=run.id, app="PaginApp", environment="production",
+            test_name=f"test-{i}", status="pass", duration_ms=100,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+        db.insert_test_result(tr)
+
+    r1 = client.get("/api/results/PaginApp/production?limit=4&offset=0")
+    assert r1.status_code == 200
+    assert len(r1.json()) == 4
+
+    r2 = client.get("/api/results/PaginApp/production?limit=4&offset=4")
+    assert r2.status_code == 200
+    assert len(r2.json()) == 3
+
+    ids1 = {r["id"] for r in r1.json()}
+    ids2 = {r["id"] for r in r2.json()}
+    assert ids1.isdisjoint(ids2)

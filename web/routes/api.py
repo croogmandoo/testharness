@@ -81,11 +81,11 @@ async def list_vars(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/results/{app}/{environment}")
-async def get_results(app: str, environment: str, limit: int = 20,
+async def get_results(app: str, environment: str, limit: int = 20, offset: int = 0,
                       current_user: dict = Depends(get_current_user)):
     from web.main import get_db
     db = get_db()
-    return db.get_results_for_app(app, environment, limit)
+    return db.get_results_for_app(app, environment, limit, offset)
 
 
 # ---- App management mutation endpoints ----

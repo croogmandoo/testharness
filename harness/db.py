@@ -141,12 +141,12 @@ class Database:
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def get_results_for_app(self, app: str, environment: str, limit: int = 20) -> list:
+    def get_results_for_app(self, app: str, environment: str, limit: int = 20, offset: int = 0) -> list:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM test_results WHERE app=? AND environment=? "
-                "ORDER BY finished_at DESC LIMIT ?",
-                (app, environment, limit)
+                "ORDER BY finished_at DESC LIMIT ? OFFSET ?",
+                (app, environment, limit, offset)
             ).fetchall()
             return [dict(r) for r in rows]
 
