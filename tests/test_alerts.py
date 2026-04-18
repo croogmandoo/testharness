@@ -53,3 +53,31 @@ async def test_slack_alert_sends_on_fail():
     assert len(posted) == 1
     assert posted[0]["url"] == "https://hooks.slack.com/test"
     assert "FAIL" in posted[0]["json"]["text"] or "fail" in posted[0]["json"]["text"].lower()
+
+@pytest.mark.asyncio
+async def test_discord_alert_sends_on_fail():
+    from harness.alerts import dispatch_alerts
+    from harness.types import AlertType
+    posted = []
+
+    async def fake_post(url, json=None, **kwargs):
+        posted.append({"url": url, "json": json})
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        return mock_resp
+
+    alerts = [(AlertType.FAIL, "Sonarr", "production", "login", "timeout")]
+    cfg = {"discord": {"webhook_url": "https://discord.com/api/webhooks/test"}}
+
+    with patch("httpx.AsyncClient") as mock_cls:
+        mock_instance = AsyncMock()
+        mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+        mock_instance.__aexit__ = AsyncMock(return_value=False)
+        mock_instance.post = AsyncMock(side_effect=fake_post)
+        mock_cls.return_value = mock_instance
+        await dispatch_alerts(alerts, cfg)
+
+    assert len(posted) == 1
+    assert posted[0]["url"] == "https://discord.com/api/webhooks/test"
+    assert "content" in posted[0]["json"]
+    assert "FAIL" in posted[0]["json"]["content"] or "fail" in posted[0]["json"]["content"].lower()

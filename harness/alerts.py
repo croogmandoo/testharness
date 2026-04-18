@@ -20,6 +20,10 @@ async def _send_slack(webhook_url: str, text: str) -> None:
     async with httpx.AsyncClient(timeout=10) as client:
         await client.post(webhook_url, json={"text": text})
 
+async def _send_discord(webhook_url: str, text: str) -> None:
+    async with httpx.AsyncClient(timeout=10) as client:
+        await client.post(webhook_url, json={"content": text})
+
 def _send_email(smtp_config: dict, subject: str, body: str) -> None:
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -49,6 +53,12 @@ async def dispatch_alerts(alerts: list, alerts_config: dict) -> None:
                 await _send_slack(slack_cfg["webhook_url"], text)
             except Exception as e:
                 print(f"[alerts] Slack error: {e}")
+        discord_cfg = alerts_config.get("discord", {})
+        if discord_cfg.get("webhook_url"):
+            try:
+                await _send_discord(discord_cfg["webhook_url"], text)
+            except Exception as e:
+                print(f"[alerts] Discord error: {e}")
         if email_cfg:
             subject = f"[Harness] {app} — {test_name} {'FAILED' if alert_type == AlertType.FAIL else 'RESOLVED'}"
             try:
