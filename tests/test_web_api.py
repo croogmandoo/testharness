@@ -108,3 +108,20 @@ def test_get_results_for_app(client, db):
     assert len(results) == 1
     assert results[0]["test_name"] == "health"
     assert results[0]["status"] == "pass"
+
+
+def test_health_check_returns_ok(client):
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok"}
+
+
+def test_health_check_requires_no_auth(db, tmp_path):
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    app = create_app(db=db, config={}, apps_dir=str(apps_dir))
+    # No dependency_overrides — fully unauthenticated
+    c = TestClient(app, follow_redirects=False)
+    r = c.get("/health")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok"}

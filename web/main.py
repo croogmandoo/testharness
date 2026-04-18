@@ -72,7 +72,7 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     class _FirstRunMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             skip = {"/setup", "/auth/login", "/auth/logout"}
-            skip_prefix = ("/static", "/screenshots", "/api")
+            skip_prefix = ("/static", "/screenshots", "/api", "/health")
             if (request.url.path not in skip and
                     not request.url.path.startswith(skip_prefix)):
                 if _db is not None and _db.count_users() == 0:
@@ -99,6 +99,10 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
                     "current_user": None,
                 }, status_code=403)
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+    @app.get("/health")
+    async def health_check():
+        return {"status": "ok"}
 
     from web.routes.api import router as api_router
     app.include_router(api_router)
