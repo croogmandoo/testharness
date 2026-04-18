@@ -328,3 +328,9 @@ def test_graphify_out_mount_serves_files(tmp_path, monkeypatch):
     r = c.get("/graphify-out/test.txt")
     assert r.status_code == 200
     assert r.text == "hello"
+
+
+def test_theme_toggle_button_in_nav(client):
+    """Nav contains the theme toggle button (base.html is shared across authenticated pages)."""
+    r = client.get("/apps")
+    assert b'theme-toggle' in r.content

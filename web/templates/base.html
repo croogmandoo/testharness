@@ -3,6 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (function(){
+      var t = localStorage.getItem('theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+      document.addEventListener('DOMContentLoaded', function(){
+        var btn = document.getElementById('theme-toggle');
+        if (btn) btn.textContent = t === 'dark' ? '☀' : '☾';
+      });
+    })();
+  </script>
   <title>Testing Harness</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -26,6 +36,13 @@
       {% endif %}
     </div>
     <div class="nav-right">
+      <button id="theme-toggle" onclick="(function(){
+        var cur = document.documentElement.getAttribute('data-theme') || 'dark';
+        var next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('theme', next);
+        document.getElementById('theme-toggle').textContent = next === 'dark' ? '☀' : '☾';
+      })()" style="background:none;border:none;cursor:pointer;font-size:1rem;color:var(--text-2);padding:.25rem .4rem;line-height:1;" title="Toggle light/dark mode">☀</button>
       <div class="env-switcher">
         {% for key, env in environments.items() %}
           <a href="?environment={{ key }}"
