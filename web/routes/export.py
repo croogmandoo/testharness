@@ -1,6 +1,6 @@
 import json
 from fastapi import APIRouter, Depends, Response
-from harness.export import export_pdf, export_docx
+from harness.export import export_pdf, export_docx, export_csv
 from web.auth import require_role
 
 router = APIRouter(prefix="/api")
@@ -25,9 +25,9 @@ async def export_run(run_id: str, format: str = "pdf",
             media_type="application/json",
         )
 
-    if format not in ("pdf", "docx"):
+    if format not in ("pdf", "docx", "csv"):
         return Response(
-            content='{"detail": "format must be pdf or docx"}',
+            content='{"detail": "format must be pdf, docx or csv"}',
             status_code=422,
             media_type="application/json",
         )
@@ -40,10 +40,14 @@ async def export_run(run_id: str, format: str = "pdf",
             data = export_pdf(run, results, screenshots_dir=screenshots_dir)
             media_type = "application/pdf"
             ext = "pdf"
-        else:
+        elif format == "docx":
             data = export_docx(run, results, screenshots_dir=screenshots_dir)
             media_type = DOCX_MEDIA_TYPE
             ext = "docx"
+        else:  # csv
+            data = export_csv(run, results)
+            media_type = "text/csv"
+            ext = "csv"
     except Exception as e:
         return Response(
             content=json.dumps({"detail": str(e)}),

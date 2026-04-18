@@ -223,4 +223,79 @@ def test_export_route_unknown_run(export_client):
 def test_export_route_bad_format(export_client, export_run_id):
     resp = export_client.get(f"/api/runs/{export_run_id}/export?format=xml")
     assert resp.status_code == 422
-    assert resp.json()["detail"] == "format must be pdf or docx"
+    assert resp.json()["detail"] == "format must be pdf, docx or csv"
+
+
+# ---- CSV fixtures ----
+
+import uuid
+from datetime import datetime, timezone
+
+
+def _seed_admin(db):
+    user = {"id": str(uuid.uuid4()), "username": "_admin", "display_name": "Admin",
+            "email": None, "password_hash": None, "role": "admin",
+            "auth_provider": "local", "role_override": 0, "is_active": 1,
+            "created_at": datetime.now(timezone.utc).isoformat(), "last_login_at": None}
+    db.insert_user(user)
+    return user
+
+
+@pytest.fixture
+def db(tmp_path):
+    d = Database(str(tmp_path / "test.db"))
+    d.init_schema()
+    _seed_admin(d)
+    return d
+
+
+@pytest.fixture
+def client(db, tmp_path):
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    app = create_app(db=db, config={}, apps_dir=str(apps_dir))
+    from web.auth import get_current_user
+    _admin = db.get_user_by_username("_admin")
+    app.dependency_overrides[get_current_user] = lambda: _admin
+    return TestClient(app)
+
+
+def test_export_csv_produces_valid_csv():
+    import csv, io
+    from harness.export import export_csv
+    run = {"id": "abc123", "app": "Sonarr", "environment": "production",
+           "status": "complete", "finished_at": "2026-04-17T12:00:00Z"}
+    results = [
+        {"test_name": "login", "status": "pass", "duration_ms": 3201,
+         "error_msg": None, "finished_at": "2026-04-17T12:00:01Z"},
+        {"test_name": "homepage", "status": "fail", "duration_ms": 812,
+         "error_msg": "Expected 200 got 404", "finished_at": "2026-04-17T12:00:02Z"},
+    ]
+    data = export_csv(run, results)
+    assert isinstance(data, bytes)
+    reader = csv.DictReader(io.StringIO(data.decode()))
+    rows = list(reader)
+    assert len(rows) == 2
+    assert rows[0]["test_name"] == "login"
+    assert rows[0]["status"] == "pass"
+    assert rows[1]["error_msg"] == "Expected 200 got 404"
+
+
+def test_export_csv_route_returns_csv(client, db):
+    from harness.models import Run, TestResult
+    from datetime import datetime, timezone
+    run = Run(app="Sonarr", environment="production", triggered_by="test",
+              status="complete")
+    db.insert_run(run)
+    db.update_run_status(run.id, "complete",
+                         finished_at=datetime.now(timezone.utc).isoformat())
+    tr = TestResult(run_id=run.id, app="Sonarr", environment="production",
+                    test_name="login", status="pass", duration_ms=100,
+                    finished_at=datetime.now(timezone.utc).isoformat())
+    db.insert_test_result(tr)
+
+    r = client.get(f"/api/runs/{run.id}/export?format=csv")
+    assert r.status_code == 200
+    assert "text/csv" in r.headers["content-type"]
+    assert b"test_name" in r.content
+    assert b"login" in r.content

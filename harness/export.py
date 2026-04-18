@@ -207,3 +207,25 @@ def export_docx(run: dict, results: list,
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
+
+
+import csv
+
+
+def export_csv(run: dict, results: list) -> bytes:
+    out = io.StringIO()
+    writer = csv.DictWriter(
+        out,
+        fieldnames=["test_name", "status", "duration_ms", "error_msg", "finished_at"],
+        extrasaction="ignore",
+    )
+    writer.writeheader()
+    for r in results:
+        writer.writerow({
+            "test_name": r.get("test_name", ""),
+            "status": r.get("status", ""),
+            "duration_ms": r.get("duration_ms", ""),
+            "error_msg": r.get("error_msg") or "",
+            "finished_at": r.get("finished_at", ""),
+        })
+    return out.getvalue().encode("utf-8")
