@@ -41,17 +41,23 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
     write_ca_bundle(db)
     alerts_to_send = []
     for test_def in app_def.get("tests", []):
+        max_retries = int(test_def.get("retry", 0))
         test_type = test_def.get("type", "availability")
-        if test_type == "api":
-            result = await run_api_test(run.id, run.app, environment, base_url, test_def,
-                                        ssl_ctx=ssl_ctx)
-        elif test_type == "browser":
-            test_timeout_ms = test_def.get("timeout_ms", timeout_ms)
-            result = await run_browser_test(run.id, run.app, environment, base_url,
-                                            test_def, headless=headless, timeout_ms=test_timeout_ms)
-        else:
-            result = await run_availability_test(run.id, run.app, environment, base_url,
-                                                 test_def, ssl_ctx=ssl_ctx)
+        result = None
+        for _attempt in range(max_retries + 1):
+            if test_type == "api":
+                result = await run_api_test(run.id, run.app, environment, base_url,
+                                            test_def, ssl_ctx=ssl_ctx)
+            elif test_type == "browser":
+                test_timeout_ms = test_def.get("timeout_ms", timeout_ms)
+                result = await run_browser_test(run.id, run.app, environment, base_url,
+                                                test_def, headless=headless,
+                                                timeout_ms=test_timeout_ms)
+            else:
+                result = await run_availability_test(run.id, run.app, environment, base_url,
+                                                     test_def, ssl_ctx=ssl_ctx)
+            if result.status not in ("fail", "error"):
+                break
         db.insert_test_result(result)
         prev = db.get_app_state(run.app, environment, test_def["name"])
         prev_state = prev["state"] if prev else "unknown"

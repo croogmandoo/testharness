@@ -69,3 +69,47 @@ async def test_runner_passes_per_test_timeout_to_browser(db):
         await run_app(app_def, "production", "api", db, config={})
 
     assert captured["timeout_ms"] == 60000
+
+
+@pytest.mark.asyncio
+async def test_retry_exhausts_all_attempts_on_persistent_failure(db):
+    app_def = {
+        "app": "myapp", "url": "https://example.com",
+        "environments": {"production": "https://example.com"},
+        "_type": "yaml",
+        "tests": [{"name": "flaky", "type": "api", "endpoint": "/h", "retry": 2}],
+    }
+    call_count = 0
+
+    async def fake_api(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return make_result("fail", "flaky")
+
+    with patch("harness.runner.run_api_test", new=fake_api), \
+         patch("harness.runner.dispatch_alerts", new=AsyncMock()):
+        await run_app(app_def, "production", "api", db, config={})
+
+    assert call_count == 3  # 1 initial + 2 retries
+
+
+@pytest.mark.asyncio
+async def test_retry_stops_on_first_pass(db):
+    app_def = {
+        "app": "myapp", "url": "https://example.com",
+        "environments": {"production": "https://example.com"},
+        "_type": "yaml",
+        "tests": [{"name": "flaky", "type": "api", "endpoint": "/h", "retry": 2}],
+    }
+    call_count = 0
+
+    async def fake_api(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return make_result("fail" if call_count == 1 else "pass", "flaky")
+
+    with patch("harness.runner.run_api_test", new=fake_api), \
+         patch("harness.runner.dispatch_alerts", new=AsyncMock()):
+        await run_app(app_def, "production", "api", db, config={})
+
+    assert call_count == 2  # stopped after first pass
