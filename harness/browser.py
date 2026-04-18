@@ -118,7 +118,8 @@ async def run_availability_test(run_id: str, app: str, environment: str,
     start = time.monotonic()
     expect_status = test_def.get("expect_status", 200)
     try:
-        async with httpx.AsyncClient(timeout=30, verify=ssl_ctx or True) as client:
+        timeout_s = test_def.get("timeout_ms", 30000) / 1000
+        async with httpx.AsyncClient(timeout=timeout_s, verify=ssl_ctx or True) as client:
             resp = await client.get(base_url)
         elapsed = int((time.monotonic() - start) * 1000)
         if resp.status_code == expect_status:

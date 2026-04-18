@@ -46,3 +46,26 @@ async def test_run_app_updates_db_and_state(db):
     assert run["status"] == "complete"
     state = db.get_app_state("myapp", "production", "Health check")
     assert state["state"] == "passing"
+
+
+@pytest.mark.asyncio
+async def test_runner_passes_per_test_timeout_to_browser(db):
+    app_def = {
+        "app": "myapp", "url": "https://example.com",
+        "environments": {"production": "https://example.com"},
+        "_type": "yaml",
+        "tests": [{"name": "slow-browser", "type": "browser",
+                   "timeout_ms": 60000, "steps": []}],
+    }
+    captured = {}
+
+    async def fake_browser(run_id, app, env, base_url, test_def,
+                           headless=True, timeout_ms=30000):
+        captured["timeout_ms"] = timeout_ms
+        return make_result("pass", "slow-browser")
+
+    with patch("harness.runner.run_browser_test", new=fake_browser), \
+         patch("harness.runner.dispatch_alerts", new=AsyncMock()):
+        await run_app(app_def, "production", "api", db, config={})
+
+    assert captured["timeout_ms"] == 60000

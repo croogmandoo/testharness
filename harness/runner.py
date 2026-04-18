@@ -46,8 +46,9 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
             result = await run_api_test(run.id, run.app, environment, base_url, test_def,
                                         ssl_ctx=ssl_ctx)
         elif test_type == "browser":
+            test_timeout_ms = test_def.get("timeout_ms", timeout_ms)
             result = await run_browser_test(run.id, run.app, environment, base_url,
-                                            test_def, headless=headless, timeout_ms=timeout_ms)
+                                            test_def, headless=headless, timeout_ms=test_timeout_ms)
         else:
             result = await run_availability_test(run.id, run.app, environment, base_url,
                                                  test_def, ssl_ctx=ssl_ctx)

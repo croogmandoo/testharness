@@ -58,3 +58,24 @@ async def test_api_test_includes_custom_headers(httpx_mock: HTTPXMock):
     request = httpx_mock.get_request()
     assert request.headers["Authorization"] == "Bearer token123"
     assert request.headers["X-Custom-Header"] == "custom-value"
+
+
+@pytest.mark.asyncio
+async def test_api_test_uses_per_test_timeout_ms():
+    """run_api_test reads timeout_ms from test_def and converts to seconds."""
+    import httpx
+    from unittest.mock import patch, AsyncMock
+    test_def = {
+        "name": "slow", "type": "api", "endpoint": "/slow",
+        "method": "GET", "expect_status": 200, "timeout_ms": 5000,
+    }
+    from harness.api import run_api_test
+    with patch("httpx.AsyncClient") as mock_cls:
+        mock_instance = AsyncMock()
+        mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+        mock_instance.__aexit__ = AsyncMock(return_value=False)
+        mock_instance.request = AsyncMock(side_effect=httpx.TimeoutException("t/o"))
+        mock_cls.return_value = mock_instance
+        await run_api_test("r1", "app", "prod", "http://example.com", test_def)
+        _, kwargs = mock_cls.call_args
+        assert kwargs.get("timeout") == pytest.approx(5.0)
