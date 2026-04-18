@@ -18,6 +18,30 @@ def determine_alert(previous_state: str, new_status: str) -> Optional[AlertType]
         return AlertType.RESOLVE
     return None
 
+async def _execute_test(test_def: dict, run_id: str, app: str, environment: str,
+                        base_url: str, ssl_ctx, browser_cfg: dict):
+    """Run a single test with optional retry. Returns TestResult."""
+    max_retries = int(test_def.get("retry", 0))
+    test_type = test_def.get("type", "availability")
+    timeout_ms = browser_cfg.get("timeout_ms", 30000)
+    result = None
+    for _attempt in range(max_retries + 1):
+        if test_type == "api":
+            result = await run_api_test(run_id, app, environment, base_url,
+                                        test_def, ssl_ctx=ssl_ctx)
+        elif test_type == "browser":
+            test_timeout_ms = test_def.get("timeout_ms", timeout_ms)
+            result = await run_browser_test(run_id, app, environment, base_url,
+                                            test_def,
+                                            headless=browser_cfg.get("headless", True),
+                                            timeout_ms=test_timeout_ms)
+        else:
+            result = await run_availability_test(run_id, app, environment, base_url,
+                                                 test_def, ssl_ctx=ssl_ctx)
+        if result.status not in ("fail", "error"):
+            break
+    return result
+
 async def run_app(app_def: dict, environment: str, triggered_by: str,
                   db: Database, config: dict, run_id: str = None,
                   secrets_store=None) -> str:
@@ -34,42 +58,38 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
                          started_at=datetime.now(timezone.utc).isoformat())
     base_url = resolve_base_url(app_def, environment)
     browser_cfg = config.get("browser", {})
-    headless = browser_cfg.get("headless", True)
-    timeout_ms = browser_cfg.get("timeout_ms", 30000)
     alerts_cfg = config.get("alerts", {})
     ssl_ctx = get_ssl_context(db)
     write_ca_bundle(db)
+
+    test_defs = app_def.get("tests", [])
+    results = await asyncio.gather(
+        *[_execute_test(td, run.id, run.app, environment, base_url,
+                        ssl_ctx, browser_cfg)
+          for td in test_defs],
+        return_exceptions=True,
+    )
+
     alerts_to_send = []
-    for test_def in app_def.get("tests", []):
-        max_retries = int(test_def.get("retry", 0))
-        test_type = test_def.get("type", "availability")
-        result = None
-        for _attempt in range(max_retries + 1):
-            if test_type == "api":
-                result = await run_api_test(run.id, run.app, environment, base_url,
-                                            test_def, ssl_ctx=ssl_ctx)
-            elif test_type == "browser":
-                test_timeout_ms = test_def.get("timeout_ms", timeout_ms)
-                result = await run_browser_test(run.id, run.app, environment, base_url,
-                                                test_def, headless=headless,
-                                                timeout_ms=test_timeout_ms)
-            else:
-                result = await run_availability_test(run.id, run.app, environment, base_url,
-                                                     test_def, ssl_ctx=ssl_ctx)
-            if result.status not in ("fail", "error"):
-                break
+    for result in results:
+        if isinstance(result, BaseException):
+            continue
         db.insert_test_result(result)
-        prev = db.get_app_state(run.app, environment, test_def["name"])
+        prev = db.get_app_state(run.app, environment, result.test_name)
         prev_state = prev["state"] if prev else "unknown"
         new_state_str = "passing" if result.status == "pass" else "failing"
-        new_state = AppState(app=run.app, environment=environment,
-                             test_name=test_def["name"], state=new_state_str,
-                             since=result.finished_at or datetime.now(timezone.utc).isoformat())
+        new_state = AppState(
+            app=run.app, environment=environment,
+            test_name=result.test_name, state=new_state_str,
+            since=result.finished_at or datetime.now(timezone.utc).isoformat(),
+        )
         db.upsert_app_state(new_state)
         alert_type = determine_alert(prev_state, result.status)
         if alert_type:
-            alerts_to_send.append((alert_type, run.app, environment, test_def["name"],
-                                   result.error_msg))
+            alerts_to_send.append(
+                (alert_type, run.app, environment, result.test_name, result.error_msg)
+            )
+
     db.update_run_status(run.id, "complete",
                          finished_at=datetime.now(timezone.utc).isoformat())
     if alerts_to_send:

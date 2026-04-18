@@ -140,3 +140,35 @@ async def test_runner_calls_webhook_on_completion(db):
     assert len(webhook_calls) == 1
     assert webhook_calls[0]["app"] == "myapp"
     assert webhook_calls[0]["cfg"]["url"] == "https://hook.example.com/complete"
+
+
+@pytest.mark.asyncio
+async def test_tests_run_concurrently(db):
+    """Tests run in parallel: two slow tests finish faster than sequential 2×delay."""
+    import asyncio, time
+    from harness.runner import run_app
+
+    app_def = {
+        "app": "myapp", "url": "https://example.com",
+        "environments": {"production": "https://example.com"},
+        "_type": "yaml",
+        "tests": [
+            {"name": "slow-1", "type": "api", "endpoint": "/h"},
+            {"name": "slow-2", "type": "api", "endpoint": "/h"},
+        ],
+    }
+
+    async def slow_api(*args, **kwargs):
+        await asyncio.sleep(0.15)
+        test_name = args[4]["name"] if len(args) > 4 else kwargs["test_def"]["name"]
+        return make_result("pass", test_name)
+
+    start = time.monotonic()
+    with patch("harness.runner.run_api_test", new=slow_api), \
+         patch("harness.runner.dispatch_alerts", new=AsyncMock()), \
+         patch("harness.runner.dispatch_run_webhook", new=AsyncMock()):
+        await run_app(app_def, "production", "api", db, config={})
+    elapsed = time.monotonic() - start
+
+    # If sequential: >= 0.30 s. Parallel: < 0.25 s.
+    assert elapsed < 0.25, f"Tests ran sequentially (elapsed {elapsed:.3f}s)"
