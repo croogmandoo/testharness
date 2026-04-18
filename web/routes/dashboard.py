@@ -36,6 +36,11 @@ async def dashboard(request: Request, environment: str = None,
                 "active_run_id": None,
             })
 
+    # Merge tags from app YAML into summary rows
+    tag_map = {a["app"]: a.get("tags", []) for a in get_apps()}
+    for row in summary:
+        row["tags"] = tag_map.get(row["app"], [])
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "summary": summary,

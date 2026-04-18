@@ -601,3 +601,24 @@ select.input option { background: var(--bg-2); }
 [data-theme="light"] body::after {
   display: none;
 }
+
+/* ─── APP TAGS ──────────────────────────────────── */
+.app-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .25rem;
+  margin-top: .35rem;
+}
+
+.tag {
+  font-size: .65rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: .1rem .4rem;
+  border-radius: 3px;
+  background: var(--bg-3);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  cursor: default;
+}

@@ -35,6 +35,13 @@
         <span class="badge badge-pass">pass</span>
       {% endif %}
     </div>
+    {% if row.tags %}
+    <div class="app-tags">
+      {% for tag in row.tags %}
+      <span class="tag" data-tag="{{ tag }}">{{ tag }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
     <div class="app-tile-meta">
       <span class="app-tile-score">{{ row.passing }}/{{ row.total }} tests</span>
       <span>{{ row.last_run[:16].replace('T',' ') if row.last_run else "no runs" }}</span>
@@ -165,8 +172,12 @@ function updateTile(appName, runData) {
 }
 
 function filterTiles(query) {
+  var q = query.toLowerCase();
   document.querySelectorAll('#app-grid .app-tile[data-app]').forEach(function(tile) {
-    tile.style.display = tile.dataset.app.toLowerCase().includes(query.toLowerCase()) ? '' : 'none';
+    var name = tile.dataset.app.toLowerCase();
+    var tags = Array.from(tile.querySelectorAll('.tag')).map(function(t) { return t.textContent.toLowerCase(); });
+    var matches = name.includes(q) || tags.some(function(t) { return t.includes(q); });
+    tile.style.display = matches ? '' : 'none';
   });
 }
 </script>

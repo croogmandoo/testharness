@@ -334,3 +334,28 @@ def test_theme_toggle_button_in_nav(client):
     """Nav contains the theme toggle button (base.html is shared across authenticated pages)."""
     r = client.get("/apps")
     assert b'theme-toggle' in r.content
+
+
+def test_dashboard_renders_app_tags(db, tmp_path):
+    import yaml
+    from fastapi.testclient import TestClient
+    from web.main import create_app
+    from web.auth import get_current_user
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    (apps_dir / "sonarr.yaml").write_text(yaml.dump({
+        "app": "Sonarr",
+        "tags": ["media", "critical"],
+        "environments": {"production": "https://sonarr.example.com"},
+        "tests": [],
+    }))
+    config = {"default_environment": "production",
+              "environments": {"production": {"label": "Production"}}}
+    app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    _admin = db.get_user_by_username("_test_admin")
+    app.dependency_overrides[get_current_user] = lambda: _admin
+    c = TestClient(app)
+    r = c.get("/")
+    assert r.status_code == 200
+    assert b"media" in r.content
+    assert b"critical" in r.content
