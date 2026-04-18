@@ -49,13 +49,28 @@ def resolve_env_vars(obj: Any, strict: bool = True) -> Any:
     if isinstance(obj, list):
         return [resolve_env_vars(v, strict) for v in obj]
     if isinstance(obj, str) and obj.startswith("$"):
-        var = obj[1:]
-        val = os.environ.get(var)
-        if val is None:
-            if strict:
-                raise ConfigError(f"Environment variable '{var}' is not set")
-            return obj  # leave $VAR placeholder in place
-        return val
+        expr = obj[1:]
+        if "#" in expr:
+            # $VAR#env — try env-specific key first, fall back to base var
+            base_var, _ = expr.split("#", 1)
+            val = os.environ.get(expr)   # e.g. SONARR_PASSWORD#staging
+            if val is not None:
+                return val
+            val = os.environ.get(base_var)
+            if val is None:
+                if strict:
+                    raise ConfigError(
+                        f"Environment variable '{base_var}' (or '{expr}') is not set"
+                    )
+                return obj
+            return val
+        else:
+            val = os.environ.get(expr)
+            if val is None:
+                if strict:
+                    raise ConfigError(f"Environment variable '{expr}' is not set")
+                return obj
+            return val
     return obj
 
 

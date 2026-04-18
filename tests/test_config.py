@@ -74,3 +74,35 @@ def test_valid_config_loads_without_error(tmp_path):
 def test_empty_config_returns_empty_dict(tmp_path):
     (tmp_path / "config.yaml").write_text("")
     assert load_config(str(tmp_path / "config.yaml")) == {}
+
+
+def test_resolve_env_scoped_secret_prefers_env_specific(monkeypatch):
+    from harness.config import resolve_env_vars
+    monkeypatch.setenv("SONARR_PASSWORD", "global-pass")
+    monkeypatch.setenv("SONARR_PASSWORD#staging", "staging-pass")
+    result = resolve_env_vars("$SONARR_PASSWORD#staging", strict=True)
+    assert result == "staging-pass"
+
+
+def test_resolve_env_scoped_secret_falls_back_to_global(monkeypatch):
+    from harness.config import resolve_env_vars
+    monkeypatch.setenv("SONARR_PASSWORD", "global-pass")
+    # No SONARR_PASSWORD#staging in env
+    result = resolve_env_vars("$SONARR_PASSWORD#staging", strict=True)
+    assert result == "global-pass"
+
+
+def test_resolve_env_scoped_secret_raises_when_neither_set(monkeypatch):
+    from harness.config import resolve_env_vars, ConfigError
+    monkeypatch.delenv("SONARR_PASSWORD", raising=False)
+    monkeypatch.delenv("SONARR_PASSWORD#staging", raising=False)
+    with pytest.raises(ConfigError, match="SONARR_PASSWORD"):
+        resolve_env_vars("$SONARR_PASSWORD#staging", strict=True)
+
+
+def test_resolve_env_scoped_returns_placeholder_when_strict_false(monkeypatch):
+    from harness.config import resolve_env_vars
+    monkeypatch.delenv("SONARR_PASSWORD", raising=False)
+    monkeypatch.delenv("SONARR_PASSWORD#staging", raising=False)
+    result = resolve_env_vars("$SONARR_PASSWORD#staging", strict=False)
+    assert result == "$SONARR_PASSWORD#staging"
