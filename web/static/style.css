@@ -574,3 +574,30 @@ select.input option { background: var(--bg-2); }
 }
 .status-msg-err { border-color: var(--fail); background: var(--fail-dim); color: var(--fail); }
 .status-msg-ok  { border-color: var(--pass); background: var(--pass-dim); color: var(--pass); }
+
+/* ─── LIGHT THEME ──────────────────────────────────── */
+[data-theme="light"] {
+  --bg:       #f5f5f4;
+  --bg-1:     #ffffff;
+  --bg-2:     #f0f0ef;
+  --bg-3:     #e8e8e7;
+  --bg-4:     #dcdcdb;
+  --border:   #d4d4d3;
+  --border-2: #c0c0bf;
+  --text:     #1c1b1c;
+  --text-2:   #5a5959;
+  --text-3:   #909090;
+  --amber:    #d11f44;
+  --amber-hi: #b81a38;
+  --amber-lo: #fde8ec;
+  --pass:     #15803d;
+  --pass-dim: #dcfce7;
+  --fail:     #b91c1c;
+  --fail-dim: #fee2e2;
+  --run:      #1d4ed8;
+  --run-dim:  #dbeafe;
+}
+
+[data-theme="light"] body::after {
+  display: none;
+}
