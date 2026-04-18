@@ -81,3 +81,63 @@ async def test_discord_alert_sends_on_fail():
     assert posted[0]["url"] == "https://discord.com/api/webhooks/test"
     assert "content" in posted[0]["json"]
     assert "FAIL" in posted[0]["json"]["content"] or "fail" in posted[0]["json"]["content"].lower()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_run_webhook_posts_payload():
+    from harness.alerts import dispatch_run_webhook
+    posted = []
+
+    async def fake_post(url, json=None, headers=None, **kwargs):
+        posted.append({"url": url, "json": json, "headers": headers or {}})
+        mock_resp = MagicMock()
+        return mock_resp
+
+    webhook_cfg = {"url": "https://ci.example.com/hook"}
+    results = [{"test_name": "login", "status": "pass", "duration_ms": 3000}]
+    with patch("httpx.AsyncClient") as mock_cls:
+        mock_instance = AsyncMock()
+        mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+        mock_instance.__aexit__ = AsyncMock(return_value=False)
+        mock_instance.post = AsyncMock(side_effect=fake_post)
+        mock_cls.return_value = mock_instance
+        await dispatch_run_webhook("run1", "Sonarr", "production", "complete",
+                                   "api", "2026-04-17T12:00:00Z", results, webhook_cfg)
+
+    assert len(posted) == 1
+    body = posted[0]["json"]
+    assert body["event"] == "run_complete"
+    assert body["run_id"] == "run1"
+    assert body["app"] == "Sonarr"
+    assert body["tests"][0]["name"] == "login"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_run_webhook_adds_signature_when_secret_set():
+    from harness.alerts import dispatch_run_webhook
+    posted = []
+
+    async def fake_post(url, json=None, headers=None, **kwargs):
+        posted.append({"headers": headers or {}})
+        return MagicMock()
+
+    webhook_cfg = {"url": "https://ci.example.com/hook", "secret": "mysecret"}
+    with patch("httpx.AsyncClient") as mock_cls:
+        mock_instance = AsyncMock()
+        mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+        mock_instance.__aexit__ = AsyncMock(return_value=False)
+        mock_instance.post = AsyncMock(side_effect=fake_post)
+        mock_cls.return_value = mock_instance
+        await dispatch_run_webhook("r1", "App", "prod", "complete",
+                                   "api", "2026-04-17T00:00:00Z", [], webhook_cfg)
+
+    assert "X-Harness-Signature" in posted[0]["headers"]
+    assert posted[0]["headers"]["X-Harness-Signature"].startswith("sha256=")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_run_webhook_no_op_when_no_url():
+    from harness.alerts import dispatch_run_webhook
+    # Should not raise
+    await dispatch_run_webhook("r1", "App", "prod", "complete",
+                               "api", "2026-04-17T00:00:00Z", [], {})

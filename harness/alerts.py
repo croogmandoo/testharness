@@ -65,3 +65,42 @@ async def dispatch_alerts(alerts: list, alerts_config: dict) -> None:
                 _send_email(email_cfg, subject, text)
             except Exception as e:
                 print(f"[alerts] Email failed: {e}")
+
+
+async def dispatch_run_webhook(
+    run_id: str, app: str, environment: str, status: str,
+    triggered_by: str, finished_at: str, results: list,
+    webhook_config: dict,
+) -> None:
+    url = webhook_config.get("url")
+    if not url:
+        return
+    payload = {
+        "event": "run_complete",
+        "run_id": run_id,
+        "app": app,
+        "environment": environment,
+        "status": status,
+        "triggered_by": triggered_by,
+        "finished_at": finished_at,
+        "tests": [
+            {
+                "name": r.get("test_name", r.get("name", "")),
+                "status": r.get("status", ""),
+                "duration_ms": r.get("duration_ms"),
+            }
+            for r in results
+        ],
+    }
+    headers = {}
+    secret = webhook_config.get("secret")
+    if secret:
+        import hmac, hashlib, json as _json
+        body = _json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+        sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        headers["X-Harness-Signature"] = f"sha256={sig}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(url, json=payload, headers=headers)
+    except Exception as e:
+        print(f"[alerts] Outbound webhook error: {e}")

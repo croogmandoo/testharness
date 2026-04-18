@@ -113,3 +113,30 @@ async def test_retry_stops_on_first_pass(db):
         await run_app(app_def, "production", "api", db, config={})
 
     assert call_count == 2  # stopped after first pass
+
+
+@pytest.mark.asyncio
+async def test_runner_calls_webhook_on_completion(db):
+    app_def = {
+        "app": "myapp", "url": "https://example.com",
+        "environments": {"production": "https://example.com"},
+        "_type": "yaml",
+        "tests": [{"name": "health", "type": "api", "endpoint": "/h"}],
+    }
+    webhook_calls = []
+
+    async def fake_webhook(run_id, app, env, status, triggered_by, finished_at,
+                           results, cfg):
+        webhook_calls.append({"run_id": run_id, "app": app, "cfg": cfg})
+
+    mock_result = make_result("pass", "health")
+    config = {"alerts": {"webhook": {"url": "https://hook.example.com/complete"}}}
+
+    with patch("harness.runner.run_api_test", new=AsyncMock(return_value=mock_result)), \
+         patch("harness.runner.dispatch_alerts", new=AsyncMock()), \
+         patch("harness.runner.dispatch_run_webhook", new=fake_webhook):
+        await run_app(app_def, "production", "api", db, config=config)
+
+    assert len(webhook_calls) == 1
+    assert webhook_calls[0]["app"] == "myapp"
+    assert webhook_calls[0]["cfg"]["url"] == "https://hook.example.com/complete"

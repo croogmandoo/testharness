@@ -6,7 +6,7 @@ from harness.models import Run, AppState
 from harness.loader import resolve_base_url
 from harness.api import run_api_test
 from harness.browser import run_browser_test, run_availability_test
-from harness.alerts import dispatch_alerts
+from harness.alerts import dispatch_alerts, dispatch_run_webhook
 from harness.types import AlertType
 from harness.ssl_context import get_ssl_context, write_ca_bundle
 
@@ -74,4 +74,13 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
                          finished_at=datetime.now(timezone.utc).isoformat())
     if alerts_to_send:
         await dispatch_alerts(alerts_to_send, alerts_cfg)
+    webhook_cfg = config.get("alerts", {}).get("webhook", {})
+    if webhook_cfg.get("url"):
+        finished_run = db.get_run(run.id)
+        run_results = db.get_results_for_run(run.id)
+        await dispatch_run_webhook(
+            run.id, run.app, environment, "complete",
+            triggered_by, finished_run["finished_at"] or "",
+            run_results, webhook_cfg,
+        )
     return run.id
