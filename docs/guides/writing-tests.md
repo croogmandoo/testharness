@@ -584,6 +584,30 @@ The image is linked in the dashboard on the test result detail view.
 > fails, so you don't need to add `screenshot: null` for failure debugging —
 > it's already done for you.
 
+### Screenshot diff (visual regression detection)
+
+When a browser test produces a screenshot and a previous screenshot exists for the same app/environment/test, the harness computes a pixel-level diff. If the fraction of changed pixels exceeds `browser.screenshot_diff_threshold`, the test is marked `fail` and a detail step is added to the step log.
+
+Configure the threshold in `config.yaml`:
+
+```yaml
+browser:
+  screenshot_diff_threshold: 0.05   # fail if >5% of pixels changed (default)
+```
+
+Set a tighter threshold for pixel-perfect UIs; loosen it for pages with animated content. Set `1.0` to disable diffs entirely.
+
+The diff result appears in the test detail page as a step entry:
+
+```
+Screenshot diff: 12.3% pixels changed (threshold 5%)   ✗ fail
+```
+
+The diff is skipped gracefully when:
+- No previous screenshot exists for the test (first run always passes)
+- Pillow is not installed (degrades to no-op, no error)
+- Either screenshot file cannot be read
+
 ---
 
 ## 5. Environment Variables
