@@ -13,11 +13,13 @@ def _validate_config(cfg: dict) -> None:
     for key, expected_type in [
         ("auth", dict), ("environments", dict), ("alerts", dict), ("browser", dict)
     ]:
-        if key in cfg and not isinstance(cfg[key], expected_type):
+        if key in cfg and cfg[key] is not None and not isinstance(cfg[key], expected_type):
             raise ConfigError(
                 f"config.yaml: '{key}' must be a mapping, "
                 f"got {type(cfg[key]).__name__}"
             )
+        if key in cfg and cfg[key] is None:
+            cfg[key] = {}
     if "browser" in cfg and isinstance(cfg["browser"], dict):
         b = cfg["browser"]
         if "timeout_ms" in b and not isinstance(b["timeout_ms"], int):
