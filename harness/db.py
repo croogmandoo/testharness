@@ -50,7 +50,9 @@ CREATE TABLE IF NOT EXISTS users (
     is_active     INTEGER DEFAULT 1,
     created_at    TEXT NOT NULL,
     last_login_at TEXT,
-    oauth_provider_id TEXT
+    oauth_provider_id TEXT,
+    failed_login_count INTEGER NOT NULL DEFAULT 0,
+    locked_until       TEXT
 );
 CREATE TABLE IF NOT EXISTS secrets (
     id              TEXT PRIMARY KEY,
@@ -97,6 +99,16 @@ class Database:
             conn.executescript(SCHEMA)
             try:
                 conn.execute("ALTER TABLE users ADD COLUMN oauth_provider_id TEXT")
+                conn.commit()
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN failed_login_count INTEGER NOT NULL DEFAULT 0")
+                conn.commit()
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN locked_until TEXT")
                 conn.commit()
             except Exception:
                 pass
@@ -322,6 +334,21 @@ class Database:
     def delete_user(self, user_id: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+
+    def increment_failed_login(self, user_id: str, lock_until: "str | None") -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET failed_login_count = failed_login_count + 1, "
+                "locked_until = ? WHERE id = ?",
+                (lock_until, user_id)
+            )
+
+    def reset_failed_login(self, user_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET failed_login_count = 0, locked_until = NULL WHERE id = ?",
+                (user_id,)
+            )
 
     def upsert_ldap_user(self, username: str, display_name: str,
                          email: Optional[str], role: str) -> dict:

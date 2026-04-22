@@ -2,7 +2,7 @@ import uuid
 import os
 import secrets as _secrets
 import httpx
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -121,6 +121,17 @@ async def login_post(
     config = get_config()
 
     user = verify_local_password(username, password, db)
+
+    # Handle failed attempt tracking
+    _raw_user = db.get_user_by_username(username)
+    if user is None and _raw_user is not None and _raw_user.get("auth_provider") == "local":
+        new_count = (_raw_user.get("failed_login_count") or 0) + 1
+        lock_until = None
+        if new_count >= 10:
+            lock_until = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+        db.increment_failed_login(_raw_user["id"], lock_until)
+    elif user is not None:
+        db.reset_failed_login(user["id"])
 
     if user is None:
         ldap_cfg = config.get("auth", {}).get("ldap", {})
