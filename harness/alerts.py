@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import smtplib
 from email.message import EmailMessage
@@ -62,7 +63,7 @@ async def dispatch_alerts(alerts: list, alerts_config: dict) -> None:
         if email_cfg:
             subject = f"[Harness] {app} — {test_name} {'FAILED' if alert_type == AlertType.FAIL else 'RESOLVED'}"
             try:
-                _send_email(email_cfg, subject, text)
+                await asyncio.get_event_loop().run_in_executor(None, _send_email, email_cfg, subject, text)
             except Exception as e:
                 print(f"[alerts] Email failed: {e}")
 
