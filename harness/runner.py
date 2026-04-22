@@ -1,8 +1,9 @@
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 from harness.db import Database
-from harness.models import Run, AppState, StepResult
+from harness.models import Run, AppState, StepResult, TestResult
 from harness.loader import resolve_base_url
 from harness.api import run_api_test
 from harness.browser import run_browser_test, run_availability_test
@@ -10,6 +11,8 @@ from harness.alerts import dispatch_alerts, dispatch_run_webhook
 from harness.types import AlertType
 from harness.ssl_context import get_ssl_context, write_ca_bundle
 from harness.screenshot_diff import compute_diff
+
+_log = logging.getLogger(__name__)
 
 SCREENSHOTS_DIR = "data/screenshots"
 
@@ -93,8 +96,29 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
     )
 
     alerts_to_send = []
-    for result in results:
+    for test_def, result in zip(test_defs, results):
         if isinstance(result, BaseException):
+            _log.error(
+                "Unhandled exception in test %r (app=%s env=%s): %s",
+                test_def.get("name", "unknown"), run.app, environment, result,
+                exc_info=result,
+            )
+            err_result = TestResult(
+                run_id=run.id,
+                app=run.app,
+                environment=environment,
+                test_name=test_def.get("name", "unknown"),
+                status="error",
+                error_msg=f"Internal error: {type(result).__name__}: {result}",
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            db.insert_test_result(err_result)
+            db.upsert_app_state(AppState(
+                app=run.app, environment=environment,
+                test_name=test_def.get("name", "unknown"),
+                state="failing",
+                since=err_result.finished_at,
+            ))
             continue
         db.insert_test_result(result)
         prev = db.get_app_state(run.app, environment, result.test_name)
