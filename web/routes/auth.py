@@ -234,11 +234,15 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
     db = get_db()
     existing = db.get_user_by_oauth_provider_id("github", github_id)
     if existing:
+        if not existing.get("is_active"):
+            raise HTTPException(status_code=403, detail="Account is disabled")
         user = existing
         db.update_user_last_login(user["id"], datetime.now(timezone.utc).isoformat())
     else:
         existing_by_name = db.get_user_by_username(username)
         if existing_by_name:
+            if not existing_by_name.get("is_active"):
+                raise HTTPException(status_code=403, detail="Account is disabled")
             user = existing_by_name
             db.update_user_last_login(user["id"], datetime.now(timezone.utc).isoformat())
         else:
