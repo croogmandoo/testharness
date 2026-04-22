@@ -106,3 +106,33 @@ def test_resolve_env_scoped_returns_placeholder_when_strict_false(monkeypatch):
     monkeypatch.delenv("SONARR_PASSWORD#staging", raising=False)
     result = resolve_env_vars("$SONARR_PASSWORD#staging", strict=False)
     assert result == "$SONARR_PASSWORD#staging"
+
+
+def test_resolve_env_vars_extra_vars_takes_precedence_over_environ(monkeypatch):
+    """extra_vars dict is checked before os.environ."""
+    monkeypatch.setenv("MY_SECRET", "from-environ")
+    result = resolve_env_vars({"key": "$MY_SECRET"}, extra_vars={"MY_SECRET": "from-extra"})
+    assert result["key"] == "from-extra"
+
+
+def test_resolve_env_vars_extra_vars_used_when_env_missing(monkeypatch):
+    """extra_vars provides value when the var is absent from os.environ."""
+    monkeypatch.delenv("ONLY_IN_EXTRA", raising=False)
+    result = resolve_env_vars("$ONLY_IN_EXTRA", extra_vars={"ONLY_IN_EXTRA": "secret-val"})
+    assert result == "secret-val"
+
+
+def test_resolve_env_vars_extra_vars_scoped_prefers_scoped_key(monkeypatch):
+    """extra_vars supports scoped $VAR#env lookups."""
+    monkeypatch.delenv("DB_PASS", raising=False)
+    monkeypatch.delenv("DB_PASS#staging", raising=False)
+    extra = {"DB_PASS": "global", "DB_PASS#staging": "scoped"}
+    result = resolve_env_vars("$DB_PASS#staging", extra_vars=extra)
+    assert result == "scoped"
+
+
+def test_resolve_env_vars_extra_vars_none_falls_back_to_environ(monkeypatch):
+    """When extra_vars=None, behaviour is identical to the original."""
+    monkeypatch.setenv("FALLBACK_VAR", "env-value")
+    result = resolve_env_vars("$FALLBACK_VAR", extra_vars=None)
+    assert result == "env-value"

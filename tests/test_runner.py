@@ -30,6 +30,33 @@ def test_determine_alert_no_change_failing():
     assert determine_alert("failing", "fail") is None
 
 @pytest.mark.asyncio
+async def test_run_app_uses_secrets_via_extra_vars_not_environ(db, monkeypatch):
+    """run_app must resolve secrets through extra_vars, not os.environ injection."""
+    monkeypatch.delenv("APP_TOKEN", raising=False)  # ensure not in environ
+
+    app_def = {
+        "app": "myapp", "url": "$APP_TOKEN",
+        "environments": {"production": "$APP_TOKEN"},
+        "_type": "yaml",
+        "tests": [],
+    }
+
+    class FakeSecretsStore:
+        def get_all_decrypted(self):
+            return {"APP_TOKEN": "https://secret-url.example.com"}
+
+    with patch("harness.runner.dispatch_alerts", new=AsyncMock()), \
+         patch("harness.runner.dispatch_run_webhook", new=AsyncMock()):
+        run_id = await run_app(app_def, "production", "api", db,
+                               config={}, secrets_store=FakeSecretsStore())
+
+    run = db.get_run(run_id)
+    assert run["status"] == "complete"
+    # Secret was NOT injected into os.environ
+    assert "APP_TOKEN" not in __import__("os").environ
+
+
+@pytest.mark.asyncio
 async def test_run_app_updates_db_and_state(db):
     app_def = {
         "app": "myapp", "url": "https://example.com",

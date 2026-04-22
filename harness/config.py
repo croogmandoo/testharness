@@ -45,20 +45,21 @@ def _validate_config(cfg: dict) -> None:
                     )
 
 
-def resolve_env_vars(obj: Any, strict: bool = True) -> Any:
+def resolve_env_vars(obj: Any, strict: bool = True, extra_vars: dict = None) -> Any:
     if isinstance(obj, dict):
-        return {k: resolve_env_vars(v, strict) for k, v in obj.items()}
+        return {k: resolve_env_vars(v, strict, extra_vars) for k, v in obj.items()}
     if isinstance(obj, list):
-        return [resolve_env_vars(v, strict) for v in obj]
+        return [resolve_env_vars(v, strict, extra_vars) for v in obj]
     if isinstance(obj, str) and obj.startswith("$"):
         expr = obj[1:]
+        _extra = extra_vars or {}
         if "#" in expr:
             # $VAR#env — try env-specific key first, fall back to base var
             base_var, _ = expr.split("#", 1)
-            val = os.environ.get(expr)   # e.g. SONARR_PASSWORD#staging
+            val = _extra.get(expr) or os.environ.get(expr)   # e.g. SONARR_PASSWORD#staging
             if val is not None:
                 return val
-            val = os.environ.get(base_var)
+            val = _extra.get(base_var) or os.environ.get(base_var)
             if val is None:
                 if strict:
                     raise ConfigError(
@@ -67,7 +68,7 @@ def resolve_env_vars(obj: Any, strict: bool = True) -> Any:
                 return obj
             return val
         else:
-            val = os.environ.get(expr)
+            val = _extra.get(expr) or os.environ.get(expr)
             if val is None:
                 if strict:
                     raise ConfigError(f"Environment variable '{expr}' is not set")

@@ -68,10 +68,9 @@ async def _execute_test(test_def: dict, run_id: str, app: str, environment: str,
 async def run_app(app_def: dict, environment: str, triggered_by: str,
                   db: Database, config: dict, run_id: str = None,
                   secrets_store=None) -> str:
-    if secrets_store is not None:
-        secrets_store.inject_to_env()
     from harness.config import resolve_env_vars
-    app_def = resolve_env_vars(app_def, strict=True)
+    extra_vars = secrets_store.get_all_decrypted() if secrets_store is not None else {}
+    app_def = resolve_env_vars(app_def, strict=True, extra_vars=extra_vars)
     if run_id:
         run = Run(id=run_id, app=app_def["app"], environment=environment, triggered_by=triggered_by)
     else:
