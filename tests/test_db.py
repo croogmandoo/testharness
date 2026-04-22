@@ -64,3 +64,13 @@ def test_get_app_summary_returns_all_states(db):
     myapp = next(s for s in summary if s["app"] == "myapp")
     assert myapp["total"] == 2
     assert myapp["passing"] == 1
+
+def test_runs_indexes_exist(db):
+    with db._connect() as conn:
+        names = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            ).fetchall()
+        }
+    assert "idx_runs_env_status" in names
+    assert "idx_runs_app_env" in names

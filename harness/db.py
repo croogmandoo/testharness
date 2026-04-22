@@ -81,6 +81,10 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
 CREATE INDEX IF NOT EXISTS idx_api_keys_user   ON api_keys(user_id);
+CREATE INDEX IF NOT EXISTS idx_runs_env_status
+    ON runs(environment, status);
+CREATE INDEX IF NOT EXISTS idx_runs_app_env
+    ON runs(app, environment, started_at DESC);
 """
 
 class Database:
@@ -215,36 +219,39 @@ class Database:
                 "WHERE environment=? GROUP BY app, state",
                 (environment,)
             ).fetchall()
-        apps: dict = {}
-        for row in rows:
-            app = row["app"]
-            if app not in apps:
-                apps[app] = {"app": app, "total": 0, "passing": 0, "failing": 0, "unknown": 0, "last_run": None}
-            apps[app]["total"] += row["cnt"]
-            apps[app][row["state"]] += row["cnt"]
-        with self._connect() as conn:
+            apps: dict = {}
+            for row in rows:
+                app = row["app"]
+                if app not in apps:
+                    apps[app] = {
+                        "app": app, "total": 0,
+                        "passing": 0, "failing": 0, "unknown": 0,
+                        "last_run": None,
+                    }
+                apps[app]["total"] += row["cnt"]
+                apps[app][row["state"]] += row["cnt"]
+
             last_runs = conn.execute(
                 "SELECT app, id, MAX(finished_at) as last_run FROM runs "
                 "WHERE environment=? AND status='complete' GROUP BY app",
                 (environment,)
             ).fetchall()
-        for row in last_runs:
-            if row["app"] in apps:
-                apps[row["app"]]["last_run"] = row["last_run"]
-                apps[row["app"]]["last_run_id"] = row["id"]
-        # Ensure last_run_id is always present (None for apps with no completed run)
-        for app_dict in apps.values():
-            app_dict.setdefault("last_run_id", None)
-        with self._connect() as conn:
+            for row in last_runs:
+                if row["app"] in apps:
+                    apps[row["app"]]["last_run"] = row["last_run"]
+                    apps[row["app"]]["last_run_id"] = row["id"]
+            for app_dict in apps.values():
+                app_dict.setdefault("last_run_id", None)
+
             active_rows = conn.execute(
                 "SELECT app, id FROM runs "
                 "WHERE environment=? AND status IN ('pending','running')",
                 (environment,)
             ).fetchall()
-        active_map = {row["app"]: row["id"] for row in active_rows}
-        for app_dict in apps.values():
-            app_dict["active_run_id"] = active_map.get(app_dict["app"])
-        return list(apps.values())
+            active_map = {row["app"]: row["id"] for row in active_rows}
+            for app_dict in apps.values():
+                app_dict["active_run_id"] = active_map.get(app_dict["app"])
+            return list(apps.values())
 
     # ── Users ──────────────────────────────────────────────────────────────
 
