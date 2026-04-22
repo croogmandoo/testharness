@@ -52,16 +52,19 @@ async def api_keys_list(
 ):
     from web.main import get_db
     db = get_db()
-    new_key = request.query_params.get("new_key")
+    new_key = request.cookies.get("flash_new_key")
     user_keys = db.list_api_keys_for_user(current_user["id"])
     all_keys = db.list_all_api_keys() if current_user["role"] == "admin" else []
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request, "api_keys.html",
         _ctx(request, current_user,
              user_keys=user_keys,
              all_keys=all_keys,
              new_key=new_key),
     )
+    if new_key:
+        response.delete_cookie("flash_new_key")
+    return response
 
 
 @router.post("/api-keys")
@@ -97,8 +100,9 @@ async def api_keys_create(
         "last_used_at": None,
         "is_active": 1,
     })
-    from urllib.parse import quote
-    return RedirectResponse(f"/api-keys?new_key={quote(plaintext)}", status_code=303)
+    response = RedirectResponse("/api-keys", status_code=303)
+    response.set_cookie("flash_new_key", plaintext, httponly=True, max_age=60, samesite="lax")
+    return response
 
 
 @router.post("/api-keys/{key_id}/revoke")
