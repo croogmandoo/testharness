@@ -82,3 +82,8 @@ def test_single_quote_in_app_name_is_escaped():
         interval_minutes=60,
     )
     assert "my''app" in xml
+
+
+def test_url_with_single_quote_raises_value_error():
+    with pytest.raises(ValueError):
+        generate_task_xml("Test", "http://localhost'injection", None, "production")

@@ -18,7 +18,7 @@ def generate_task_xml(task_name: str, harness_url: str,
         # Then: schtasks /create /xml task.xml /tn "Harness-Prod"
     """
     _parsed = urlparse(harness_url)
-    if _parsed.scheme not in ("http", "https") or not _parsed.netloc:
+    if _parsed.scheme not in ("http", "https") or not _parsed.netloc or "'" in harness_url:
         raise ValueError(f"harness_url must be an http/https URL, got: {harness_url!r}")
 
     payload: dict = {"environment": environment, "triggered_by": "api"}
