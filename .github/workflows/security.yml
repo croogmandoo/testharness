@@ -39,4 +39,8 @@ jobs:
         run: pip install pip-audit
 
       - name: Audit requirements.txt
-        run: pip-audit -r requirements.txt
+        run: |
+          # CVE-2025-71176 (pytest) ignored: fix requires pytest>=9 which is
+          # blocked by pytest-asyncio requiring pytest<9. Re-evaluate when
+          # pytest-asyncio drops that constraint.
+          pip-audit -r requirements.txt --ignore-vuln CVE-2025-71176
