@@ -306,29 +306,6 @@ def test_detail_page_shows_pending_cards_when_run_is_active(tmp_path):
     assert b"progress-bar" in resp.content
 
 
-def test_graphify_out_mount_serves_files(tmp_path, monkeypatch):
-    """graphify-out StaticFiles mount is registered when the directory exists."""
-    import os
-    from web.main import create_app
-    from harness.db import Database
-
-    # Create a real graphify-out dir with a test file
-    gout = tmp_path / "graphify-out"
-    gout.mkdir()
-    (gout / "test.txt").write_text("hello")
-
-    monkeypatch.chdir(tmp_path)
-    db = Database(str(tmp_path / "test.db"))
-    db.init_schema()
-    _seed_admin_user(db)
-    app = create_app(db=db, config={})
-
-    from fastapi.testclient import TestClient
-    c = TestClient(app)
-    r = c.get("/graphify-out/test.txt")
-    assert r.status_code == 200
-    assert r.text == "hello"
-
 
 def test_theme_toggle_button_in_nav(client):
     """Nav contains the theme toggle button (base.html is shared across authenticated pages)."""

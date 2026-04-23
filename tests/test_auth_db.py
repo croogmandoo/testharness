@@ -117,3 +117,46 @@ def test_upsert_ldap_user_respects_role_override(db):
 def test_upsert_ldap_user_excludes_password_hash(db):
     user = db.upsert_ldap_user("bob", "Bob Smith", "bob@corp.com", "runner")
     assert "password_hash" not in user
+
+
+# ── Brute-force protection ────────────────────────────────────────────────────
+
+def test_increment_failed_login_increments_count(db):
+    db.insert_user(_user())
+    db.increment_failed_login("u1", None)
+    db.increment_failed_login("u1", None)
+    row = db.get_user_by_id("u1")
+    assert row["failed_login_count"] == 2
+
+
+def test_increment_failed_login_sets_locked_until(db):
+    db.insert_user(_user())
+    lock_ts = "2099-01-01T00:00:00+00:00"
+    db.increment_failed_login("u1", lock_ts)
+    row = db.get_user_by_id("u1")
+    assert row["locked_until"] == lock_ts
+
+
+def test_increment_failed_login_none_lock_until(db):
+    db.insert_user(_user())
+    db.increment_failed_login("u1", None)
+    row = db.get_user_by_id("u1")
+    assert row["locked_until"] is None
+    assert row["failed_login_count"] == 1
+
+
+def test_reset_failed_login(db):
+    db.insert_user(_user())
+    db.increment_failed_login("u1", "2099-01-01T00:00:00+00:00")
+    db.increment_failed_login("u1", "2099-01-01T00:00:00+00:00")
+    db.reset_failed_login("u1")
+    row = db.get_user_by_id("u1")
+    assert row["failed_login_count"] == 0
+    assert row["locked_until"] is None
+
+
+def test_new_user_has_zero_failed_login_count(db):
+    db.insert_user(_user())
+    row = db.get_user_by_id("u1")
+    assert row["failed_login_count"] == 0
+    assert row["locked_until"] is None

@@ -30,6 +30,33 @@ def test_determine_alert_no_change_failing():
     assert determine_alert("failing", "fail") is None
 
 @pytest.mark.asyncio
+async def test_run_app_uses_secrets_via_extra_vars_not_environ(db, monkeypatch):
+    """run_app must resolve secrets through extra_vars, not os.environ injection."""
+    monkeypatch.delenv("APP_TOKEN", raising=False)  # ensure not in environ
+
+    app_def = {
+        "app": "myapp", "url": "$APP_TOKEN",
+        "environments": {"production": "$APP_TOKEN"},
+        "_type": "yaml",
+        "tests": [],
+    }
+
+    class FakeSecretsStore:
+        def get_all_decrypted(self):
+            return {"APP_TOKEN": "https://secret-url.example.com"}
+
+    with patch("harness.runner.dispatch_alerts", new=AsyncMock()), \
+         patch("harness.runner.dispatch_run_webhook", new=AsyncMock()):
+        run_id = await run_app(app_def, "production", "api", db,
+                               config={}, secrets_store=FakeSecretsStore())
+
+    run = db.get_run(run_id)
+    assert run["status"] == "complete"
+    # Secret was NOT injected into os.environ
+    assert "APP_TOKEN" not in __import__("os").environ
+
+
+@pytest.mark.asyncio
 async def test_run_app_updates_db_and_state(db):
     app_def = {
         "app": "myapp", "url": "https://example.com",
@@ -240,3 +267,55 @@ async def test_screenshot_diff_appends_fail_step_when_over_threshold(db, tmp_pat
     diff_steps = [s for s in step_log if "diff" in s.get("step", "").lower()]
     assert len(diff_steps) == 1
     assert diff_steps[0]["status"] == "fail"
+
+
+@pytest.mark.asyncio
+async def test_exception_in_test_is_logged_and_recorded(db, caplog):
+    """When _execute_test raises an exception, log it and insert error TestResult."""
+    import logging
+    caplog.set_level(logging.ERROR)
+
+    app_def = {
+        "app": "myapp", "url": "https://example.com",
+        "environments": {"production": "https://example.com"},
+        "_type": "yaml",
+        "tests": [
+            {"name": "failing-test", "type": "api", "endpoint": "/h"},
+            {"name": "passing-test", "type": "api", "endpoint": "/h"},
+        ],
+    }
+
+    async def execute_test_with_exception(test_def, run_id, app, env, base_url, ssl_ctx, browser_cfg, db=None):
+        if test_def["name"] == "failing-test":
+            raise RuntimeError("Playwright crash: connection lost")
+        result = make_result("pass", test_def["name"])
+        result.run_id = run_id  # Use the actual run_id passed to the function
+        return result
+
+    with patch("harness.runner._execute_test", new=execute_test_with_exception), \
+         patch("harness.runner.dispatch_alerts", new=AsyncMock()), \
+         patch("harness.runner.dispatch_run_webhook", new=AsyncMock()):
+        run_id = await run_app(app_def, "production", "api", db, config={})
+
+    # Check that error was logged
+    error_records = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(error_records) >= 1
+    assert "Unhandled exception in test" in error_records[0].message
+    assert "failing-test" in error_records[0].message
+
+    # Check that both results were inserted: one error, one pass
+    results = db.get_results_for_run(run_id)
+    assert len(results) == 2
+
+    # Find the error result
+    error_result = next(r for r in results if r["status"] == "error")
+    assert error_result["test_name"] == "failing-test"
+    assert error_result["error_msg"] == "Internal error: RuntimeError: Playwright crash: connection lost"
+
+    # Find the pass result
+    pass_result = next(r for r in results if r["status"] == "pass")
+    assert pass_result["test_name"] == "passing-test"
+
+    # Check that app state was updated for the error test
+    error_state = db.get_app_state("myapp", "production", "failing-test")
+    assert error_state["state"] == "failing"

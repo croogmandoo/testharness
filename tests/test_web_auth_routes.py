@@ -178,3 +178,202 @@ def test_github_oauth_callback_creates_user_and_sets_session(db, tmp_path):
     assert user["username"] == "github:testuser"
     assert user["role"] == "read_only"
     assert user["auth_provider"] == "github"
+
+
+def test_github_oauth_callback_rejects_inactive_user_by_oauth_id(db, tmp_path):
+    """Callback rejects existing inactive user looked up by oauth_provider_id with 403."""
+    import uuid
+    from datetime import datetime, timezone
+    from unittest.mock import patch, AsyncMock, MagicMock
+    from fastapi.testclient import TestClient
+    from web.main import create_app
+
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    config = {
+        "auth": {
+            "github": {
+                "client_id": "cid",
+                "client_secret": "csecret",
+                "default_role": "read_only",
+            }
+        },
+        "environments": {"production": {"label": "Production"}},
+    }
+
+    # Pre-create an inactive user linked to github oauth_provider_id
+    db.insert_user({
+        "id": str(uuid.uuid4()),
+        "username": "github:inactiveuser",
+        "display_name": "Inactive User",
+        "email": "inactive@example.com",
+        "password_hash": None,
+        "role": "read_only",
+        "auth_provider": "github",
+        "oauth_provider_id": "12345",
+        "role_override": 0,
+        "is_active": 0,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    })
+
+    app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    c = TestClient(app, follow_redirects=False)
+
+    token_response = MagicMock()
+    token_response.json = MagicMock(return_value={"access_token": "gha_test_token"})
+    user_response = MagicMock()
+    user_response.json = MagicMock(return_value={
+        "id": 12345,
+        "login": "inactiveuser",
+        "name": "Inactive User",
+        "email": "inactive@example.com",
+    })
+
+    c.cookies.set("oauth_state", "teststate")
+
+    with patch("web.routes.auth.httpx") as mock_httpx:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=token_response)
+        mock_client.get = AsyncMock(return_value=user_response)
+        mock_httpx.AsyncClient.return_value = mock_client
+
+        r = c.get("/auth/oauth/github/callback?code=abc123&state=teststate")
+
+    assert r.status_code == 403
+    assert "session" not in r.cookies
+
+
+def test_github_oauth_callback_rejects_inactive_user_by_username(db, tmp_path):
+    """Callback rejects existing inactive user looked up by username with 403."""
+    import uuid
+    from datetime import datetime, timezone
+    from unittest.mock import patch, AsyncMock, MagicMock
+    from fastapi.testclient import TestClient
+    from web.main import create_app
+
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    config = {
+        "auth": {
+            "github": {
+                "client_id": "cid",
+                "client_secret": "csecret",
+                "default_role": "read_only",
+            }
+        },
+        "environments": {"production": {"label": "Production"}},
+    }
+
+    # Pre-create an inactive user with github username but no oauth_provider_id
+    db.insert_user({
+        "id": str(uuid.uuid4()),
+        "username": "github:existinguser",
+        "display_name": "Existing User",
+        "email": "existing@example.com",
+        "password_hash": None,
+        "role": "read_only",
+        "auth_provider": "github",
+        "oauth_provider_id": None,
+        "role_override": 0,
+        "is_active": 0,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    })
+
+    app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    c = TestClient(app, follow_redirects=False)
+
+    token_response = MagicMock()
+    token_response.json = MagicMock(return_value={"access_token": "gha_test_token"})
+    user_response = MagicMock()
+    user_response.json = MagicMock(return_value={
+        "id": 99999,
+        "login": "existinguser",
+        "name": "Existing User",
+        "email": "existing@example.com",
+    })
+
+    c.cookies.set("oauth_state", "teststate")
+
+    with patch("web.routes.auth.httpx") as mock_httpx:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=token_response)
+        mock_client.get = AsyncMock(return_value=user_response)
+        mock_httpx.AsyncClient.return_value = mock_client
+
+        r = c.get("/auth/oauth/github/callback?code=abc123&state=teststate")
+
+    assert r.status_code == 403
+    assert "session" not in r.cookies
+
+
+def test_github_oauth_callback_allows_active_user(db, tmp_path):
+    """Callback allows existing active user to log in normally."""
+    import uuid
+    from datetime import datetime, timezone
+    from unittest.mock import patch, AsyncMock, MagicMock
+    from fastapi.testclient import TestClient
+    from web.main import create_app
+
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    config = {
+        "auth": {
+            "github": {
+                "client_id": "cid",
+                "client_secret": "csecret",
+                "default_role": "read_only",
+            }
+        },
+        "environments": {"production": {"label": "Production"}},
+    }
+
+    # Pre-create an active user linked to github oauth_provider_id
+    db.insert_user({
+        "id": str(uuid.uuid4()),
+        "username": "github:activeuser",
+        "display_name": "Active User",
+        "email": "active@example.com",
+        "password_hash": None,
+        "role": "read_only",
+        "auth_provider": "github",
+        "oauth_provider_id": "54321",
+        "role_override": 0,
+        "is_active": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    })
+
+    app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    c = TestClient(app, follow_redirects=False)
+
+    token_response = MagicMock()
+    token_response.json = MagicMock(return_value={"access_token": "gha_test_token"})
+    user_response = MagicMock()
+    user_response.json = MagicMock(return_value={
+        "id": 54321,
+        "login": "activeuser",
+        "name": "Active User",
+        "email": "active@example.com",
+    })
+
+    c.cookies.set("oauth_state", "teststate")
+
+    with patch("web.routes.auth.httpx") as mock_httpx:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=token_response)
+        mock_client.get = AsyncMock(return_value=user_response)
+        mock_httpx.AsyncClient.return_value = mock_client
+
+        r = c.get("/auth/oauth/github/callback?code=abc123&state=teststate")
+
+    assert r.status_code in (302, 307)
+    assert r.headers["location"] == "/"
+    assert "session" in r.cookies

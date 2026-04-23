@@ -1,6 +1,7 @@
 import json
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from urllib.parse import urlparse
 
 
 def generate_task_xml(task_name: str, harness_url: str,
@@ -16,13 +17,22 @@ def generate_task_xml(task_name: str, harness_url: str,
             f.write(xml)
         # Then: schtasks /create /xml task.xml /tn "Harness-Prod"
     """
+    _parsed = urlparse(harness_url)
+    if _parsed.scheme not in ("http", "https") or not _parsed.netloc or "'" in harness_url:
+        raise ValueError(f"harness_url must be an http/https URL, got: {harness_url!r}")
+
     payload: dict = {"environment": environment, "triggered_by": "api"}
     if app:
         payload["app"] = app
-    body = json.dumps(payload)
+    body_json = json.dumps(payload, separators=(",", ":"))
+    # In PowerShell single-quoted strings, ' is escaped as ''
+    ps_body = body_json.replace("'", "''")
     command = (
-        f'powershell -Command "Invoke-RestMethod -Uri {harness_url}/api/runs '
-        f"-Method POST -ContentType 'application/json' -Body '{body}'\""
+        f"powershell -Command \"Invoke-RestMethod"
+        f" -Uri '{harness_url}/api/runs'"
+        f" -Method POST"
+        f" -ContentType 'application/json'"
+        f" -Body '{ps_body}'\""
     )
 
     root = ET.Element("Task", version="1.2",

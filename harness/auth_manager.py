@@ -13,6 +13,13 @@ def verify_local_password(username: str, password: str, db) -> Optional[dict]:
         return None
     if not user.get("password_hash"):
         return None
+    # Check account lockout
+    from datetime import datetime, timezone
+    locked_until = user.get("locked_until")
+    if locked_until:
+        if datetime.fromisoformat(locked_until) > datetime.now(timezone.utc):
+            return None  # Still locked
+        # Lock expired — let the password check proceed (reset happens on success)
     pw_bytes = password.encode("utf-8")
     hash_bytes = user["password_hash"].encode("utf-8") if isinstance(user["password_hash"], str) else user["password_hash"]
     if not _bcrypt.checkpw(pw_bytes, hash_bytes):

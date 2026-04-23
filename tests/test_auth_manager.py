@@ -134,3 +134,27 @@ def test_ldap_authenticate_default_role():
          patch("harness.auth_manager.Server"):
         result = ldap_authenticate("carol", "pass", ldap_cfg)
     assert result["role"] == "read_only"
+
+
+# ── Lockout checks in verify_local_password ───────────────────────────────────
+
+def test_verify_local_password_locked_account_returns_none(db):
+    from harness.auth_manager import verify_local_password
+    from datetime import datetime, timezone, timedelta
+    _make_local_user(db)
+    user = db.get_user_by_username("alice")
+    future = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+    db.increment_failed_login(user["id"], future)
+    # Even correct password should be rejected while locked
+    assert verify_local_password("alice", "secret123", db) is None
+
+
+def test_verify_local_password_expired_lock_allows_login(db):
+    from harness.auth_manager import verify_local_password
+    from datetime import datetime, timezone, timedelta
+    _make_local_user(db)
+    user = db.get_user_by_username("alice")
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    db.increment_failed_login(user["id"], past)
+    # Lock has expired, correct password should succeed
+    assert verify_local_password("alice", "secret123", db) is not None

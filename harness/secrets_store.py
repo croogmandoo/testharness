@@ -65,12 +65,29 @@ class SecretsStore:
     def list(self) -> list:
         return self._db.list_secrets()
 
+    def get_all_decrypted(self) -> dict:
+        """Return all secrets as {name: plaintext} without writing to os.environ."""
+        result = {}
+        for row in self._db.list_secrets():
+            try:
+                value = self.get(row["name"])
+                if value is not None:
+                    result[row["name"]] = value
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Failed to decrypt secret %r: %s", row["name"], e
+                )
+        return result
+
     def inject_to_env(self) -> None:
         import os as _os
+        import logging
+        _log = logging.getLogger(__name__)
         for row in self._db.list_secrets():
             try:
                 value = self.get(row["name"])
                 if value is not None:
                     _os.environ[row["name"]] = value
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning("Failed to decrypt secret %r: %s", row["name"], e)
