@@ -6,8 +6,9 @@ pyyaml==6.0.2
 jinja2>=3.1.6
 python-dotenv>=1.2.2
 starlette>=0.47.2
-pytest>=9.0.3
-pytest-asyncio>=0.24.0
+# pytest 9 blocked by pytest-asyncio requiring pytest<9 (CVE-2025-71176 unresolvable until pytest-asyncio drops that constraint)
+pytest>=8.3.5,<9
+pytest-asyncio>=0.25.0,<2
 pytest-httpx>=0.34.0
 anyio==4.3.0
 Pillow>=9.0.0
