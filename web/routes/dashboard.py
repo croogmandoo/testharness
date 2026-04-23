@@ -41,8 +41,7 @@ async def dashboard(request: Request, environment: str = None,
     for row in summary:
         row["tags"] = tag_map.get(row["app"], [])
 
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard.html", {
         "summary": summary,
         "environment": env,
         "environments": envs,
