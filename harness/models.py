@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Dict, Optional, List
 import uuid
 
 def _new_id() -> str:
@@ -26,6 +26,10 @@ class TestResult:
     screenshot: Optional[str] = None
     duration_ms: Optional[int] = None
     finished_at: Optional[str] = None
+    # Runtime-only: values pulled from the response by an `extract:` clause.
+    # NOT persisted by Database.insert_test_result and NOT exposed by exports —
+    # consumed only by the runner to chain into subsequent tests.
+    captures: Dict[str, str] = field(default_factory=dict)
 
 @dataclass
 class Run:

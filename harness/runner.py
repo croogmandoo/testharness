@@ -24,6 +24,30 @@ def determine_alert(previous_state: str, new_status: str) -> Optional[AlertType]
         return AlertType.RESOLVE
     return None
 
+def _apply_slo_threshold(test_def: dict, result: TestResult) -> None:
+    """Tier-2: fail an otherwise-passing test if its duration exceeds max_duration_ms.
+
+    Mutates `result` in place. No-op if the test didn't pass, the threshold
+    isn't set, or duration_ms is None (e.g. exception path).
+    """
+    if result.status != "pass":
+        return
+    max_ms = test_def.get("max_duration_ms")
+    if not max_ms or result.duration_ms is None:
+        return
+    if result.duration_ms <= max_ms:
+        return
+    result.step_log.append(StepResult(
+        step=f"SLO check: {result.duration_ms}ms > {max_ms}ms",
+        status="fail",
+        duration_ms=0,
+    ))
+    result.status = "fail"
+    result.error_msg = (
+        f"SLO violation: {result.duration_ms}ms exceeds max_duration_ms={max_ms}"
+    )
+
+
 async def _execute_test(test_def: dict, run_id: str, app: str, environment: str,
                         base_url: str, ssl_ctx, browser_cfg: dict, db=None):
     """Run a single test with optional retry. Returns TestResult."""
@@ -64,6 +88,7 @@ async def _execute_test(test_def: dict, run_id: str, app: str, environment: str,
         else:
             result = await run_availability_test(run_id, app, environment, base_url,
                                                  test_def, ssl_ctx=ssl_ctx)
+        _apply_slo_threshold(test_def, result)
         if result.status not in ("fail", "error"):
             break
     return result
@@ -73,7 +98,21 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
                   secrets_store=None) -> str:
     from harness.config import resolve_env_vars
     extra_vars = secrets_store.get_all_decrypted() if secrets_store is not None else {}
-    app_def = resolve_env_vars(app_def, strict=True, extra_vars=extra_vars)
+
+    # Tier-2: collect names that subsequent tests will `extract:` so the
+    # app-level resolver doesn't choke on `$AUTH_TOKEN` placeholders.  Each
+    # capture name is seeded with its own literal `$NAME` value, which the
+    # resolver substitutes back identically — leaving the placeholder intact
+    # for per-test re-resolution against the live `captures` dict.
+    capture_seeds = {}
+    has_extracts = False
+    for _td in app_def.get("tests", []):
+        for _capture_name in (_td.get("extract") or {}).keys():
+            capture_seeds[_capture_name] = "$" + _capture_name
+            has_extracts = True
+    app_def = resolve_env_vars(
+        app_def, strict=True, extra_vars={**extra_vars, **capture_seeds}
+    )
     if run_id:
         run = Run(id=run_id, app=app_def["app"], environment=environment, triggered_by=triggered_by)
     else:
@@ -88,12 +127,35 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
     write_ca_bundle(db)
 
     test_defs = app_def.get("tests", [])
-    results = await asyncio.gather(
-        *[_execute_test(td, run.id, run.app, environment, base_url,
-                        ssl_ctx, browser_cfg, db=db)
-          for td in test_defs],
-        return_exceptions=True,
-    )
+    sequential = bool(app_def.get("sequential")) or has_extracts
+
+    if sequential:
+        # Tier-2: run tests in order so `extract:` captures are available to
+        # subsequent tests' `$VAR` references.  Always re-resolve per-test
+        # (even with no captures yet) so `$AUTH_TOKEN` placeholders that were
+        # seeded at app-start fail loudly when their capture never happens.
+        captures: dict = {}
+        results = []
+        for td in test_defs:
+            try:
+                resolved_td = resolve_env_vars(td, strict=True, extra_vars=captures)
+                tr = await _execute_test(
+                    resolved_td, run.id, run.app, environment, base_url,
+                    ssl_ctx, browser_cfg, db=db,
+                )
+            except BaseException as e:  # noqa: BLE001 — match parallel branch
+                results.append(e)
+                continue
+            results.append(tr)
+            if tr is not None and tr.captures:
+                captures.update(tr.captures)
+    else:
+        results = await asyncio.gather(
+            *[_execute_test(td, run.id, run.app, environment, base_url,
+                            ssl_ctx, browser_cfg, db=db)
+              for td in test_defs],
+            return_exceptions=True,
+        )
 
     alerts_to_send = []
     for test_def, result in zip(test_defs, results):

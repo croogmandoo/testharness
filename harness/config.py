@@ -1,10 +1,46 @@
 import os
+import re
 import yaml
 from typing import Any
 
 
 class ConfigError(Exception):
     pass
+
+
+# Strings starting with `$` are env-var references only when they look like an
+# identifier (optionally with a `#env` qualifier).  Anything else — `"$.token"`
+# JSONPath, `"$1.50"` price, etc. — passes through untouched.
+_ENV_REF = re.compile(r"^\$[A-Za-z_][A-Za-z0-9_]*(#[A-Za-z0-9_-]+)?$")
+
+# Inline form: substring matches of `$IDENTIFIER` inside larger strings, e.g.
+# `"Bearer $AUTH_TOKEN"`.  Matches identifier-only — does not span past
+# whitespace, punctuation, or non-identifier chars.
+_INLINE_REF = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*(?:#[A-Za-z0-9_-]+)?)")
+
+
+def _resolve_var(name: str, strict: bool, extra: dict):
+    """Resolve a single $VAR or $VAR#env name. Returns None if missing
+    (when strict=False); raises ConfigError when strict=True."""
+    if "#" in name:
+        base_var, _ = name.split("#", 1)
+        val = extra.get(name) or os.environ.get(name)
+        if val is not None:
+            return val
+        val = extra.get(base_var) or os.environ.get(base_var)
+        if val is None:
+            if strict:
+                raise ConfigError(
+                    f"Environment variable '{base_var}' (or '{name}') is not set"
+                )
+            return None
+        return val
+    val = extra.get(name) or os.environ.get(name)
+    if val is None:
+        if strict:
+            raise ConfigError(f"Environment variable '{name}' is not set")
+        return None
+    return val
 
 
 def _validate_config(cfg: dict) -> None:
@@ -46,35 +82,23 @@ def _validate_config(cfg: dict) -> None:
 
 
 def resolve_env_vars(obj: Any, strict: bool = True, extra_vars: dict = None) -> Any:
+    _extra = extra_vars or {}
     if isinstance(obj, dict):
         return {k: resolve_env_vars(v, strict, extra_vars) for k, v in obj.items()}
     if isinstance(obj, list):
         return [resolve_env_vars(v, strict, extra_vars) for v in obj]
-    if isinstance(obj, str) and obj.startswith("$"):
-        expr = obj[1:]
-        _extra = extra_vars or {}
-        if "#" in expr:
-            # $VAR#env — try env-specific key first, fall back to base var
-            base_var, _ = expr.split("#", 1)
-            val = _extra.get(expr) or os.environ.get(expr)   # e.g. SONARR_PASSWORD#staging
-            if val is not None:
-                return val
-            val = _extra.get(base_var) or os.environ.get(base_var)
-            if val is None:
-                if strict:
-                    raise ConfigError(
-                        f"Environment variable '{base_var}' (or '{expr}') is not set"
-                    )
-                return obj
-            return val
-        else:
-            val = _extra.get(expr) or os.environ.get(expr)
-            if val is None:
-                if strict:
-                    raise ConfigError(f"Environment variable '{expr}' is not set")
-                return obj
-            return val
-    return obj
+    if not isinstance(obj, str) or "$" not in obj:
+        return obj
+    # Whole-string `$VAR` ref — preserve value type (could be a non-string).
+    if _ENV_REF.match(obj):
+        val = _resolve_var(obj[1:], strict, _extra)
+        return val if val is not None else obj
+    # Inline `... $VAR ...` substitution — coerce values to str.
+    def _sub(match: "re.Match[str]") -> str:
+        val = _resolve_var(match.group(1), strict, _extra)
+        # Non-strict + missing -> leave the literal `$NAME` in place.
+        return str(val) if val is not None else match.group(0)
+    return _INLINE_REF.sub(_sub, obj)
 
 
 def load_config(path: str = "config.yaml") -> dict:

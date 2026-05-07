@@ -26,6 +26,35 @@ async def execute_step(page: Page, step: dict, base_url: str,
         if "click" in step:
             await page.click(step["click"])
             return StepResult(step=f"click {step['click']}", status="pass", duration_ms=_elapsed())
+        if "select_option" in step:
+            s = step["select_option"]
+            field = s["field"]
+            # Playwright accepts {value: ...}, {label: ...}, or {index: ...}.
+            kwargs = {k: s[k] for k in ("value", "label", "index") if k in s}
+            if not kwargs:
+                return StepResult(step=f"select_option {field}", status="error",
+                                  duration_ms=_elapsed(),
+                                  error="select_option requires one of value/label/index")
+            await page.select_option(field, **kwargs)
+            return StepResult(step=f"select_option {field} {kwargs}",
+                              status="pass", duration_ms=_elapsed())
+        if "press_key" in step:
+            target = step["press_key"]
+            # Either a bare "Enter" (focused element) or {field: ..., key: ...}.
+            if isinstance(target, dict):
+                await page.press(target["field"], target["key"])
+                desc = f"press_key {target['key']} on {target['field']}"
+            else:
+                await page.keyboard.press(str(target))
+                desc = f"press_key {target}"
+            return StepResult(step=desc, status="pass", duration_ms=_elapsed())
+        if "hover" in step:
+            await page.hover(step["hover"])
+            return StepResult(step=f"hover {step['hover']}", status="pass", duration_ms=_elapsed())
+        if "wait_for_function" in step:
+            expr = step["wait_for_function"]
+            await page.wait_for_function(expr)
+            return StepResult(step=f"wait_for_function {expr}", status="pass", duration_ms=_elapsed())
         if "assert_url_contains" in step:
             expected = step["assert_url_contains"]
             current = page.url
