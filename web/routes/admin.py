@@ -1,7 +1,11 @@
 import os
+import tempfile
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
+from starlette.background import BackgroundTask
 from web.auth import require_role
 
 router = APIRouter()
@@ -30,6 +34,43 @@ async def ldap_config(request: Request,
     ldap_cfg = config.get("auth", {}).get("ldap", {})
     return templates.TemplateResponse(request, "admin_ldap.html",
                                       _ctx(request, current_user, ldap_cfg=ldap_cfg))
+
+
+@router.get("/admin/backup")
+async def db_backup(current_user: dict = Depends(require_role("admin"))):
+    """Stream a consistent online snapshot of the live SQLite DB.
+
+    Uses SQLite's BACKUP API so the harness can keep serving requests
+    while the snapshot is taken.  The temp file is removed via FastAPI's
+    BackgroundTask after the response body finishes streaming.
+    """
+    from web.main import get_db
+    db = get_db()
+
+    fd, tmp_path = tempfile.mkstemp(prefix="harness-backup-", suffix=".db")
+    os.close(fd)
+    db.backup_to_path(tmp_path)
+    db.log_audit(
+        "db.backup",
+        user_id=current_user["id"],
+        username=current_user.get("username"),
+        target=os.path.basename(tmp_path),
+    )
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return FileResponse(
+        tmp_path,
+        media_type="application/octet-stream",
+        filename=f"harness-{ts}.db",
+        background=BackgroundTask(_remove_quietly, tmp_path),
+    )
+
+
+def _remove_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 @router.get("/admin/audit", response_class=HTMLResponse)

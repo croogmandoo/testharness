@@ -56,10 +56,11 @@ def _start_scheduler() -> None:
         return
     try:
         from harness.auto_scheduler import (
-            build_scheduler, add_retention_job, is_enabled,
+            build_scheduler, add_retention_job, add_stale_check_job, is_enabled,
         )
         from harness.runner import run_app
         from harness.retention import prune_old_runs
+        from harness.staleness import check_and_dispatch as stale_dispatch
     except Exception as e:  # pragma: no cover — import-time misconfig
         _log.warning("scheduler: import failed, scheduling disabled: %s", e)
         return
@@ -92,6 +93,20 @@ def _start_scheduler() -> None:
             except Exception:
                 _log.exception("scheduler: retention prune failed")
         add_retention_job(sched, retention_days, _prune_cb)
+
+    # Hourly stale-run check.  Defaults are sane; opt-out via
+    # `alerts.stale_check_enabled: false`.
+    stale_enabled = ((_config.get("alerts") or {})
+                     .get("stale_check_enabled", True))
+    if stale_enabled:
+        async def _stale_cb() -> None:
+            if _db is None:
+                return
+            try:
+                await stale_dispatch(_db, _apps, _config)
+            except Exception:
+                _log.exception("scheduler: stale-run check failed")
+        add_stale_check_job(sched, _stale_cb)
 
     if not sched.get_jobs():
         _log.info("scheduler: no jobs configured, not starting")

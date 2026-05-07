@@ -11,6 +11,13 @@ def format_alert_message(alert_type: AlertType, app: str, environment: str,
         if error_msg:
             msg += f"\n\nError: {error_msg}"
         return msg
+    if alert_type == AlertType.STALE:
+        # For STALE alerts, `test_name` carries the freshness budget summary
+        # (e.g. "no run in 28h, threshold 24h").
+        msg = f"[STALE] {app} ({environment}) — {test_name}"
+        if error_msg:
+            msg += f"\n\nDetails: {error_msg}"
+        return msg
     return f"[RESOLVED] {app} ({environment}) — {test_name} is now passing"
 
 async def _send_teams(webhook_url: str, text: str) -> None:

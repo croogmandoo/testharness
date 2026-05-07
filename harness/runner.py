@@ -11,6 +11,7 @@ from harness.alerts import dispatch_alerts, dispatch_run_webhook
 from harness.types import AlertType
 from harness.ssl_context import get_ssl_context, write_ca_bundle
 from harness.screenshot_diff import compute_diff
+from harness.maintenance import is_in_maintenance
 
 _log = logging.getLogger(__name__)
 
@@ -200,10 +201,27 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
 
     db.update_run_status(run.id, "complete",
                          finished_at=datetime.now(timezone.utc).isoformat())
+    # A fresh run lands -> the app is no longer stale; clear the dedup so the
+    # next time it goes silent we alert again instead of staying quiet.
+    db.clear_stale_alert(run.app, environment)
+
+    # Maintenance windows: suppress *alert dispatch* while keeping the run
+    # itself recorded in DB / audit / metrics.  Operators reviewing the
+    # dashboard will still see the failure; they just won't be paged.
+    maint = is_in_maintenance(config)
+    if maint:
+        if alerts_to_send:
+            _log.info(
+                "alerts: suppressed %d alert(s) for %s — maintenance window %r active",
+                len(alerts_to_send), run.app, maint,
+            )
+        if alerts_to_send:
+            alerts_to_send = []
+
     if alerts_to_send:
         await dispatch_alerts(alerts_to_send, alerts_cfg)
     webhook_cfg = config.get("alerts", {}).get("webhook", {})
-    if webhook_cfg.get("url"):
+    if webhook_cfg.get("url") and not maint:
         finished_run = db.get_run(run.id)
         run_results = db.get_results_for_run(run.id)
         await dispatch_run_webhook(

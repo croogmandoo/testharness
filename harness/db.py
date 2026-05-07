@@ -100,6 +100,12 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp
     ON audit_log(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_log_user
     ON audit_log(user_id, timestamp DESC);
+CREATE TABLE IF NOT EXISTS stale_alerts (
+    app              TEXT NOT NULL,
+    environment      TEXT NOT NULL,
+    last_alerted_at  TEXT NOT NULL,
+    PRIMARY KEY (app, environment)
+);
 """
 
 class Database:
@@ -320,6 +326,56 @@ class Database:
             }
             for row in rows
         ]
+
+    # ── Stale-run alert dedup ──────────────────────────────────────────────
+
+    def get_last_stale_alert_at(self, app: str, environment: str) -> Optional[str]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT last_alerted_at FROM stale_alerts "
+                "WHERE app=? AND environment=?",
+                (app, environment),
+            ).fetchone()
+        return row["last_alerted_at"] if row else None
+
+    def mark_stale_alerted(self, app: str, environment: str,
+                           timestamp_iso: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO stale_alerts (app, environment, last_alerted_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(app, environment) DO UPDATE SET last_alerted_at = excluded.last_alerted_at",
+                (app, environment, timestamp_iso),
+            )
+
+    def clear_stale_alert(self, app: str, environment: str) -> None:
+        """Called when a fresh run lands — clears the dedup so the next time
+        the app goes stale we alert again."""
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM stale_alerts WHERE app=? AND environment=?",
+                (app, environment),
+            )
+
+    def get_app_last_finished_at(self, app: str, environment: str) -> Optional[str]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(finished_at) AS finished_at FROM runs "
+                "WHERE app=? AND environment=? AND status='complete'",
+                (app, environment),
+            ).fetchone()
+        return row["finished_at"] if row and row["finished_at"] else None
+
+    def backup_to_path(self, dest_path: str) -> None:
+        """Take a consistent online snapshot of the live DB to dest_path.
+
+        Uses SQLite's BACKUP API (`source.backup(dest)`), which is safe to
+        call while the harness is running — readers/writers are not blocked
+        and the resulting file is guaranteed to be a valid, atomic copy.
+        """
+        import sqlite3 as _sql
+        with self._connect() as src, _sql.connect(dest_path) as dst:
+            src.backup(dst)
 
     def is_run_active(self, app: str, environment: str) -> bool:
         with self._connect() as conn:

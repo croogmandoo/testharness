@@ -23,6 +23,49 @@ from apscheduler.triggers.cron import CronTrigger
 _log = logging.getLogger(__name__)
 
 
+def _translate_dow_digit(n: int) -> int:
+    """Standard cron: 0=Sun, 1=Mon..6=Sat, 7=Sun.
+    APScheduler:    0=Mon, 1=Tue..6=Sun.
+    Map a single digit accordingly."""
+    if n == 0 or n == 7:
+        return 6
+    return n - 1
+
+
+def _normalize_dow_field(field: str) -> str:
+    """Translate the day-of-week field of a standard cron expression to the
+    convention APScheduler uses internally.  Pass-through for named days
+    (mon, tue, ...), star, and step expressions."""
+    if field == "*" or "/" in field:
+        return field
+    parts = []
+    for part in field.split(","):
+        if "-" in part and not part.startswith("-"):
+            a, _, b = part.partition("-")
+            try:
+                parts.append(f"{_translate_dow_digit(int(a))}-"
+                             f"{_translate_dow_digit(int(b))}")
+                continue
+            except ValueError:
+                pass
+        try:
+            parts.append(str(_translate_dow_digit(int(part))))
+        except ValueError:
+            parts.append(part)  # named days like 'mon', 'sat'
+    return ",".join(parts)
+
+
+def cron_trigger(expr: str, timezone: str = "UTC") -> CronTrigger:
+    """Build a CronTrigger from a standard cron expression where 0=Sunday
+    in the day-of-week field — matching `cron(5)` and most users' mental
+    model.  APScheduler's own from_crontab() uses 0=Monday, which is a
+    classic gotcha; this wrapper isolates the translation."""
+    fields = expr.strip().split()
+    if len(fields) == 5:
+        fields[4] = _normalize_dow_field(fields[4])
+    return CronTrigger.from_crontab(" ".join(fields), timezone=timezone)
+
+
 def _resolve_cron(app_def: dict, env_name: str, env_cfg: dict) -> Optional[str]:
     """Per-app override wins over env default."""
     return app_def.get("schedule") or (env_cfg or {}).get("schedule")
@@ -47,7 +90,7 @@ def build_scheduler(config: dict, apps: list,
             if not cron:
                 continue
             try:
-                trigger = CronTrigger.from_crontab(cron, timezone="UTC")
+                trigger = cron_trigger(cron, timezone="UTC")
             except (ValueError, KeyError) as e:
                 _log.warning(
                     "auto_scheduler: invalid cron %r for %s/%s: %s",
@@ -78,7 +121,7 @@ def add_retention_job(scheduler: AsyncIOScheduler, retention_days: int,
         return
     scheduler.add_job(
         prune_callback,
-        CronTrigger.from_crontab(cron, timezone="UTC"),
+        cron_trigger(cron, timezone="UTC"),
         id="retention::prune",
         replace_existing=True,
         coalesce=True,
@@ -88,6 +131,26 @@ def add_retention_job(scheduler: AsyncIOScheduler, retention_days: int,
         "auto_scheduler: retention prune scheduled %r (retention_days=%d)",
         cron, retention_days,
     )
+
+
+def add_stale_check_job(scheduler: AsyncIOScheduler,
+                        stale_callback: Callable[[], None],
+                        cron: str = "0 * * * *") -> None:
+    """Wire an hourly stale-run detector onto an existing scheduler.
+
+    `stale_callback` is invoked with no args; it should call
+    `harness.staleness.check_and_dispatch(...)` itself.  Default cadence is
+    once an hour, on the hour.
+    """
+    scheduler.add_job(
+        stale_callback,
+        cron_trigger(cron, timezone="UTC"),
+        id="staleness::check",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    _log.info("auto_scheduler: stale-run check scheduled %r", cron)
 
 
 def is_enabled(config: dict) -> bool:
