@@ -94,7 +94,6 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
             accept = request.headers.get("accept", "")
             if "text/html" in accept or "/" in accept:
                 return _tmpl.TemplateResponse(request, "403.html", {
-                    "request": request,
                     "environments": _config.get("environments", {}),
                     "environment": None,
                     "current_user": None,

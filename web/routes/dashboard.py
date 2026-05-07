@@ -97,7 +97,6 @@ async def app_detail(request: Request, app: str, environment: str, run_id: str =
             ]
 
     return templates.TemplateResponse(request, "detail.html", {
-        "request": request,
         "app": app,
         "environment": environment,
         "environments": config.get("environments", {}),
