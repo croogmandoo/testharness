@@ -208,6 +208,38 @@ class Database:
             ).fetchone()
             return dict(row) if row else None
 
+    def list_screenshots_older_than(self, cutoff_iso: str) -> list:
+        """Filenames of screenshots attached to test_results finished before cutoff."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT screenshot FROM test_results "
+                "WHERE finished_at IS NOT NULL AND finished_at < ? "
+                "AND screenshot IS NOT NULL AND screenshot != ''",
+                (cutoff_iso,)
+            ).fetchall()
+        return [r["screenshot"] for r in rows]
+
+    def prune_runs_older_than(self, cutoff_iso: str) -> dict:
+        """Delete completed runs (and their test_results) finished before cutoff.
+
+        Active or in-progress runs (no finished_at) are left alone.
+        Returns counts: {"runs_deleted", "results_deleted"}.
+        """
+        with self._connect() as conn:
+            results = conn.execute(
+                "DELETE FROM test_results WHERE finished_at IS NOT NULL "
+                "AND finished_at < ?",
+                (cutoff_iso,)
+            )
+            results_deleted = results.rowcount
+            runs = conn.execute(
+                "DELETE FROM runs WHERE finished_at IS NOT NULL "
+                "AND finished_at < ?",
+                (cutoff_iso,)
+            )
+            runs_deleted = runs.rowcount
+        return {"runs_deleted": runs_deleted, "results_deleted": results_deleted}
+
     def is_run_active(self, app: str, environment: str) -> bool:
         with self._connect() as conn:
             row = conn.execute(

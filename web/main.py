@@ -1,14 +1,19 @@
+import logging
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from harness.db import Database
 from harness.loader import load_apps
+
+_log = logging.getLogger(__name__)
 
 _db: Database = None
 _config: dict = {}
 _apps: list = []
 _apps_dir: str = "apps"
 _secrets_store = None
+_scheduler = None
 
 
 def get_db() -> Database:
@@ -31,9 +36,87 @@ def get_secrets_store():
     return _secrets_store
 
 
+def get_scheduler():
+    return _scheduler
+
+
 def reload_apps() -> None:
     global _apps
     _apps = load_apps(_apps_dir) if os.path.isdir(_apps_dir) else []
+
+
+def _start_scheduler() -> None:
+    """Build + start the in-process cron scheduler from current config/apps.
+
+    No-op if scheduling is disabled or no jobs would be created.  Errors here
+    are logged, not raised, so a misconfigured cron can't take the web app down.
+    """
+    global _scheduler
+    if _scheduler is not None:
+        return
+    try:
+        from harness.auto_scheduler import (
+            build_scheduler, add_retention_job, is_enabled,
+        )
+        from harness.runner import run_app
+        from harness.retention import prune_old_runs
+    except Exception as e:  # pragma: no cover — import-time misconfig
+        _log.warning("scheduler: import failed, scheduling disabled: %s", e)
+        return
+
+    if not is_enabled(_config):
+        _log.info("scheduler: disabled via config (scheduling.enabled=false)")
+        return
+
+    async def _run_cb(app_def: dict, environment: str) -> None:
+        if _db is None:
+            return
+        if _db.is_run_active(app_def["app"], environment):
+            _log.info("scheduler: %s/%s already active, skipping",
+                      app_def["app"], environment)
+            return
+        try:
+            await run_app(app_def, environment, "schedule",
+                          _db, _config, secrets_store=_secrets_store)
+        except Exception:  # pragma: no cover — runner has its own error capture
+            _log.exception("scheduler: run_app failed for %s/%s",
+                           app_def["app"], environment)
+
+    sched = build_scheduler(_config, _apps, _run_cb)
+
+    retention_days = _config.get("retention_days")
+    if retention_days:
+        def _prune_cb() -> None:
+            try:
+                prune_old_runs(_db, retention_days)
+            except Exception:
+                _log.exception("scheduler: retention prune failed")
+        add_retention_job(sched, retention_days, _prune_cb)
+
+    if not sched.get_jobs():
+        _log.info("scheduler: no jobs configured, not starting")
+        return
+
+    try:
+        sched.start()
+    except RuntimeError as e:
+        # AsyncIOScheduler.start() requires a running loop; under pure-sync
+        # TestClient creation there isn't one — that's fine, tests don't
+        # need scheduling.
+        _log.info("scheduler: not started (%s)", e)
+        return
+    _scheduler = sched
+
+
+def _stop_scheduler() -> None:
+    global _scheduler
+    if _scheduler is None:
+        return
+    try:
+        _scheduler.shutdown(wait=False)
+    except Exception:  # pragma: no cover
+        _log.exception("scheduler: shutdown failed")
+    _scheduler = None
 
 
 def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps") -> FastAPI:
@@ -63,7 +146,15 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
         secure_cookie=auth_cfg.get("secure_cookie", False),
     )
 
-    app = FastAPI(title="Web Testing Harness")
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        _start_scheduler()
+        try:
+            yield
+        finally:
+            _stop_scheduler()
+
+    app = FastAPI(title="Web Testing Harness", lifespan=_lifespan)
 
     # First-run middleware: redirect every HTML route to /setup when no users exist.
     from starlette.middleware.base import BaseHTTPMiddleware
@@ -72,7 +163,8 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     class _FirstRunMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             skip = {"/setup", "/auth/login", "/auth/logout",
-                    "/auth/oauth/github/login", "/auth/oauth/github/callback"}
+                    "/auth/oauth/github/login", "/auth/oauth/github/callback",
+                    "/metrics", "/status"}
             skip_prefix = ("/static", "/screenshots", "/api", "/health")
             if (request.url.path not in skip and
                     not request.url.path.startswith(skip_prefix)):
@@ -132,6 +224,12 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     app.include_router(admin_ca_certs_router)
     from web.routes.api_keys import router as api_keys_router
     app.include_router(api_keys_router)
+
+    from web.routes.metrics import router as metrics_router
+    app.include_router(metrics_router)
+
+    from web.routes.status import router as status_router
+    app.include_router(status_router)
 
     screenshots_dir = "data/screenshots"
     os.makedirs(screenshots_dir, exist_ok=True)
