@@ -76,22 +76,35 @@ document.addEventListener('click', function(e) {
   else if (action === 'delete-permanent') handleDeletePermanent(app);
 });
 
+async function _readError(resp, fallback) {
+  // Pull a useful message from a non-OK response without crashing on
+  // non-JSON bodies (e.g. an unhandled-exception 500 returns HTML).
+  const ctype = (resp.headers.get('content-type') || '').toLowerCase();
+  if (ctype.includes('application/json')) {
+    try { const d = await resp.json(); return d.detail || fallback; }
+    catch (_) { /* fall through */ }
+  }
+  let body = '';
+  try { body = (await resp.text()).slice(0, 200); } catch (_) {}
+  return fallback + ' (HTTP ' + resp.status + ')' + (body ? ': ' + body : '');
+}
+
 async function handleArchive(name) {
   if (!confirm('Archive "' + name + '"?')) return;
   const resp = await fetch('/api/apps/' + encodeURIComponent(name), { method: 'DELETE' });
-  if (resp.ok) { location.reload(); }
-  else { const d = await resp.json(); showError(d.detail || 'Archive failed'); }
+  if (resp.ok) location.reload();
+  else showError(await _readError(resp, 'Archive failed'));
 }
 async function handleRestore(name) {
   const resp = await fetch('/api/apps/' + encodeURIComponent(name) + '/restore', { method: 'POST' });
-  if (resp.ok) { location.reload(); }
-  else { const d = await resp.json(); showError(d.detail || 'Restore failed'); }
+  if (resp.ok) location.reload();
+  else showError(await _readError(resp, 'Restore failed'));
 }
 async function handleDeletePermanent(name) {
   if (!confirm('Permanently delete "' + name + '"? This cannot be undone.')) return;
   const resp = await fetch('/api/apps/' + encodeURIComponent(name) + '/permanent', { method: 'DELETE' });
-  if (resp.ok) { location.reload(); }
-  else { const d = await resp.json(); showError(d.detail || 'Delete failed'); }
+  if (resp.ok) location.reload();
+  else showError(await _readError(resp, 'Delete failed'));
 }
 function showError(msg) {
   const el = document.getElementById('status-msg');

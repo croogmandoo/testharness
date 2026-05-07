@@ -86,8 +86,15 @@ async function triggerRun(app) {
     body: JSON.stringify({app: app, environment: ENV, triggered_by: 'ui'})
   });
   if (!resp.ok) {
-    var err = await resp.json();
-    alert(err.detail || 'Failed to start run');
+    var msg = 'Failed to start run';
+    var ctype = (resp.headers.get('content-type') || '').toLowerCase();
+    if (ctype.includes('application/json')) {
+      try { var err = await resp.json(); msg = err.detail || msg; } catch (_) {}
+    } else {
+      try { var body = (await resp.text()).slice(0, 200);
+        msg += ' (HTTP ' + resp.status + ')' + (body ? ': ' + body : ''); } catch (_) {}
+    }
+    alert(msg);
     btn.textContent = 'Run';
     btn.disabled = false;
     return;

@@ -257,9 +257,28 @@ async function submitForm() {
   }
   const url = FORM_MODE === 'edit' ? '/api/apps/' + encodeURIComponent(APP_NAME) : '/api/apps';
   const method = FORM_MODE === 'edit' ? 'PUT' : 'POST';
-  const resp = await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app_def: appDef }) });
-  if (resp.ok) { window.location.href = '/apps'; }
-  else { const err = await resp.json(); showBanner(err.detail || 'Save failed'); }
+  let resp;
+  try {
+    resp = await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app_def: appDef }) });
+  } catch (e) {
+    showBanner('Network error: ' + e.message);
+    return;
+  }
+  if (resp.ok) { window.location.href = '/apps'; return; }
+  // Non-OK: try JSON detail first, fall back to status text + body excerpt.
+  // FastAPI's HTTPException produces JSON; an unhandled exception produces
+  // HTML/plain text, which would have crashed JSON.parse() before this fix.
+  const ctype = (resp.headers.get('content-type') || '').toLowerCase();
+  if (ctype.includes('application/json')) {
+    try {
+      const err = await resp.json();
+      showBanner(err.detail || 'Save failed (HTTP ' + resp.status + ')');
+      return;
+    } catch (_) { /* fall through to text */ }
+  }
+  let body = '';
+  try { body = (await resp.text()).slice(0, 200); } catch (_) {}
+  showBanner('Save failed (HTTP ' + resp.status + ')' + (body ? ': ' + body : ''));
 }
 
 function _el(tag, opts) {
