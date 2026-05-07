@@ -36,13 +36,22 @@ async def dashboard(request: Request, environment: str = None,
                 "active_run_id": None,
             })
 
-    # Merge tags from app YAML into summary rows
+    # Merge tags from app YAML into summary rows + last-N run history (for the
+    # tile sparkline).  Sparkline draws oldest-first left-to-right; DB returns
+    # newest-first so we reverse here.
     tag_map = {a["app"]: a.get("tags", []) for a in get_apps()}
     for row in summary:
         row["tags"] = tag_map.get(row["app"], [])
+        history = db.get_app_run_history(row["app"], env, limit=7)
+        row["history"] = list(reversed(history))
+
+    # Tag chips for the dashboard filter — union of all tags across visible apps,
+    # sorted alphabetically for stable rendering.
+    all_tags = sorted({t for row in summary for t in row["tags"]})
 
     return templates.TemplateResponse(request, "dashboard.html", {
         "summary": summary,
+        "all_tags": all_tags,
         "environment": env,
         "environments": envs,
         "current_user": current_user,

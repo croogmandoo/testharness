@@ -293,6 +293,34 @@ class Database:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_app_run_history(self, app: str, environment: str,
+                            limit: int = 7) -> list:
+        """Return the most recent completed runs as a list of pass/fail tags
+        suitable for a dashboard sparkline.
+
+        Each entry: {"id", "finished_at", "status"}.  status is "pass" if every
+        test in the run passed, "fail" otherwise.  Sorted newest-first.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT r.id, r.finished_at, "
+                "       SUM(CASE WHEN tr.status NOT IN ('pass','passing') "
+                "                THEN 1 ELSE 0 END) AS fail_count "
+                "FROM runs r LEFT JOIN test_results tr ON tr.run_id = r.id "
+                "WHERE r.app = ? AND r.environment = ? AND r.status = 'complete' "
+                "GROUP BY r.id, r.finished_at "
+                "ORDER BY r.finished_at DESC LIMIT ?",
+                (app, environment, int(limit)),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "finished_at": row["finished_at"],
+                "status": "fail" if (row["fail_count"] or 0) > 0 else "pass",
+            }
+            for row in rows
+        ]
+
     def is_run_active(self, app: str, environment: str) -> bool:
         with self._connect() as conn:
             row = conn.execute(

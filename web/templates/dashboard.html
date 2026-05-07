@@ -9,6 +9,15 @@
   </div>
 </div>
 
+{% if all_tags %}
+<div class="tag-chips" role="group" aria-label="Filter by tag">
+  <button type="button" class="tag-chip tag-chip--active" data-tag="" onclick="setTagFilter(this, '')">All</button>
+  {% for t in all_tags %}
+  <button type="button" class="tag-chip" data-tag="{{ t }}" onclick="setTagFilter(this, '{{ t | e }}')">{{ t }}</button>
+  {% endfor %}
+</div>
+{% endif %}
+
 <div class="app-grid" id="app-grid">
   {% for row in summary %}
   <div class="app-tile"
@@ -42,6 +51,13 @@
       {% endfor %}
     </div>
     {% endif %}
+    {% if row.history %}
+    <div class="tile-sparkline" title="Last {{ row.history|length }} runs (oldest left)">
+      {% for run in row.history %}
+      <span class="spark-dot spark-dot--{{ run.status }}"></span>
+      {% endfor %}
+    </div>
+    {% endif %}
     <div class="app-tile-meta">
       <span class="app-tile-score">{{ row.passing }}/{{ row.total }} tests</span>
       <span>{{ row.last_run[:16].replace('T',' ') if row.last_run else "no runs" }}</span>
@@ -55,8 +71,35 @@
     </div>
   </div>
   {% else %}
-  <div class="empty" style="grid-column:1/-1;">
-    No apps configured — add YAML files to the apps/ directory.
+  <div class="empty-onboarding">
+    <h2 class="mb-2">No apps configured yet</h2>
+    <p class="text-secondary mb-4">
+      Define your first app to start monitoring.  You can either add a YAML
+      file to the <code>apps/</code> directory or use the form-based editor.
+    </p>
+    <pre class="onboarding-sample"><code># apps/example.yaml
+app: My API
+url: https://api.example.com
+tags: [critical]
+environments:
+  production: https://api.example.com
+tests:
+  - name: Health check
+    type: api
+    endpoint: /health
+    expect_status: 200
+  - name: Login then fetch profile
+    type: api
+    endpoint: /auth/login
+    method: POST
+    json: {username: alice, password: $ALICE_PW}
+    extract: {AUTH_TOKEN: $.token}</code></pre>
+    {% if current_user and current_user.role in ("admin", "runner") %}
+    <div class="form-actions">
+      <a href="/apps/new" class="btn btn-primary">Create your first app</a>
+      <a href="/docs" class="btn">Browse the API</a>
+    </div>
+    {% endif %}
   </div>
   {% endfor %}
 </div>
@@ -106,10 +149,14 @@ async function triggerRun(app) {
 }
 
 async function runAll() {
+  // Respect the active tag filter — when "media" is selected, "Run All"
+  // means "run all media-tagged apps", not literally everything.
+  var body = { environment: ENV, triggered_by: 'ui' };
+  if (activeTag) body.tag = activeTag;
   var resp = await fetch('/api/runs', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({environment: ENV, triggered_by: 'ui'})
+    body: JSON.stringify(body)
   });
   if (!resp.ok) return;
   var data = await resp.json();
@@ -178,13 +225,29 @@ function updateTile(appName, runData) {
   }
 }
 
+var activeTag = '';
+
+function setTagFilter(btn, tag) {
+  activeTag = tag;
+  document.querySelectorAll('.tag-chip').forEach(function(c) {
+    c.classList.toggle('tag-chip--active', c === btn);
+  });
+  applyFilters();
+}
+
 function filterTiles(query) {
-  var q = query.toLowerCase();
+  applyFilters();
+}
+
+function applyFilters() {
+  var q = (document.querySelector('.dashboard-filter') || {}).value || '';
+  q = q.toLowerCase();
   document.querySelectorAll('#app-grid .app-tile[data-app]').forEach(function(tile) {
     var name = tile.dataset.app.toLowerCase();
     var tags = Array.from(tile.querySelectorAll('.tag')).map(function(t) { return t.textContent.toLowerCase(); });
-    var matches = name.includes(q) || tags.some(function(t) { return t.includes(q); });
-    tile.style.display = matches ? '' : 'none';
+    var matchesQuery = !q || name.includes(q) || tags.some(function(t) { return t.includes(q); });
+    var matchesTag   = !activeTag || tags.indexOf(activeTag.toLowerCase()) !== -1;
+    tile.style.display = (matchesQuery && matchesTag) ? '' : 'none';
   });
 }
 </script>

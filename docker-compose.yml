@@ -1,19 +1,33 @@
+# docker-compose for the testharness — one-shot `docker compose up -d`.
+#
+# Volume mounts:
+#   ./data        rw  — SQLite DB + screenshots (must persist + be writable)
+#   ./apps        rw  — app YAML files (the UI writes here when saving apps)
+#   ./config.yaml ro  — static, no need to be writable from inside the container
+#
+# The container runs as uid 10001 (harness user) so make sure the host
+# directories are writable by that user, or set `user:` to your own UID.
+
 services:
-  app:
+  harness:
     build: .
+    image: testharness:latest
+    container_name: harness
     ports:
       - "9552:9552"
     volumes:
       - ./data:/app/data
       - ./apps:/app/apps
-      - ./config.yaml:/app/config.yaml
+      - ./config.yaml:/app/config.yaml:ro
     env_file:
       - .env
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c",
-             "import urllib.request; urllib.request.urlopen('http://localhost:9552/health')"]
+      # Same probe as the Dockerfile HEALTHCHECK — kept here so compose users
+      # see container-status reflect /health rather than just the start-period.
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error",
+             "http://127.0.0.1:9552/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 10s
