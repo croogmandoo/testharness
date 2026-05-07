@@ -19,7 +19,14 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        # Use the resolved lock file when present for reproducibility;
+        # fall back to requirements.txt if the lock has been removed.
+        run: |
+          if [ -f requirements.lock ]; then
+            pip install -r requirements.lock
+          else
+            pip install -r requirements.txt
+          fi
 
       - name: Run tests
         run: pytest tests/ -v --tb=short

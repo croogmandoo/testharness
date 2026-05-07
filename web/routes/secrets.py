@@ -79,6 +79,9 @@ async def secrets_create(
         store.set(name, value, description=description.strip() or None,
                   user_id=current_user["id"])
         os.environ[name] = value
+        from web.main import get_db
+        get_db().log_audit("secret.upsert", user_id=current_user["id"],
+                           username=current_user.get("username"), target=name)
     return RedirectResponse("/secrets", status_code=303)
 
 
@@ -88,9 +91,11 @@ async def secrets_delete(
     name: str,
     current_user: dict = Depends(require_role("admin")),
 ):
-    from web.main import get_secrets_store
+    from web.main import get_secrets_store, get_db
     store = get_secrets_store()
     if store:
         store.delete(name)
         os.environ.pop(name, None)
+        get_db().log_audit("secret.delete", user_id=current_user["id"],
+                           username=current_user.get("username"), target=name)
     return RedirectResponse("/secrets", status_code=303)

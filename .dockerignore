@@ -1,13 +1,61 @@
-.venv/
-venv/
-data/
-__pycache__/
-*.pyc
-*.pyo
-.env
-.git/
+# Version control / IDE
+.git
 .gitignore
-graphify-out/
-tests/
-docs/
+.github
+.vscode
+.idea
+*.swp
+*.swo
+
+# Python build / cache
+__pycache__
+*.py[cod]
+*.egg-info
+.eggs
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.tox
+.venv
+venv
+env
+
+# Local runtime state — must NEVER end up in the image
+data
+.env
+.env.*
+!.env.example
+
+# Test artefacts
+htmlcov
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# Tooling state for swarms / hooks (not part of the runtime image)
+.claude
+.claude-flow
+.swarm
+.mcp.json
+CLAUDE.md
+MEMORY.md
+
+# Docs and dev-only files
+docs
 *.md
+!README.md
+*.png
+*.jpg
+*.jpeg
+*.gif
+dependency-map.canvas
+docker-compose.yml
+
+# Tests are not needed in the production image
+tests
+conftest.py
+pytest.ini
+
+# Dev/build outputs
+graphify-out

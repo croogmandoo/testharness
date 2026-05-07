@@ -25,18 +25,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxss1 \
     libxtst6 \
     xdg-utils \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Non-root runtime user.  UID 10001 stays out of system-account range.
+RUN groupadd --system --gid 10001 harness \
+    && useradd --system --uid 10001 --gid harness \
+               --home-dir /app --no-create-home --shell /usr/sbin/nologin harness
 
 WORKDIR /app
 
+# Install Python deps as root (writes into site-packages), then chown later.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-RUN playwright install chromium --with-deps
+# Playwright browsers are downloaded into the user's home — install as harness
+# so the runtime user owns them and doesn't try to re-download on first run.
+RUN install -d -o harness -g harness /home/harness \
+    && chown -R harness:harness /home/harness
+USER harness
+RUN playwright install chromium --with-deps 2>/dev/null || playwright install chromium
+USER root
 
-COPY . .
+COPY --chown=harness:harness . .
 
-RUN mkdir -p data/screenshots
+# Writable runtime dirs (data dir + screenshots) — must be owned by harness.
+RUN install -d -o harness -g harness /app/data /app/data/screenshots
+
+USER harness
 
 EXPOSE 9552
+
+# Healthcheck hits the existing /health endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl --fail --silent --show-error http://127.0.0.1:9552/health || exit 1
 
 CMD ["python", "-m", "web.main"]

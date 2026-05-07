@@ -32,6 +32,32 @@ async def ldap_config(request: Request,
                                       _ctx(request, current_user, ldap_cfg=ldap_cfg))
 
 
+@router.get("/admin/audit", response_class=HTMLResponse)
+async def audit_log(request: Request,
+                    user: str = "",
+                    action: str = "",
+                    limit: int = 200,
+                    current_user: dict = Depends(require_role("admin"))):
+    from web.main import get_db
+    db = get_db()
+    user_id_filter = None
+    if user:
+        u = db.get_user_by_username(user)
+        if u:
+            user_id_filter = u["id"]
+    entries = db.list_audit_log(
+        limit=min(max(int(limit), 1), 1000),
+        user_id=user_id_filter,
+        action=action or None,
+    )
+    return templates.TemplateResponse(
+        request, "admin_audit.html",
+        _ctx(request, current_user,
+             entries=entries,
+             filter_user=user, filter_action=action, filter_limit=limit),
+    )
+
+
 @router.post("/admin/ldap/test")
 async def ldap_test(request: Request,
                     current_user: dict = Depends(require_role("admin"))):

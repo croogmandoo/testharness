@@ -84,6 +84,8 @@ async def ca_certs_add(
         "added_by": current_user["id"],
     })
     write_ca_bundle(db)
+    db.log_audit("ca_cert.add", user_id=current_user["id"],
+                 username=current_user.get("username"), target=name)
     return RedirectResponse("/admin/ca-certs", status_code=303)
 
 
@@ -96,6 +98,10 @@ async def ca_certs_delete(
     from web.main import get_db
     from harness.ssl_context import write_ca_bundle
     db = get_db()
+    cert = db.get_ca_cert(cert_id)
     db.delete_ca_cert(cert_id)
     write_ca_bundle(db)
+    db.log_audit("ca_cert.delete", user_id=current_user["id"],
+                 username=current_user.get("username"),
+                 target=cert["name"] if cert else cert_id)
     return RedirectResponse("/admin/ca-certs", status_code=303)

@@ -68,8 +68,9 @@ async def users_create(
         ctx["error"] = "Password is required for local accounts."
         return templates.TemplateResponse(request, "user_form.html", ctx, status_code=422)
     pw_hash = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
+    new_id = str(uuid.uuid4())
     db.insert_user({
-        "id": str(uuid.uuid4()),
+        "id": new_id,
         "username": username.strip(),
         "display_name": display_name.strip() or username.strip(),
         "email": email.strip() or None,
@@ -81,6 +82,9 @@ async def users_create(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "last_login_at": None,
     })
+    db.log_audit("user.create", user_id=current_user["id"],
+                 username=current_user.get("username"),
+                 target=username.strip(), details=f"role={role}")
     return RedirectResponse("/users", status_code=303)
 
 
@@ -106,9 +110,13 @@ async def users_delete(request: Request, user_id: str,
     if user_id == current_user["id"]:
         raise HTTPException(status_code=400, detail="Cannot delete your own account.")
     db = get_db()
-    if not db.get_user_by_id(user_id):
+    target_user = db.get_user_by_id(user_id)
+    if not target_user:
         raise HTTPException(status_code=404)
     db.delete_user(user_id)
+    db.log_audit("user.delete", user_id=current_user["id"],
+                 username=current_user.get("username"),
+                 target=target_user["username"])
     return RedirectResponse("/users", status_code=303)
 
 
@@ -128,7 +136,8 @@ async def users_update(
     import bcrypt as _bcrypt
     from fastapi import HTTPException
     db = get_db()
-    if not db.get_user_by_id(user_id):
+    target_user = db.get_user_by_id(user_id)
+    if not target_user:
         raise HTTPException(status_code=404)
     updates = dict(display_name=display_name.strip(),
                    email=email.strip() or None,
@@ -136,4 +145,15 @@ async def users_update(
     if password:
         updates["password_hash"] = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
     db.update_user(user_id, **updates)
+    changes = []
+    if target_user.get("role") != role:
+        changes.append(f"role: {target_user.get('role')} -> {role}")
+    if password:
+        changes.append("password reset")
+    if int(target_user.get("is_active") or 0) != int(is_active):
+        changes.append(f"is_active: {target_user.get('is_active')} -> {is_active}")
+    db.log_audit("user.update", user_id=current_user["id"],
+                 username=current_user.get("username"),
+                 target=target_user["username"],
+                 details="; ".join(changes) if changes else "no role/auth changes")
     return RedirectResponse("/users", status_code=303)

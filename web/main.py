@@ -164,7 +164,8 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
         async def dispatch(self, request, call_next):
             skip = {"/setup", "/auth/login", "/auth/logout",
                     "/auth/oauth/github/login", "/auth/oauth/github/callback",
-                    "/metrics", "/status"}
+                    "/metrics", "/status",
+                    "/docs", "/redoc", "/openapi.json"}
             skip_prefix = ("/static", "/screenshots", "/api", "/health")
             if (request.url.path not in skip and
                     not request.url.path.startswith(skip_prefix)):

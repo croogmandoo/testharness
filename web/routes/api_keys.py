@@ -100,6 +100,9 @@ async def api_keys_create(
         "last_used_at": None,
         "is_active": 1,
     })
+    db.log_audit("api_key.create", user_id=current_user["id"],
+                 username=current_user.get("username"),
+                 target=name, details=f"prefix={prefix}")
     response = RedirectResponse("/api-keys", status_code=303)
     response.set_cookie("flash_new_key", plaintext, httponly=True, max_age=60, samesite="lax")
     return response
@@ -117,4 +120,6 @@ async def api_keys_revoke(
         db.revoke_api_key(key_id, user_id=None)
     else:
         db.revoke_api_key(key_id, user_id=current_user["id"])
+    db.log_audit("api_key.revoke", user_id=current_user["id"],
+                 username=current_user.get("username"), target=key_id)
     return RedirectResponse("/api-keys", status_code=303)

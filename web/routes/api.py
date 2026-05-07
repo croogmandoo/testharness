@@ -11,6 +11,7 @@ router = APIRouter(prefix="/api")
 
 class RunRequest(BaseModel):
     app: Optional[str] = None
+    tag: Optional[str] = None       # Tier-3: bulk run by app tag
     environment: str
     triggered_by: str = "api"
 
@@ -23,7 +24,21 @@ async def trigger_run(req: RunRequest, background_tasks: BackgroundTasks,
     config = get_config()
     all_apps = get_apps()
 
-    target_apps = [a for a in all_apps if req.app is None or a["app"] == req.app]
+    if req.app and req.tag:
+        raise HTTPException(
+            status_code=400,
+            detail="Specify either 'app' or 'tag', not both",
+        )
+
+    if req.tag:
+        target_apps = [a for a in all_apps if req.tag in (a.get("tags") or [])]
+        if not target_apps:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No apps tagged '{req.tag}'",
+            )
+    else:
+        target_apps = [a for a in all_apps if req.app is None or a["app"] == req.app]
     if req.app and not target_apps:
         # Check for an active run before returning 404 — the app may not be in the config
         # but could still be running (e.g. config reloaded after a run was queued).
