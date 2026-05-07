@@ -35,16 +35,15 @@ RUN groupadd --system --gid 10001 harness \
 
 WORKDIR /app
 
-# Install Python deps as root (writes into site-packages), then chown later.
+# Install Python deps as root (writes into site-packages), then install
+# Playwright browsers to a shared, world-readable location.  Doing the
+# install as root means apt deps via --with-deps work; the path lets the
+# runtime harness user execute the browser without re-downloading.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-# Playwright browsers are downloaded into the user's home — install as harness
-# so the runtime user owns them and doesn't try to re-download on first run.
-RUN install -d -o harness -g harness /home/harness \
-    && chown -R harness:harness /home/harness
-USER harness
-RUN playwright install chromium --with-deps 2>/dev/null || playwright install chromium
-USER root
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+RUN playwright install chromium --with-deps \
+    && chmod -R a+rX /opt/playwright
 
 COPY --chown=harness:harness . .
 
