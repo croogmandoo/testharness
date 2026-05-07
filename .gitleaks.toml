@@ -1,0 +1,31 @@
+# Gitleaks config for the harness repo.
+#
+# We extend gitleaks's default rule set rather than replacing it — that
+# way new rules added upstream are still active.  The allowlist below
+# only suppresses obvious-placeholder findings in docs and example
+# snippets that gitleaks's high-entropy heuristics misclassify.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented placeholder credentials used in example snippets"
+
+# 1. Files where any 'Authorization: Bearer <token>' line is example text,
+#    not a real secret.  Limited to docs/, README, and the sample env file.
+paths = [
+  '''^docs/.+\.md$''',
+  '''^README\.md$''',
+  '''^\.env\.example$''',
+]
+
+# 2. Specific placeholder strings — match anywhere in the repo.  Keep this
+#    list narrow; only add patterns that look secret-shaped but are
+#    obviously fake.
+regexes = [
+  # API-key documentation placeholders
+  '''hth_your_key_here''',
+  '''hth_<your-key>''',
+  '''Bearer \$[A-Z_][A-Z0-9_]*''',          # `Bearer $METRICS_TOKEN`, `Bearer $API_TOKEN`
+  '''Bearer hth_<your-key>''',
+]
