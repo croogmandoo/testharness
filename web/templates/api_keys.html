@@ -5,22 +5,22 @@
 </div>
 
 {% if new_key %}
-<div class="card" style="border:1px solid var(--pass);max-width:720px;">
-  <div class="card-title" style="color:var(--pass);">New API Key — copy it now</div>
-  <p style="color:var(--text-2);font-size:.75rem;margin-bottom:.6rem;">
+<div class="card max-w-xl new-key-card">
+  <div class="card-title text-pass">New API Key — copy it now</div>
+  <p class="text-secondary text-sm mb-3">
     This key will not be shown again. Store it in your CI secret manager or the harness Secrets store.
   </p>
-  <div style="display:flex;align-items:center;gap:.5rem;">
-    <code id="new-key-display" style="font-size:.78rem;background:var(--surface-2);padding:.4rem .6rem;border-radius:4px;flex:1;word-break:break-all;">{{ new_key }}</code>
+  <div class="flex items-center gap-2">
+    <code id="new-key-display" class="new-key-value">{{ new_key }}</code>
     <button class="btn btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('new-key-display').innerText)">Copy</button>
   </div>
 </div>
 {% endif %}
 
-<div class="card" style="max-width:640px;">
+<div class="card max-w-lg">
   <div class="card-title">Create API Key</div>
   <form method="post" action="/api-keys">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:.9rem;">
+    <div class="form-grid-2 mb-4">
       <div>
         <label class="label">Name</label>
         <input class="input" name="name" placeholder="e.g. CI pipeline" required>
@@ -57,24 +57,20 @@
     <tbody>
       {% for k in user_keys %}
       <tr>
-        <td><code style="font-size:.75rem;">hth_{{ k.key_prefix }}…</code></td>
+        <td><code class="font-mono text-xs">hth_{{ k.key_prefix }}…</code></td>
         <td>{{ k.name }}</td>
-        <td style="color:var(--text-3);font-size:.7rem;">
-          {{ k.expires_at[:10] if k.expires_at else "Never" }}
-        </td>
-        <td style="color:var(--text-3);font-size:.7rem;">
-          {{ k.last_used_at[:16].replace('T',' ') if k.last_used_at else "Never" }}
-        </td>
+        <td class="text-muted text-xs font-mono">{{ k.expires_at[:10] if k.expires_at else "Never" }}</td>
+        <td class="text-muted text-xs font-mono">{{ k.last_used_at[:16].replace('T',' ') if k.last_used_at else "Never" }}</td>
         <td>
           {% if k.is_active %}
-            <span style="color:var(--pass);font-size:.65rem;font-weight:700;">Active</span>
+            <span class="badge badge-pass">Active</span>
           {% else %}
-            <span style="color:var(--fail);font-size:.65rem;font-weight:700;">Revoked</span>
+            <span class="badge badge-fail">Revoked</span>
           {% endif %}
         </td>
-        <td style="text-align:right;">
+        <td class="text-right">
           {% if k.is_active %}
-          <form method="post" action="/api-keys/{{ k.id }}/revoke" style="display:inline;">
+          <form method="post" action="/api-keys/{{ k.id }}/revoke" class="inline-block">
             <button type="submit" class="btn btn-sm btn-danger">Revoke</button>
           </form>
           {% endif %}
@@ -106,25 +102,21 @@
     <tbody>
       {% for k in all_keys %}
       <tr>
-        <td style="color:var(--text-2);">{{ k.username }}</td>
-        <td><code style="font-size:.75rem;">hth_{{ k.key_prefix }}…</code></td>
+        <td class="text-secondary">{{ k.username }}</td>
+        <td><code class="font-mono text-xs">hth_{{ k.key_prefix }}…</code></td>
         <td>{{ k.name }}</td>
-        <td style="color:var(--text-3);font-size:.7rem;">
-          {{ k.expires_at[:10] if k.expires_at else "Never" }}
-        </td>
-        <td style="color:var(--text-3);font-size:.7rem;">
-          {{ k.last_used_at[:16].replace('T',' ') if k.last_used_at else "Never" }}
-        </td>
+        <td class="text-muted text-xs font-mono">{{ k.expires_at[:10] if k.expires_at else "Never" }}</td>
+        <td class="text-muted text-xs font-mono">{{ k.last_used_at[:16].replace('T',' ') if k.last_used_at else "Never" }}</td>
         <td>
           {% if k.is_active %}
-            <span style="color:var(--pass);font-size:.65rem;font-weight:700;">Active</span>
+            <span class="badge badge-pass">Active</span>
           {% else %}
-            <span style="color:var(--fail);font-size:.65rem;font-weight:700;">Revoked</span>
+            <span class="badge badge-fail">Revoked</span>
           {% endif %}
         </td>
-        <td style="text-align:right;">
+        <td class="text-right">
           {% if k.is_active %}
-          <form method="post" action="/api-keys/{{ k.id }}/revoke" style="display:inline;">
+          <form method="post" action="/api-keys/{{ k.id }}/revoke" class="inline-block">
             <button type="submit" class="btn btn-sm btn-danger">Revoke</button>
           </form>
           {% endif %}

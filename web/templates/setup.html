@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Setup — Harness</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script>
+    (function(){
+      var t = localStorage.getItem('theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
 </head>
 <body>
 <div class="auth-wrap">
@@ -20,18 +26,18 @@
         <input class="input" name="username" required autofocus autocomplete="username">
       </div>
       <div class="field">
-        <label class="label">Display name <span style="color:var(--text-3);font-weight:400;">(optional)</span></label>
+        <label class="label">Display name <span class="text-muted font-normal">(optional)</span></label>
         <input class="input" name="display_name" autocomplete="name">
       </div>
       <div class="field">
         <label class="label">Password</label>
         <input class="input" name="password" type="password" required autocomplete="new-password">
       </div>
-      <div class="field" style="margin-bottom:1.5rem;">
+      <div class="field mb-6">
         <label class="label">Confirm password</label>
         <input class="input" name="confirm" type="password" required autocomplete="new-password">
       </div>
-      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:.5rem;">
+      <button type="submit" class="btn btn-primary w-full">
         Create admin &amp; sign in
       </button>
     </form>

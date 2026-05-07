@@ -4,33 +4,30 @@
   <h1>Audit Log</h1>
 </div>
 
-<form method="get" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:end;margin-bottom:1rem;">
-  <label style="display:flex;flex-direction:column;font-size:.68rem;color:var(--text-3);">
-    User
-    <input type="text" name="user" value="{{ filter_user or '' }}" placeholder="username"
-           style="padding:.3rem .5rem;font-size:.85rem;">
-  </label>
-  <label style="display:flex;flex-direction:column;font-size:.68rem;color:var(--text-3);">
-    Action
-    <input type="text" name="action" value="{{ filter_action or '' }}" placeholder="user.delete"
-           style="padding:.3rem .5rem;font-size:.85rem;">
-  </label>
-  <label style="display:flex;flex-direction:column;font-size:.68rem;color:var(--text-3);">
-    Limit
-    <input type="number" name="limit" value="{{ filter_limit or 200 }}" min="1" max="1000"
-           style="padding:.3rem .5rem;font-size:.85rem;width:6rem;">
-  </label>
-  <button type="submit" class="btn">Filter</button>
-  <a href="/admin/audit" class="btn-secondary" style="text-decoration:none;">Reset</a>
+<form method="get" class="filter-bar">
+  <div class="field">
+    <label class="label">User</label>
+    <input class="input" type="text" name="user" value="{{ filter_user or '' }}" placeholder="username">
+  </div>
+  <div class="field">
+    <label class="label">Action</label>
+    <input class="input" type="text" name="action" value="{{ filter_action or '' }}" placeholder="user.delete">
+  </div>
+  <div class="field">
+    <label class="label">Limit</label>
+    <input class="input" type="number" name="limit" value="{{ filter_limit or 200 }}" min="1" max="1000">
+  </div>
+  <button type="submit" class="btn btn-primary">Filter</button>
+  <a href="/admin/audit" class="btn">Reset</a>
 </form>
 
 {% if entries %}
 <table class="table">
   <thead>
     <tr>
-      <th style="width:14rem;">Timestamp (UTC)</th>
-      <th style="width:8rem;">User</th>
-      <th style="width:10rem;">Action</th>
+      <th>Timestamp (UTC)</th>
+      <th>User</th>
+      <th>Action</th>
       <th>Target</th>
       <th>Details</th>
     </tr>
@@ -38,17 +35,17 @@
   <tbody>
     {% for e in entries %}
     <tr>
-      <td style="font-family:monospace;font-size:.78rem;">{{ e.timestamp }}</td>
-      <td>{{ e.username or '-' }}</td>
-      <td><code style="color:var(--amber);">{{ e.action }}</code></td>
-      <td>{{ e.target or '-' }}</td>
-      <td style="color:var(--text-3);font-size:.78rem;">{{ e.details or '' }}</td>
+      <td class="font-mono text-xs text-secondary">{{ e.timestamp }}</td>
+      <td>{{ e.username or '—' }}</td>
+      <td><code>{{ e.action }}</code></td>
+      <td>{{ e.target or '—' }}</td>
+      <td class="text-muted text-sm">{{ e.details or '' }}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 {% else %}
-<p style="color:var(--text-3);">No audit log entries match the current filter.</p>
+<p class="empty">No audit log entries match the current filter.</p>
 {% endif %}
 
 {% endblock %}

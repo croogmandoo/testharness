@@ -4,27 +4,25 @@
   <h1>CA Certificates</h1>
 </div>
 
-<div style="max-width:640px;">
+<div class="max-w-lg">
   <div class="card">
     <div class="card-title">Add Certificate</div>
     {% if error %}
-    <div style="color:var(--fail);font-size:.75rem;margin-bottom:.75rem;">{{ error }}</div>
+    <div class="form-error">{{ error }}</div>
     {% endif %}
     <form method="post" enctype="multipart/form-data">
-      <div style="margin-bottom:.75rem;">
+      <div class="field">
         <label class="label">Name</label>
         <input class="input" name="name" placeholder="Corp Root CA" required>
       </div>
-      <div style="margin-bottom:.75rem;">
+      <div class="field">
         <label class="label">PEM Content (paste)</label>
-        <textarea class="input" name="pem_content" rows="6"
-                  placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
-                  style="font-family:monospace;font-size:.7rem;resize:vertical;"></textarea>
+        <textarea class="input pem-textarea" name="pem_content" rows="6"
+                  placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"></textarea>
       </div>
-      <div style="margin-bottom:.75rem;">
+      <div class="field">
         <label class="label">— or upload a file —</label>
-        <input type="file" name="pem_file" accept=".pem,.crt,.cer"
-               style="font-size:.75rem;color:var(--text-2);">
+        <input type="file" name="pem_file" accept=".pem,.crt,.cer" class="file-input">
       </div>
       <button type="submit" class="btn btn-primary">Add Certificate</button>
     </form>
@@ -45,14 +43,12 @@
       <tbody>
         {% for cert in certs %}
         <tr>
-          <td style="font-weight:600;">{{ cert.name }}</td>
-          <td style="color:var(--text-3);font-size:.72rem;">{{ cert.added_by or "—" }}</td>
-          <td style="color:var(--text-3);font-size:.72rem;">{{ cert.created_at[:10] }}</td>
-          <td>
-            <form method="post" action="/admin/ca-certs/{{ cert.id }}/delete"
-                  style="margin:0;">
-              <button type="submit" class="btn btn-danger"
-                      style="font-size:.68rem;padding:.2rem .5rem;">Delete</button>
+          <td class="font-semibold">{{ cert.name }}</td>
+          <td class="text-muted text-xs">{{ cert.added_by or "—" }}</td>
+          <td class="text-muted text-xs font-mono">{{ cert.created_at[:10] }}</td>
+          <td class="text-right">
+            <form method="post" action="/admin/ca-certs/{{ cert.id }}/delete" class="inline-block">
+              <button type="submit" class="btn btn-sm btn-danger">Delete</button>
             </form>
           </td>
         </tr>

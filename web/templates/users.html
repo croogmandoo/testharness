@@ -20,18 +20,18 @@
   <tbody>
     {% for u in users %}
     <tr>
-      <td style="font-family:inherit;font-weight:600;">{{ u.username }}</td>
+      <td class="font-semibold">{{ u.username }}</td>
       <td>{{ u.display_name or "—" }}</td>
       <td><span class="nav-role">{{ u.role }}</span></td>
-      <td style="color:var(--text-3);">{{ u.auth_provider }}</td>
-      <td style="color:{% if u.is_active %}var(--pass){% else %}var(--text-3){% endif %};">
+      <td class="text-muted">{{ u.auth_provider }}</td>
+      <td class="{% if u.is_active %}text-pass{% else %}text-muted{% endif %}">
         {{ "yes" if u.is_active else "no" }}
       </td>
-      <td style="color:var(--text-3);font-size:.7rem;">{{ u.last_login_at[:16].replace('T',' ') if u.last_login_at else "never" }}</td>
-      <td style="text-align:right;white-space:nowrap;">
+      <td class="text-muted text-xs font-mono">{{ u.last_login_at[:16].replace('T',' ') if u.last_login_at else "never" }}</td>
+      <td class="text-right text-nowrap">
         <a href="/users/{{ u.id }}/edit" class="btn btn-sm">Edit</a>
         {% if u.id != current_user.id %}
-        <form method="post" action="/users/{{ u.id }}/delete" style="display:inline;margin-left:.3rem;"
+        <form method="post" action="/users/{{ u.id }}/delete" class="inline-block ml-1"
               onsubmit="return confirm('Delete {{ u.username }}?')">
           <button type="submit" class="btn btn-sm btn-danger">Delete</button>
         </form>

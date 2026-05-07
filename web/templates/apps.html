@@ -18,13 +18,13 @@
   <tbody>
     {% for app in active_apps %}
     <tr>
-      <td style="font-weight:600;">
+      <td class="font-semibold">
         <a href="/app/{{ app.app }}/{{ environment or (environments.keys()|list|first) or 'production' }}">{{ app.app }}</a>
       </td>
-      <td><a href="{{ app.url }}" target="_blank" style="color:var(--text-2);">{{ app.url }}</a></td>
-      <td style="color:var(--text-2);">{{ app.tests | length }}</td>
-      <td style="text-align:right;">
-        <div style="display:flex;gap:.3rem;justify-content:flex-end;">
+      <td><a href="{{ app.url }}" target="_blank" class="text-secondary">{{ app.url }}</a></td>
+      <td class="text-secondary">{{ app.tests | length }}</td>
+      <td class="text-right">
+        <div class="btn-group justify-end">
           <a href="/apps/{{ app.app }}/edit" class="btn btn-sm">Edit</a>
           <button class="btn btn-sm btn-danger" data-action="archive" data-app="{{ app.app | e }}">Archive</button>
         </div>
@@ -38,20 +38,20 @@
 {% endif %}
 
 {% if archived_apps %}
-<details style="margin-top:2rem;">
-  <summary style="cursor:pointer;color:var(--text-3);font-size:.65rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;margin-bottom:.75rem;outline:none;">
+<details class="mt-8">
+  <summary class="archive-summary">
     Archived ({{ archived_apps | length }})
   </summary>
-  <table class="table" style="margin-top:.5rem;">
+  <table class="table mt-2">
     <thead>
       <tr><th>App</th><th></th></tr>
     </thead>
     <tbody>
       {% for app in archived_apps %}
       <tr>
-        <td style="color:var(--text-2);">{{ app.app }}</td>
-        <td style="text-align:right;">
-          <div style="display:flex;gap:.3rem;justify-content:flex-end;">
+        <td class="text-secondary">{{ app.app }}</td>
+        <td class="text-right">
+          <div class="btn-group justify-end">
             <button class="btn btn-sm" data-action="restore" data-app="{{ app.app | e }}">Restore</button>
             <button class="btn btn-sm btn-danger" data-action="delete-permanent" data-app="{{ app.app | e }}">Delete</button>
           </div>
@@ -63,7 +63,7 @@
 </details>
 {% endif %}
 
-<div id="status-msg" style="display:none;" class="status-msg"></div>
+<div id="status-msg" class="status-msg hidden"></div>
 
 <script>
 document.addEventListener('click', function(e) {

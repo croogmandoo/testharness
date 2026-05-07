@@ -4,8 +4,8 @@
   <a href="/users">Users</a> / {% if mode == "create" %}New User{% else %}Edit {{ user.username }}{% endif %}
 </div>
 
-<div style="max-width:480px;">
-  <h1 style="margin-bottom:1.25rem;">{% if mode == "create" %}New User{% else %}Edit User{% endif %}</h1>
+<div class="max-w-md">
+  <h1 class="mb-5">{% if mode == "create" %}New User{% else %}Edit User{% endif %}</h1>
 
   {% if error %}
   <div class="form-error">{{ error }}</div>
@@ -53,14 +53,14 @@
     </div>
     {% endif %}
 
-    <div class="field" style="margin-bottom:1.5rem;">
+    <div class="field mb-6">
       <label class="label">
-        {% if mode == "create" %}Password{% else %}New password <span style="color:var(--text-3);font-weight:400;">(leave blank to keep)</span>{% endif %}
+        {% if mode == "create" %}Password{% else %}New password <span class="text-muted font-normal">(leave blank to keep)</span>{% endif %}
       </label>
       <input class="input" name="password" type="password" {% if mode == "create" %}required{% endif %}>
     </div>
 
-    <div style="display:flex;gap:.5rem;">
+    <div class="form-actions">
       <button type="submit" class="btn btn-primary">
         {% if mode == "create" %}Create User{% else %}Save Changes{% endif %}
       </button>

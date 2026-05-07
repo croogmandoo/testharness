@@ -55,7 +55,7 @@ def test_status_page_shows_passing_when_all_tests_pass(db, tmp_path):
     with _client(db, apps_dir) as c:
         body = c.get("/status").content
     assert b"All systems normal" in body
-    assert b"status-dot passing" in body
+    assert b"beacon-pass" in body
 
 
 def test_status_page_shows_failing_when_any_test_fails(db, tmp_path):
@@ -73,7 +73,7 @@ def test_status_page_shows_failing_when_any_test_fails(db, tmp_path):
     with _client(db, apps_dir) as c:
         body = c.get("/status").content
     assert b"Issues detected" in body
-    assert b"status-dot failing" in body
+    assert b"beacon-fail" in body
 
 
 def test_status_page_does_not_leak_error_messages(db, tmp_path):

@@ -2,8 +2,8 @@
 {% block content %}
 <div class="page-header">
   <h1>Status</h1>
-  <div style="display:flex;gap:.5rem;align-items:center;">
-    <input type="text" class="search" style="width:200px;margin:0;"
+  <div class="flex gap-2 items-center">
+    <input type="text" class="search mb-0 dashboard-filter"
            placeholder="filter…" oninput="filterTiles(this.value)">
     <button class="btn btn-primary" onclick="runAll()">Run All</button>
   </div>
@@ -55,8 +55,8 @@
     </div>
   </div>
   {% else %}
-  <div class="app-tile" style="grid-column:1/-1;">
-    <p class="empty">No apps configured — add YAML files to the apps/ directory.</p>
+  <div class="empty" style="grid-column:1/-1;">
+    No apps configured — add YAML files to the apps/ directory.
   </div>
   {% endfor %}
 </div>

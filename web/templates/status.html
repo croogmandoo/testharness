@@ -6,79 +6,60 @@
   <title>Status</title>
   <link rel="stylesheet" href="/static/style.css">
   <meta http-equiv="refresh" content="60">
-  <style>
-    .status-page { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
-    .status-env  { margin-bottom: 2rem; }
-    .status-env-head {
-      display: flex; align-items: baseline; gap: .75rem;
-      border-bottom: 1px solid var(--border, #333);
-      padding-bottom: .5rem; margin-bottom: .75rem;
-    }
-    .status-env-head h2 { margin: 0; font-size: 1.25rem; }
-    .status-grid {
-      display: grid; gap: .5rem;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    }
-    .status-card {
-      display: flex; align-items: center; gap: .75rem;
-      padding: .75rem 1rem; border-radius: 6px;
-      border: 1px solid var(--border, #333);
-    }
-    .status-dot {
-      width: 12px; height: 12px; border-radius: 50%;
-      flex-shrink: 0;
-    }
-    .status-dot.passing { background: #2bb673; }
-    .status-dot.failing { background: #e44; }
-    .status-dot.unknown { background: #888; }
-    .status-app { font-weight: 600; }
-    .status-meta { font-size: .85rem; color: var(--text-2, #999); }
-    .status-overall { font-size: .9rem; color: var(--text-2, #999); }
-    .status-overall.passing { color: #2bb673; }
-    .status-overall.failing { color: #e44; }
-    .status-foot {
-      margin-top: 2rem; font-size: .8rem; color: var(--text-2, #999);
-      text-align: center;
-    }
-  </style>
+  <script>
+    (function(){
+      var t = localStorage.getItem('theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
 </head>
 <body>
   <main class="status-page">
-    <h1>Status</h1>
+    <header class="status-page-head">
+      <span class="auth-wordmark">Harness Status</span>
+    </header>
+
     {% if not by_env %}
-      <p>No environments configured.</p>
+      <p class="text-muted">No environments configured.</p>
     {% endif %}
+
     {% for env in by_env %}
-      <section class="status-env">
-        <div class="status-env-head">
+      <section class="mb-6">
+        <div class="flex items-baseline justify-between mb-3 status-env-head">
           <h2>{{ env.label }}</h2>
-          <span class="status-overall {{ env.overall }}">
+          <span class="status-overall status-overall--{{ env.overall }}">
             {% if env.overall == "passing" %}All systems normal
             {% elif env.overall == "failing" %}Issues detected
             {% else %}No data{% endif %}
           </span>
         </div>
         {% if env.rows %}
-        <div class="status-grid">
+        <div class="app-grid">
           {% for row in env.rows %}
-          <div class="status-card">
-            <span class="status-dot {{ row.overall }}"></span>
-            <div>
-              <div class="status-app">{{ row.app }}</div>
-              <div class="status-meta">
-                {{ row.passing }}/{{ row.total }} passing
-                {% if row.failing %} · {{ row.failing }} failing{% endif %}
-              </div>
+          <div class="app-tile">
+            <div class="app-tile-header">
+              <span class="beacon
+                {%- if row.overall == 'passing' %} beacon-pass
+                {%- elif row.overall == 'failing' %} beacon-fail
+                {%- else %} beacon-unknown{% endif %}"></span>
+              <span class="app-tile-name">{{ row.app }}</span>
+            </div>
+            <div class="app-tile-meta">
+              <span class="app-tile-score">{{ row.passing }}/{{ row.total }} passing</span>
+              {% if row.failing %}
+              <span class="text-fail">{{ row.failing }} failing</span>
+              {% endif %}
             </div>
           </div>
           {% endfor %}
         </div>
         {% else %}
-          <p class="status-meta">No apps in this environment.</p>
+          <p class="text-muted text-sm">No apps in this environment.</p>
         {% endif %}
       </section>
     {% endfor %}
-    <p class="status-foot">Auto-refreshes every 60 seconds.</p>
+
+    <footer class="status-foot">Auto-refreshes every 60 seconds.</footer>
   </main>
 </body>
 </html>

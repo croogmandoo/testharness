@@ -5,12 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Access Denied — Harness</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script>
+    (function(){
+      var t = localStorage.getItem('theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
 </head>
 <body>
 <div class="error-page">
   <div class="error-code">403</div>
   <div class="error-msg">You don't have permission to access this page.</div>
-  <a href="/" class="btn btn-primary" style="margin-top:.5rem;">Go to dashboard</a>
+  <a href="/" class="btn btn-primary mt-2">Go to dashboard</a>
 </div>
 </body>
 </html>

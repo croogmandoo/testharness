@@ -21,10 +21,10 @@
 {% endif %}
 
 <div class="run-meta">
-  <span>Run <strong>{{ selected_run.id[:8] }}</strong></span>
+  <span>Run <strong class="font-mono">{{ selected_run.id[:8] }}</strong></span>
   <span>Status <strong>{{ selected_run.status }}</strong></span>
-  <span>{{ selected_run.started_at[:16].replace('T',' ') if selected_run.started_at else '—' }}</span>
-  <div style="margin-left:auto;display:flex;gap:.35rem;">
+  <span class="font-mono">{{ selected_run.started_at[:16].replace('T',' ') if selected_run.started_at else '—' }}</span>
+  <div class="ml-auto btn-group">
     <button class="btn btn-sm" onclick="triggerRun()">Re-run</button>
     <a href="/api/runs/{{ selected_run.id }}/export?format=pdf" class="btn btn-sm">PDF</a>
     <a href="/api/runs/{{ selected_run.id }}/export?format=docx" class="btn btn-sm">DOCX</a>
@@ -37,7 +37,7 @@
 <div class="progress-wrap" id="progress-bar">
   <div class="progress-info">
     <span id="progress-text">{{ done }} / {{ total }} tests complete</span>
-    <span id="elapsed-timer" style="color:var(--text-3);">00:00</span>
+    <span id="elapsed-timer" class="text-muted font-mono">00:00</span>
   </div>
   <div class="progress-bar">
     <div class="progress-fill" id="progress-fill"
@@ -73,8 +73,8 @@
       <span class="step-duration">{{ step.duration_ms }}ms</span>
       {% if step.error %}<span class="step-error">{{ step.error }}</span>{% endif %}
       {% if step.screenshot %}
-      <div style="margin-top:.4rem;">
-        <img src="/screenshots/{{ step.screenshot }}" class="screenshot" style="max-width:320px;">
+      <div class="mt-2">
+        <img src="/screenshots/{{ step.screenshot }}" class="screenshot screenshot-thumb">
       </div>
       {% endif %}
     </div>
@@ -105,15 +105,15 @@
 <div class="test-card test-card--pending">
   <div class="test-card-header">
     <span class="test-name">{{ name }}</span>
-    <span class="test-status" style="color:var(--text-3);">⏳ Pending</span>
+    <span class="test-status text-muted">⏳ Pending</span>
   </div>
 </div>
 {% endfor %}
 
 {% else %}
-<p style="color:var(--text-2);font-size:.8rem;">
+<p class="text-secondary text-sm">
   No runs yet for <strong>{{ app }}</strong> ({{ environment }}).
-  <button class="btn btn-sm" onclick="triggerRun()" style="margin-left:.5rem;">Run now</button>
+  <button class="btn btn-sm ml-2" onclick="triggerRun()">Run now</button>
 </p>
 {% endif %}
 
