@@ -1,43 +1,136 @@
 # Web Testing Harness
 
-A Python-based web and API testing harness with a browser dashboard, Teams/email alerts, and Windows Task Scheduler integration.
+A self-hosted synthetic-monitoring tool: define tests in YAML, run them on
+demand or on a schedule, get alerts on failures, and view results in a
+modern web dashboard with sparklines and a public status page.
 
-Define tests in YAML, run them on demand or on a schedule, and view results in a web dashboard.
+**At a glance**
+
+- 🧪 Three test types: HTTP availability, API (JSON/REST), browser (Playwright)
+- 🔗 Variable extraction & chaining — log in, capture token, exercise authenticated endpoints
+- ⏱ In-process cron scheduling (no Windows Task Scheduler dependency)
+- 🚨 Alerts to Teams / Slack / Discord / email / generic webhook
+- 🛌 Maintenance windows + stale-run detection
+- 📊 Prometheus `/metrics` endpoint + public `/status` page
+- 🛡 Auth: local accounts + LDAP/AD + GitHub OAuth + API keys + 4-role RBAC
+- 🔐 Encrypted secrets store + custom CA certificate management
+- 📜 Audit log of every admin action
+- 🎨 Cyberpunk-tinted dark UI (with light theme), Inter / JetBrains Mono
 
 ---
 
 ## Prerequisites
 
-- Python 3.11 or later
-- pip
+- Python 3.11+ (or Docker)
 
----
+## Quick start (Docker — recommended)
 
-## Installation
+```bash
+git clone https://github.com/croogmandoo/testharness && cd testharness
+cp .env.example .env                # then edit values you actually use
+docker compose up -d
+```
 
-### 1. Create and activate a virtual environment
+Open <http://localhost:9552>.  First load redirects to `/setup` so you can
+create the admin account.
+
+## Quick start (native Python)
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate
-```
-
-### 2. Install dependencies
-
-```bash
-pip install -r requirements.txt
+source .venv/bin/activate           # Windows: .venv\Scripts\activate
+pip install -r requirements.lock    # reproducible — falls back to requirements.txt
 python -m playwright install chromium
+cp .env.example .env
+python -m web.main                  # serves on :9552
 ```
 
-### 3. Copy the example env file
+---
 
-```bash
-copy .env.example .env
+## Defining apps
+
+Drop YAML files into the `apps/` directory — one per application — or use
+the form-based editor at `/apps/new` once the dashboard is running.
+
+### API test
+
+```yaml
+# apps/my-api.yaml
+app: "My API"
+url: "https://api.example.com"
+tags: [critical]
+environments:
+  staging:    "https://staging-api.example.com"
+  production: "https://api.example.com"
+schedule: "*/15 * * * *"            # optional cron — runs every 15 min
+tests:
+  - name: "Health check"
+    type: api
+    endpoint: /health
+    expect_status: 200
+    max_duration_ms: 500            # SLO — fails the test if too slow
+
+  - name: "Returns JSON"
+    type: api
+    endpoint: /status
+    expect_json:
+      status: "ok"
 ```
 
-Edit `.env` and fill in your values. At minimum, set `TEAMS_WEBHOOK_URL` if you want alert notifications. If you don't use Teams, comment it out in `config.yaml` under `alerts:`.
+### Multi-step API flow (capture token, reuse it)
 
-### 4. Review `config.yaml`
+```yaml
+sequential: true                    # forces ordered execution (auto-on with extract:)
+tests:
+  - name: Login
+    type: api
+    endpoint: /auth/login
+    method: POST
+    json: { username: alice, password: $ALICE_PW }
+    extract:
+      AUTH_TOKEN: $.token           # JSONPath dot-walk
+      USER_ID:    $.user.id
+
+  - name: Fetch profile
+    type: api
+    endpoint: /users/$USER_ID
+    headers: { Authorization: "Bearer $AUTH_TOKEN" }
+    expect_json: { username: alice }
+```
+
+### Browser test
+
+```yaml
+- name: "Login flow"
+  type: browser
+  steps:
+    - navigate: /login
+    - fill:    { field: "#username", value: $APP_USERNAME }
+    - fill:    { field: "#password", value: $APP_PASSWORD }
+    - press_key: { field: "#password", key: "Enter" }
+    - assert_url_contains: /dashboard
+    - hover:    ".profile-menu"
+    - select_option: { field: "select#lang", label: "English" }
+    - wait_for_function: "() => window.dataLoaded === true"
+    - screenshot: null              # captured on assertion failure too
+```
+
+### Availability check (HTTP, no parsing)
+
+```yaml
+- name: "Site is up"
+  type: availability
+  expect_status: 200
+```
+
+See **[docs/guides/writing-tests.md](docs/guides/writing-tests.md)** for the
+full step reference, retry/SLO/extract semantics, and Python-defined tests.
+
+---
+
+## Configuration
+
+Edit `config.yaml`:
 
 ```yaml
 default_environment: production
@@ -45,242 +138,237 @@ default_environment: production
 environments:
   staging:
     label: "Staging"
+    schedule: "0 */1 * * *"                  # hourly — env-default cron
   production:
     label: "Production"
+    schedule: "*/15 * * * *"                 # every 15 min
+
+retention_days: 90                           # daily 03:00 UTC prune of old runs
+
+scheduling:
+  enabled: true                              # master switch (default true)
+
+metrics:
+  enabled: true
+  bearer_token: "$METRICS_TOKEN"             # optional — restrict /metrics
+
+status_page:
+  enabled: true                              # public /status
 
 alerts:
+  stale_threshold_minutes: 1440              # alert if no run in 24h
+  stale_realert_hours: 24
+
   teams:
-    webhook_url: "$TEAMS_WEBHOOK_URL"   # reads from .env
+    webhook_url: "$TEAMS_WEBHOOK_URL"
+  slack:
+    webhook_url: "$SLACK_WEBHOOK_URL"
+  discord:
+    webhook_url: "$DISCORD_WEBHOOK_URL"
+  email:
+    smtp_host: "mail.example.com"
+    smtp_port: 587
+    from:     "harness@example.com"
+    to:       ["ops@example.com"]
+    username: "$SMTP_USERNAME"
+    password: "$SMTP_PASSWORD"
+  webhook:
+    url: "$GENERIC_WEBHOOK_URL"              # generic JSON POST per run
+
+  maintenance_windows:                       # alerts suppressed during these
+    - name: "Weekly maintenance"
+      cron: "0 2 * * 6"                      # standard cron — Sat 02:00 UTC
+      duration_minutes: 120
+    - name: "Holiday freeze"
+      start: "2026-12-23T00:00:00Z"
+      end:   "2026-12-27T23:59:59Z"
 
 browser:
   headless: true
   timeout_ms: 30000
+  screenshot_diff_threshold: 0.05            # visual regression threshold
 ```
 
-Add or remove environments as needed. Each environment gets a button in the dashboard nav.
+`$VAR` references resolve from `.env` and `os.environ`.  `$VAR#staging`
+lets you provide environment-specific values; the resolver also accepts
+**inline** substitution (`"Bearer $AUTH_TOKEN"`).
 
 ---
 
-## Define Your Apps
+## Endpoints
 
-Create YAML files in the `apps/` directory — one file per application.
+| Path            | Auth        | Purpose |
+|-----------------|-------------|---------|
+| `/`             | session     | Dashboard — app tiles with sparklines, tag filters |
+| `/app/<a>/<e>`  | session     | App detail — run history, step logs, screenshots |
+| `/apps`, `/apps/new` | admin/runner | YAML-free app editor |
+| `/secrets`      | admin/runner | Manage encrypted secrets |
+| `/api-keys`     | session     | Generate API keys for CI |
+| `/users`        | admin       | User CRUD + role/active toggles |
+| `/admin/audit`  | admin       | Audit log + DB backup download |
+| `/admin/ldap`, `/admin/ca-certs` | admin | Auth provider + CA bundle config |
+| `/status`       | **public**  | Aggregate health page (auto-refresh) |
+| `/metrics`      | **public**\* | Prometheus exposition format |
+| `/docs`, `/redoc` | **public** | OpenAPI / Swagger UI |
+| `/health`       | **public**  | Healthcheck (used by Docker `HEALTHCHECK`) |
 
-### API test
-
-```yaml
-# apps/my-api.yaml
-app: "My API"
-url: "https://api.mycompany.com"
-environments:
-  staging: "https://staging-api.mycompany.com"
-  production: "https://api.mycompany.com"
-tests:
-  - name: "Health check"
-    type: api
-    endpoint: /health
-    method: GET
-    expect_status: 200
-
-  - name: "Returns JSON"
-    type: api
-    endpoint: /status
-    method: GET
-    expect_status: 200
-    expect_json:
-      status: "ok"
-```
-
-### Browser test
-
-```yaml
-# apps/my-site.yaml
-app: "My Site"
-url: "https://mycompany.com"
-tests:
-  - name: "Homepage loads"
-    type: browser
-    steps:
-      - navigate: /
-      - assert_text: "Welcome"
-
-  - name: "Login flow"
-    type: browser
-    steps:
-      - navigate: /login
-      - fill:
-          field: "#username"
-          value: "$APP_USERNAME"      # reads from .env
-      - fill:
-          field: "#password"
-          value: "$APP_PASSWORD"
-      - click: "button[type=submit]"
-      - assert_url_contains: /dashboard
-```
-
-### Availability check (no browser, no API — just HTTP status)
-
-```yaml
-tests:
-  - name: "Site is up"
-    type: availability
-    expect_status: 200
-```
-
-### Supported browser step actions
-
-| Action | Example |
-|--------|---------|
-| Navigate to URL | `navigate: /login` |
-| Fill input | `fill: {field: "#email", value: "foo@bar.com"}` |
-| Click element | `click: "button.submit"` |
-| Assert page text | `assert_text: "Dashboard"` |
-| Assert URL contains | `assert_url_contains: /dashboard` |
-| Wait for selector | `wait_for_selector: ".loaded"` |
+\* `/metrics` accepts an optional `Authorization: Bearer <token>` if
+`metrics.bearer_token` is configured.
 
 ---
 
-## Start the Dashboard
+## REST API
+
+Trigger a run for one app:
 
 ```bash
-.venv\Scripts\activate
-python -m web.main
-```
-
-Open **http://localhost:8000** in a browser.
-
-- The dashboard shows all apps and their current pass/fail status.
-- Click **Run** next to any app to trigger a test run immediately.
-- Click an app name to see the detail page: step logs, error messages, screenshots on failure, and recent run history.
-- Use the environment buttons (Staging / Production) to switch views.
-
----
-
-## Run Tests via the API
-
-Trigger a run for a specific app:
-
-```bash
-curl -X POST http://localhost:8000/api/runs \
+curl -X POST http://localhost:9552/api/runs \
   -H "Content-Type: application/json" \
   -d '{"app": "My API", "environment": "production"}'
 ```
 
-Trigger all apps:
+Trigger every app with a tag (for "run all critical"-style operations):
 
 ```bash
-curl -X POST http://localhost:8000/api/runs \
+curl -X POST http://localhost:9552/api/runs \
+  -H "Content-Type: application/json" \
+  -d '{"tag": "critical", "environment": "production"}'
+```
+
+Trigger every app:
+
+```bash
+curl -X POST http://localhost:9552/api/runs \
   -H "Content-Type: application/json" \
   -d '{"environment": "production"}'
 ```
 
-Check run status:
+Authenticate either via session cookie or with an API key:
 
 ```bash
-curl http://localhost:8000/api/runs/<run_id>
+curl http://localhost:9552/api/runs/<run_id> \
+  -H "Authorization: Bearer hth_<your-key>"
 ```
 
-List app summary:
+See **[docs/reference/api.md](docs/reference/api.md)** for full reference,
+**[docs/guides/api-quickstart.md](docs/guides/api-quickstart.md)** for
+end-to-end examples.
+
+---
+
+## Operations
+
+### Scheduling
+
+Use `schedule:` (standard 5-field cron, `0=Sunday` for day-of-week) at
+either the **environment** or **per-app** level — the per-app override
+wins.  Schedules run inside the harness process via APScheduler; no
+external cron is required.
+
+### Metrics & status
+
+Point Prometheus at `http://harness:9552/metrics`.  The exposition
+includes:
+
+- `harness_test_status{app,environment,test}` (1 = passing, 0 = failing, -1 = unknown)
+- `harness_test_last_duration_seconds{...}`
+- `harness_app_last_run_timestamp_seconds{app,environment}`
+- `harness_runs_total{app,environment,status}` (counter)
+
+The public `/status` page is unauthenticated, auto-refreshes every 60s,
+and exposes only aggregate up/down counts — never error messages.
+
+### DB backup
+
+Admins can take a consistent online snapshot via `GET /admin/backup` (or
+the button on `/admin/audit`).  The endpoint streams a SQLite DB file
+that's safe to copy while the harness is still running.
+
+### Retention
+
+`retention_days: 90` enables a daily 03:00 UTC job that deletes runs and
+their test results older than 90 days, plus orphaned screenshot files.
+Active runs are preserved regardless of age.
+
+### Maintenance windows
+
+Define recurring (cron) or fixed (start/end ISO) windows in
+`alerts.maintenance_windows`.  Run records, dashboards, audit log, and
+metrics still see what happens during the window — only the alert
+**dispatch** is suppressed.
+
+### Stale-run alerts
+
+If an app's most-recent completed run is older than
+`alerts.stale_threshold_minutes` (default 1440 = 24h), the harness
+dispatches a STALE alert through your configured channels.  Re-alerts
+honor `alerts.stale_realert_hours` (default 24h) per app/env to avoid
+hourly noise; a fresh run clears the dedup automatically.
+
+See **[docs/guides/alerting.md](docs/guides/alerting.md)** for the full
+alerting story.
+
+---
+
+## Project structure
+
+```
+testharness/
+├── apps/                     ← your app YAML files (rw — UI writes here)
+├── harness/                  ← core engine
+│   ├── api.py                ← API test runner (extract: lives here)
+│   ├── auto_scheduler.py     ← APScheduler integration + cron translator
+│   ├── browser.py            ← Playwright steps (select_option, hover, …)
+│   ├── db.py                 ← SQLite layer
+│   ├── maintenance.py        ← maintenance-window predicate
+│   ├── runner.py             ← orchestrates a single run
+│   ├── retention.py          ← old-run pruning
+│   ├── staleness.py          ← stale-run detection
+│   └── alerts.py             ← Teams / Slack / Discord / email / webhook
+├── web/                      ← FastAPI app
+│   ├── main.py               ← create_app + lifespan + middleware
+│   ├── routes/               ← dashboard / api / admin / etc.
+│   ├── templates/            ← Jinja2 HTML
+│   └── static/style.css      ← design system (Inter + JetBrains Mono)
+├── tests/                    ← pytest (377 tests)
+├── data/                     ← SQLite DB + screenshots (gitignored)
+├── config.yaml               ← environments + alerts + scheduling
+├── docker-compose.yml
+├── Dockerfile                ← multi-stage, runs as uid 10001
+└── .env                      ← credentials (gitignored, never commit)
+```
+
+---
+
+## Running the test suite
 
 ```bash
-curl http://localhost:8000/api/apps?environment=production
+pytest                            # 377 tests, ~30 seconds
 ```
+
+Pytest defaults: see `pytest.ini`.  Browser-engine tests use mocks (no
+real Playwright launch); the screenshot-diff test uses a tiny generated
+PNG.
 
 ---
 
-## Schedule Automatic Runs (Windows Task Scheduler)
+## Documentation
 
-Generate a Task Scheduler XML file:
-
-```python
-from harness.scheduler import print_setup_instructions
-print_setup_instructions("http://localhost:8000", "production", interval_minutes=60)
-```
-
-This writes `harness-task-production.xml` and prints the install command:
-
-```
-schtasks /create /xml harness-task-production.xml /tn Harness-production
-```
-
-Run that command in an elevated terminal to register the scheduled task. It will call `POST /api/runs` every 60 minutes.
+- **[Writing tests](docs/guides/writing-tests.md)** — full step reference,
+  variable chaining, SLO, retry, sequential mode
+- **[Alerting](docs/guides/alerting.md)** — channels, maintenance windows,
+  stale-run detection, generic webhook payload
+- **[API quickstart](docs/guides/api-quickstart.md)** — common curl recipes
+- **[Deployment](docs/guides/deployment.md)** — Docker, native, reverse
+  proxy, Prometheus integration, retention, hardening
+- **[Troubleshooting](docs/guides/troubleshooting.md)**
+- **[API reference](docs/reference/api.md)**
+- **[Auth reference](docs/reference/auth.md)** — RBAC roles, audit log,
+  LDAP setup, API keys, OAuth
+- **[Architecture decisions](docs/architecture/decisions.md)**
 
 ---
 
-## Python-Defined Tests (Advanced)
+## License
 
-For tests that need custom logic, subclass `AppTest` in a `.py` file in `apps/`:
-
-```python
-# apps/my_app.py
-from harness import AppTest
-
-class MyApp(AppTest):
-    name = "My App"
-    environments = {
-        "staging": "https://staging.mycompany.com",
-        "production": "https://mycompany.com",
-    }
-
-    async def test_login(self, page, environment):
-        await page.goto(self.resolve_base_url(environment) + "/login")
-        await page.fill("#user", self.env("APP_USERNAME"))
-        await page.fill("#pass", self.env("APP_PASSWORD"))
-        await page.click("button[type=submit]")
-        assert "/dashboard" in page.url
-```
-
-`self.env("VAR")` reads from environment variables (set in `.env`). `self.resolve_base_url(environment)` returns the correct base URL for the given environment.
-
----
-
-## Alerts
-
-When a test transitions from passing → failing, a Teams message is sent. When it recovers, a resolve notification is sent. Configure in `config.yaml`:
-
-**Teams:**
-```yaml
-alerts:
-  teams:
-    webhook_url: "$TEAMS_WEBHOOK_URL"
-```
-
-**Email (SMTP):**
-```yaml
-alerts:
-  email:
-    smtp_host: "mail.company.com"
-    smtp_port: 587
-    from: "harness@company.com"
-    to: ["ops-team@company.com"]
-    username: "$SMTP_USERNAME"
-    password: "$SMTP_PASSWORD"
-```
-
----
-
-## Project Structure
-
-```
-webtestingharness/
-├── apps/               ← your app YAML files go here
-├── harness/            ← core engine (loader, runner, browser, api, alerts)
-├── web/                ← FastAPI dashboard and REST API
-├── tests/              ← test suite (run with pytest)
-├── data/               ← SQLite database + screenshots (gitignored)
-├── config.yaml         ← environments and alert config
-└── .env                ← credentials (gitignored, never commit)
-```
-
----
-
-## Running the Test Suite
-
-```bash
-pytest tests/ --ignore=tests/test_browser_engine.py
-```
-
-To include browser engine tests (requires Playwright):
-
-```bash
-pytest tests/
-```
+See `LICENSE`.

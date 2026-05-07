@@ -160,3 +160,48 @@ Relevant keys in `config.yaml`:
 - `passlib` is **broken** with bcrypt 5.x — use `import bcrypt` directly everywhere.
 - Session revocation: set `users.is_active = 0` (no sessions table; checked on every request).
 - LDAP users are upserted into the local `users` table on every successful login (unless `role_override = 1`).
+
+---
+
+## Audit Log
+
+Every privileged mutation is recorded in the `audit_log` table.  Admins
+can review entries at `/admin/audit` (filterable by user, action, limit).
+
+### Captured actions
+
+| Action | Source | Captured detail |
+|---|---|---|
+| `user.create` | `POST /users/new` | `role=<role>` |
+| `user.update` | `POST /users/{id}/edit` | Changed fields, e.g. `role: viewer -> admin; password reset` |
+| `user.delete` | `POST /users/{id}/delete` | — |
+| `secret.upsert` | `POST /secrets` | — |
+| `secret.delete` | `POST /secrets/{name}/delete` | — |
+| `ca_cert.add` | `POST /admin/ca-certs` | — |
+| `ca_cert.delete` | `POST /admin/ca-certs/{id}/delete` | — |
+| `api_key.create` | `POST /api-keys` | `prefix=<key_prefix>` |
+| `api_key.revoke` | `POST /api-keys/{id}/revoke` | — |
+| `db.backup` | `GET /admin/backup` | Temp filename |
+
+### Schema
+
+```sql
+CREATE TABLE audit_log (
+    id          TEXT PRIMARY KEY,
+    timestamp   TEXT NOT NULL,        -- ISO 8601 UTC
+    user_id     TEXT,                 -- nullable for system events
+    username    TEXT,                 -- denormalized snapshot
+    action      TEXT NOT NULL,
+    target      TEXT,                 -- what was acted on
+    details     TEXT                  -- free-form context
+);
+CREATE INDEX idx_audit_log_timestamp ON audit_log(timestamp DESC);
+CREATE INDEX idx_audit_log_user      ON audit_log(user_id, timestamp DESC);
+```
+
+### Failure semantics
+
+`Database.log_audit()` swallows DB errors silently.  An audit-log write
+failure must NEVER block the action it's auditing — e.g. you should
+still be able to delete a malicious user account even if the audit
+table is corrupt.  Errors do show up in the harness logs.

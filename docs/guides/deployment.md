@@ -225,4 +225,126 @@ The container may still be starting. Browser tests start Playwright on the first
 All required Chromium system dependencies are installed in the `Dockerfile`. If you add custom Playwright flags, make sure `headless: true` is set in `config.yaml` — a display server is not available inside the container.
 
 **Screenshots not saving:**
-Ensure `./data` is writable by the process running inside the container. The container runs as root by default; this is rarely an issue with the default setup.
+Ensure `./data` is writable by the process running inside the container.
+The container runs as **uid 10001 (harness user)** for security, so the
+host directory must be writable by that uid (or you can override with
+`user:` in compose).
+
+**`apps/` mounted read-only causes 500 on save:**
+The form-based app editor at `/apps/new` writes YAML files into the
+`apps/` directory.  Make sure the bind-mount is **rw** (no `:ro` suffix).
+
+---
+
+## Scheduling, Retention, Metrics
+
+The harness runs an in-process APScheduler so no external cron is needed.
+
+### In-process cron
+
+```yaml
+# config.yaml
+environments:
+  production:
+    schedule: "*/15 * * * *"          # all apps in this env every 15 min
+```
+
+Per-app override (in any `apps/*.yaml`):
+
+```yaml
+schedule: "0 */6 * * *"               # this app every 6 hours
+```
+
+Day-of-week follows **standard cron** (`0 = Sunday`).  The harness
+internally translates to APScheduler's `0 = Monday` convention.
+
+### Run history retention
+
+```yaml
+retention_days: 90                    # daily 03:00 UTC prune; null = keep forever
+```
+
+The job deletes runs whose `finished_at` is older than the cutoff, plus
+their orphaned screenshot files.  In-flight runs are preserved
+regardless of age.
+
+### Prometheus integration
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: harness
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['harness.internal:9552']
+    bearer_token_file: /etc/prometheus/harness-token   # if metrics.bearer_token set
+```
+
+Useful queries:
+
+```promql
+# Failing tests right now
+sum by (app, environment) (harness_test_status == 0)
+
+# Tests that haven't run in over an hour
+time() - harness_app_last_run_timestamp_seconds > 3600
+
+# Run failure rate, 1h window
+rate(harness_runs_total{status="fail"}[1h])
+```
+
+### Public status page
+
+`/status` is unauthenticated and shows aggregate counts (no error
+messages).  Disable in `config.yaml` with `status_page.enabled: false`.
+
+---
+
+## Maintenance windows & stale alerts
+
+Suppress alerts during planned downtime:
+
+```yaml
+alerts:
+  maintenance_windows:
+    - name: "Weekly maintenance"
+      cron: "0 2 * * 6"               # Sat 02:00 UTC, standard cron
+      duration_minutes: 120
+    - name: "Holiday freeze"
+      start: "2026-12-23T00:00:00Z"
+      end:   "2026-12-27T23:59:59Z"
+
+  stale_threshold_minutes: 1440       # 24h — no run in this long -> alert
+  stale_realert_hours: 24             # don't re-page within this window
+  stale_check_enabled: true           # default true
+```
+
+See [`alerting.md`](alerting.md) for full details.
+
+---
+
+## Database backup
+
+Admins can take a consistent online snapshot at any time:
+
+```bash
+curl -fO -H "Cookie: session=$ADMIN_SESSION" \
+  http://localhost:9552/admin/backup
+# saves harness-20260507T184200Z.db
+```
+
+Or click **⤓ Download DB Backup** on the audit log page.  The backup
+uses SQLite's online `BACKUP` API, so the harness keeps serving requests
+during the snapshot.
+
+---
+
+## Container hardening notes
+
+- Runs as non-root **uid 10001 (harness)** — system-account UID range
+  preserved to prevent collisions with packaged Linux users
+- HEALTHCHECK probes `/health` every 30s
+- `.dockerignore` excludes tests, `.git`, `.claude/`, `.swarm/`, etc. —
+  the production image has no test code or developer tooling
+- Playwright browsers live at `/opt/playwright` (world-readable) so the
+  harness uid can launch Chromium without owning the install

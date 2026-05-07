@@ -791,3 +791,71 @@ AJAX endpoint. Tests LDAP connectivity and authentication using the current `con
 ```
 
 Note: this endpoint always returns HTTP 200; the `ok` field indicates success or failure. An `"error"` key is present on failure. If LDAP is not enabled in `config.yaml`, `ok` will be `false` with `error: "LDAP is not enabled in config."`.
+
+
+---
+
+## Public endpoints
+
+These do not require authentication.  See [`../guides/api-quickstart.md`](../guides/api-quickstart.md) §7 for usage.
+
+### `GET /health`
+
+Returns `{"status": "ok"}`.  Used by the Docker `HEALTHCHECK` and any
+external liveness prober.
+
+### `GET /status`
+
+HTML page rendering aggregate per-environment health counts.  Auto-
+refreshes every 60 seconds via meta-refresh.  No error messages, only
+counts — safe to share publicly.
+
+Disable: `status_page.enabled: false` in `config.yaml`.
+
+### `GET /metrics`
+
+Prometheus exposition format (`text/plain; version=0.0.4`).
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `harness_test_status` | gauge | `app, environment, test` | 1 = passing, 0 = failing, -1 = unknown |
+| `harness_test_last_duration_seconds` | gauge | `app, environment, test` | Wall time of the most recent run of the test |
+| `harness_app_last_run_timestamp_seconds` | gauge | `app, environment` | Unix epoch of last completed run |
+| `harness_runs_total` | counter | `app, environment, status` | Run count by lifecycle status |
+
+Optional `Authorization: Bearer <token>` enforced when `metrics.bearer_token` is configured.
+
+Disable: `metrics.enabled: false`.
+
+### `GET /docs`, `GET /redoc`, `GET /openapi.json`
+
+FastAPI's built-in OpenAPI 3 surface.  All authenticated endpoints in
+this reference are also documented automatically there.
+
+---
+
+## Admin
+
+These require `role: admin`.
+
+### `GET /admin/audit`
+
+HTML page listing audit-log entries, filterable by user / action / limit.
+
+Query params:
+- `user` — username substring filter
+- `action` — exact action match (e.g. `user.delete`, `secret.upsert`, `db.backup`)
+- `limit` — max rows (1–1000, default 200)
+
+### `GET /admin/backup`
+
+Streams a consistent online snapshot of the SQLite database as
+`application/octet-stream`.  Filename follows
+`harness-YYYYMMDDTHHMMSSZ.db`.  Audit-logged as `db.backup`.
+
+The backup uses SQLite's online `BACKUP` API, so the harness keeps
+serving requests during the snapshot — no downtime needed.
+
+```bash
+curl -fO -H "Authorization: Bearer hth_..." http://localhost:9552/admin/backup
+```

@@ -113,6 +113,11 @@ and key/value pairs inside a JSON response body.
 | `expect_status` | `200` | Expected HTTP status code |
 | `expect_json` | — | Key-value pairs that must match exactly in the JSON body |
 | `headers` | — | Map of custom HTTP headers; values support `$VAR_NAME` substitution |
+| `json` | — | Object — sent as the JSON request body (sets `Content-Type: application/json`) |
+| `body` | — | Raw string — sent as the request body when `json:` isn't appropriate |
+| `extract` | — | Map of `VAR_NAME: $.json.path` — pulls values from the response for use in subsequent tests (forces sequential execution) |
+| `max_duration_ms` | — | SLO ceiling — fails an otherwise-passing test that takes longer than this |
+| `retry` | `0` | Re-run the test on `fail`/`error` up to this many times before recording the result |
 
 **Examples:**
 
@@ -197,6 +202,78 @@ Header values support `$VAR_NAME` substitution, making it easy to inject secrets
 > **Note:** `expect_json` matches top-level keys only. Each key must equal the
 > expected value exactly (type-aware comparison). Missing or extra keys in the
 > response do not cause a failure — only mismatches on the keys you specify.
+
+#### JSON request bodies
+
+```yaml
+- name: "Create user"
+  type: api
+  method: POST
+  endpoint: /users
+  json: { username: alice, role: admin }    # auto-serializes + Content-Type
+  expect_status: 201
+```
+
+For non-JSON payloads, use `body:` with a raw string instead.
+
+#### Variable extraction & chaining
+
+Capture values from a response and reference them in later tests using
+`$VAR_NAME`.  The harness uses a JSONPath dot-walk (covers ~95% of real
+needs without a JSONPath dependency):
+
+```yaml
+sequential: true        # explicit; auto-on whenever any test uses extract:
+tests:
+  - name: Login
+    type: api
+    endpoint: /auth/login
+    method: POST
+    json: { username: alice, password: $ALICE_PW }
+    extract:
+      AUTH_TOKEN: $.token
+      USER_ID:    $.user.id
+      FIRST_ITEM: $.items.0.name      # array index walk
+
+  - name: Fetch profile
+    type: api
+    endpoint: /users/$USER_ID         # path interpolation
+    headers:
+      Authorization: "Bearer $AUTH_TOKEN"   # inline substitution
+    expect_json: { username: alice }
+```
+
+Notes:
+
+- **Sequential execution** is forced whenever any test in the app has
+  `extract:`.  Otherwise tests run in parallel via `asyncio.gather`.
+- Set `sequential: true` at app level to force ordered execution even
+  without extracts (useful for "create / verify / delete" flows).
+- Dot-walk supports objects (`$.user.id`) and array indices (`$.items.0`).
+- A missing path or non-matching field fails the test with a clear
+  "Extract failed: VAR_NAME (path '$.x')" message.
+- Subsequent tests use `$AUTH_TOKEN` either as a whole-string value
+  (`Authorization: $AUTH_TOKEN`) or **inline** within a larger string
+  (`Authorization: "Bearer $AUTH_TOKEN"`).  Both work.
+- Captured values are NOT persisted to the database, exposed via
+  `/api/runs/<id>`, or sent in webhooks — they exist only for chaining
+  within a single run.
+
+#### Per-test SLO threshold
+
+```yaml
+- name: "Search must respond in 500ms"
+  type: api
+  endpoint: /search?q=test
+  max_duration_ms: 500
+```
+
+A test that returns the expected status but exceeds the SLO is marked
+**fail** with `error_msg: "SLO violation: 612ms exceeds max_duration_ms=500"`.
+
+The SLO check runs *after* the retry budget — a flaky-but-fast test that
+eventually succeeds isn't penalized; only consistently-slow successes
+trip it.
 
 ---
 
@@ -557,6 +634,53 @@ See [Referencing Page Content](#assert_text--check-visible-text) for full exampl
 See [Referencing Page Content](#assert_url_contains--check-the-address-bar) for full examples.
 
 ---
+
+### `select_option` — pick from a `<select>` dropdown
+
+```yaml
+- select_option: { field: "select#country", value: "US" }
+- select_option: { field: "select#country", label: "United States" }
+- select_option: { field: "select#country", index: 0 }
+```
+
+Exactly one of `value`, `label`, or `index` is required.
+
+### `press_key` — keyboard input
+
+Either fire a key globally:
+
+```yaml
+- press_key: "Enter"
+- press_key: "Escape"
+```
+
+…or target a specific field (focuses it first):
+
+```yaml
+- press_key: { field: "#search", key: "Enter" }
+```
+
+Useful for forms that submit on Enter rather than via a button click.
+
+### `hover` — hover an element
+
+```yaml
+- hover: ".tooltip-target"
+```
+
+Triggers `:hover` styles and any JS-bound `mouseenter` handlers.  Pair
+with `wait_for_selector` to test menus / tooltips that appear on hover.
+
+### `wait_for_function` — wait for arbitrary JS to return truthy
+
+```yaml
+- wait_for_function: "() => window.dataLoaded === true"
+- wait_for_function: "() => document.querySelectorAll('.row').length > 10"
+```
+
+For SPAs that don't expose deterministic DOM signals — when neither
+`wait_for_selector` nor `wait_for_url` will do, drop into a small
+predicate evaluated in the page context.
 
 ### `screenshot` — capture the current page
 

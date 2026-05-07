@@ -88,7 +88,57 @@ Response when complete:
 
 Poll until `status` is `"complete"` or `"error"`. A run in progress returns `"running"`.
 
-## 6. Revoking a Key
+## 6. Bulk run by tag
+
+Trigger every app sharing a tag — useful for pipelines like "smoke-test
+all `critical` apps after a deploy":
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer hth_your_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{"tag": "critical", "environment": "production"}' \
+  http://localhost:9552/api/runs | jq .
+```
+
+Response:
+
+```json
+{
+  "run_id": "abc123",
+  "run_ids": ["abc123", "def456", "ghi789"],
+  "apps": ["Alpha", "Beta", "Gamma"]
+}
+```
+
+`tag:` and `app:` are mutually exclusive (sending both returns `400`).
+Returns `404` if no app matches the tag.
+
+## 7. Public endpoints (no auth)
+
+These work without an API key — meant for scrapers and stakeholders:
+
+| Path | Format | Use case |
+|---|---|---|
+| `/health` | JSON `{"status":"ok"}` | Liveness probe |
+| `/metrics` | Prometheus exposition | Scrape into Grafana / Alertmanager |
+| `/status` | HTML | Public status page; auto-refreshes every 60s |
+| `/docs` | Swagger UI | Interactive API exploration |
+| `/openapi.json` | OpenAPI 3 spec | Codegen, tooling |
+
+`/metrics` can be optionally token-gated:
+
+```yaml
+# config.yaml
+metrics:
+  bearer_token: "$METRICS_TOKEN"
+```
+
+```bash
+curl -H "Authorization: Bearer $METRICS_TOKEN" http://localhost:9552/metrics
+```
+
+## 8. Revoking a Key
 
 Go to **API Keys** in the UI and click **Revoke** next to the key. Revoked keys return `401` immediately.
 
