@@ -226,9 +226,60 @@ All required Chromium system dependencies are installed in the `Dockerfile`. If 
 
 **Screenshots not saving:**
 Ensure `./data` is writable by the process running inside the container.
-The container runs as **uid 10001 (harness user)** for security, so the
-host directory must be writable by that uid (or you can override with
-`user:` in compose).
+The container runs as **uid 10001 (harness user)** for security. See the
+[Permissions](#permissions) section below for the supported approaches.
+
+<a id="permissions"></a>
+
+### Permissions on bind-mounted volumes
+
+The container image runs the application as **uid 10001 (harness)**. When
+you bind-mount a host directory into `/app/data` or `/app/apps`, Docker
+preserves the host's ownership. If your host directory is owned by your
+regular user (typically uid 1000), the harness user can't write to it —
+you'll see `sqlite3.OperationalError: unable to open database file` on
+startup.
+
+The image's `entrypoint.sh` handles this automatically when the container
+starts as root (the default):
+
+1. Container boots as root
+2. Entrypoint chowns `/app/data`, `/app/data/screenshots`, and `/app/apps`
+   to uid 10001 (skipped if already correct, so warm restarts are fast)
+3. Entrypoint `gosu`-drops privileges to uid 10001 and exec's the app
+4. Application runs unprivileged for its entire lifetime
+
+If you override the container user with `user:` in compose, the entrypoint
+detects the non-root start, skips the chown, and exec's directly — you've
+taken responsibility for permissions:
+
+```yaml
+services:
+  harness:
+    image: ghcr.io/croogmandoo/testharness:latest
+    user: "1000:1000"          # match your host uid:gid
+    volumes:
+      - ./data:/app/data
+      - ./apps:/app/apps
+```
+
+**Manual fix on an older image** (before the entrypoint was added):
+
+```bash
+sudo chown -R 10001:10001 ./data ./apps
+docker restart harness
+```
+
+**Diagnostic check:**
+
+```bash
+docker inspect harness --format '{{range .Mounts}}{{.Source}} -> {{.Destination}} ({{.Mode}}){{println}}{{end}}'
+stat -c '%u:%g %n' ./data ./apps
+docker exec harness id
+```
+
+The three uids should match: host directory owner, container effective
+user, and the harness uid in the image (10001 by default).
 
 **`apps/` mounted read-only causes 500 on save:**
 The form-based app editor at `/apps/new` writes YAML files into the

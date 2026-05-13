@@ -265,6 +265,48 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     return app
 
 
+def _preflight() -> None:
+    """Verify writable runtime locations before SQLite or SecretsStore try
+    to use them. Produces an actionable error instead of a cryptic
+    ``sqlite3.OperationalError`` when bind-mounted volumes are mis-owned.
+
+    The Docker entrypoint (``entrypoint.sh``) normally fixes ownership
+    before the application starts, so this check is a defense-in-depth
+    backstop for non-Docker installs and operators who override the
+    entrypoint.
+    """
+    import sys
+    required = ("data", "data/screenshots")
+    for path in required:
+        try:
+            os.makedirs(path, exist_ok=True)
+            sentinel = os.path.join(path, ".harness-preflight")
+            with open(sentinel, "w") as f:
+                f.write("")
+            os.remove(sentinel)
+        except OSError as e:
+            uid = os.getuid() if hasattr(os, "getuid") else "?"
+            sys.stderr.write(
+                "\n"
+                f"[harness preflight] Cannot write to {os.path.abspath(path)} "
+                f"(running as uid {uid}): {e}\n"
+                "\n"
+                "This usually means a bind-mounted host directory is not\n"
+                "writable by the harness user (uid 10001). Fix with one of:\n"
+                "\n"
+                "  # Option A — chown the host directory to uid 10001\n"
+                f"  sudo chown -R 10001:10001 ./{path}\n"
+                "\n"
+                "  # Option B — run the container as your own host uid\n"
+                "  # in docker-compose.yml:\n"
+                "  #   user: \"$(id -u):$(id -g)\"\n"
+                "\n"
+                "See docs/guides/deployment.md#permissions for details.\n"
+                "\n"
+            )
+            sys.exit(1)
+
+
 def main():
     import sys
     import uvicorn
@@ -272,6 +314,7 @@ def main():
     from harness.config import load_config
 
     load_dotenv()
+    _preflight()
 
     # When run as `python -m web.main`, this module is __main__, not web.main.
     # Request handlers do `from web.main import get_db`, which imports a fresh

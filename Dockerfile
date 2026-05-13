@@ -1,6 +1,7 @@
 FROM python:3.11-slim-bookworm
 
-# System deps required by Playwright's Chromium
+# System deps required by Playwright's Chromium, plus `gosu` for the
+# entrypoint's privilege drop.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     ca-certificates \
@@ -26,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxtst6 \
     xdg-utils \
     curl \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root runtime user.  UID 10001 stays out of system-account range.
@@ -50,7 +52,16 @@ COPY --chown=harness:harness . .
 # Writable runtime dirs (data dir + screenshots) — must be owned by harness.
 RUN install -d -o harness -g harness /app/data /app/data/screenshots
 
-USER harness
+# entrypoint.sh runs as root, chowns bind-mounted volumes to the harness
+# uid (10001), then `gosu`-drops privileges before exec'ing CMD. If the
+# operator pins a uid via `user:` in compose, the script detects the
+# non-root start and skips the chown (operator owns permissions then).
+COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint.sh
+
+# NOTE: we intentionally do NOT set `USER harness` here. The entrypoint
+# starts as root so it can fix bind-mount ownership, then drops to
+# uid 10001 before exec'ing the app. The application itself never runs
+# as root.
 
 EXPOSE 9552
 
@@ -58,4 +69,5 @@ EXPOSE 9552
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail --silent --show-error http://127.0.0.1:9552/health || exit 1
 
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["python", "-m", "web.main"]
