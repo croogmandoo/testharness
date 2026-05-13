@@ -4,9 +4,11 @@ import secrets as _secrets
 import httpx
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+
+from web.csrf import csrf_token_for, verify_csrf
 
 router = APIRouter()
 templates = Jinja2Templates(
@@ -22,6 +24,7 @@ def _nav_ctx(request: Request) -> dict:
         "environments": config.get("environments", {}),
         "environment": None,
         "current_user": None,
+        "csrf_token": csrf_token_for(request),
     }
 
 
@@ -43,6 +46,7 @@ async def setup_post(
     password: str = Form(...),
     confirm: str = Form(...),
     display_name: str = Form(""),
+    _csrf=Depends(verify_csrf),
 ):
     from web.main import get_db, get_config
     import bcrypt as _bcrypt
@@ -112,6 +116,7 @@ async def login_post(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
+    _csrf=Depends(verify_csrf),
 ):
     from web.main import get_db, get_config
     from harness.auth_manager import verify_local_password, ldap_authenticate
@@ -165,7 +170,7 @@ async def login_post(
 
 
 @router.post("/auth/logout")
-async def logout(request: Request):
+async def logout(request: Request, _csrf=Depends(verify_csrf)):
     response = RedirectResponse("/auth/login", status_code=303)
     response.delete_cookie("session")
     return response

@@ -66,7 +66,9 @@ def _make_client(db, user):
     }
     app = create_app(db=db, config=config, apps_dir="apps")
     from web.auth import get_current_user
+    from web.csrf import verify_csrf
     app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[verify_csrf] = lambda: None
     return TestClient(app)
 
 

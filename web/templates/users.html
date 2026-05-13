@@ -33,6 +33,7 @@
         {% if u.id != current_user.id %}
         <form method="post" action="/users/{{ u.id }}/delete" class="inline-block ml-1"
               onsubmit="return confirm('Delete {{ u.username }}?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="btn btn-sm btn-danger">Delete</button>
         </form>
         {% endif %}

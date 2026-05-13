@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Form, Request, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from web.auth import get_current_user
+from web.csrf import csrf_token_for, verify_csrf
 
 router = APIRouter()
 templates = Jinja2Templates(
@@ -33,6 +34,7 @@ def _ctx(request: Request, current_user: dict, **extra) -> dict:
         "environments": config.get("environments", {}),
         "environment": None,
         "current_user": current_user,
+        "csrf_token": csrf_token_for(request),
         **extra,
     }
 
@@ -73,6 +75,7 @@ async def api_keys_create(
     name: str = Form(...),
     expiry_days: str = Form("never"),
     current_user: dict = Depends(get_current_user),
+    _csrf=Depends(verify_csrf),
 ):
     from web.main import get_db
     db = get_db()
@@ -113,6 +116,7 @@ async def api_keys_revoke(
     request: Request,
     key_id: str,
     current_user: dict = Depends(get_current_user),
+    _csrf=Depends(verify_csrf),
 ):
     from web.main import get_db
     db = get_db()

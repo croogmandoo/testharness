@@ -12,6 +12,7 @@
   {% endif %}
 
   <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% if mode == "create" %}
     <div class="field">
       <label class="label">Username</label>

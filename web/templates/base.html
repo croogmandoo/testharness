@@ -61,6 +61,7 @@
         <span class="nav-role">{{ current_user.role }}</span>
       </div>
       <form method="post" action="/auth/logout" class="m-0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="nav-signout">sign out</button>
       </form>
       {% endif %}

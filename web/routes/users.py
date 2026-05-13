@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from web.auth import require_role
+from web.csrf import csrf_token_for, verify_csrf
 
 router = APIRouter()
 templates = Jinja2Templates(
@@ -21,6 +22,7 @@ def _ctx(request: Request, current_user: dict, **extra) -> dict:
         "environments": config.get("environments", {}),
         "environment": None,
         "current_user": current_user,
+        "csrf_token": csrf_token_for(request),
         **extra,
     }
 
@@ -51,6 +53,7 @@ async def users_create(
     role: str = Form("read_only"),
     password: str = Form(""),
     current_user: dict = Depends(require_role("admin")),
+    _csrf=Depends(verify_csrf),
 ):
     from web.main import get_db
     import bcrypt as _bcrypt
@@ -104,7 +107,8 @@ async def users_edit(request: Request, user_id: str,
 
 @router.post("/users/{user_id}/delete")
 async def users_delete(request: Request, user_id: str,
-                       current_user: dict = Depends(require_role("admin"))):
+                       current_user: dict = Depends(require_role("admin")),
+                       _csrf=Depends(verify_csrf)):
     from web.main import get_db
     from fastapi import HTTPException
     if user_id == current_user["id"]:
@@ -131,6 +135,7 @@ async def users_update(
     is_active: int = Form(1),
     password: str = Form(""),
     current_user: dict = Depends(require_role("admin")),
+    _csrf=Depends(verify_csrf),
 ):
     from web.main import get_db
     import bcrypt as _bcrypt

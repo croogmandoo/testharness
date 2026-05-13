@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from web.auth import require_role
+from web.csrf import csrf_token_for, verify_csrf
 
 router = APIRouter()
 templates = Jinja2Templates(
@@ -19,6 +20,7 @@ def _ctx(request: Request, current_user: dict, **extra) -> dict:
         "environments": config.get("environments", {}),
         "environment": None,
         "current_user": current_user,
+        "csrf_token": csrf_token_for(request),
         **extra,
     }
 
@@ -62,6 +64,7 @@ async def secrets_create(
     value: str = Form(...),
     description: str = Form(""),
     current_user: dict = Depends(require_role("admin", "runner")),
+    _csrf=Depends(verify_csrf),
 ):
     from web.main import get_secrets_store
     store = get_secrets_store()
@@ -78,10 +81,12 @@ async def secrets_create(
     if store:
         store.set(name, value, description=description.strip() or None,
                   user_id=current_user["id"])
-        os.environ[name] = value
-        from web.main import get_db
+        from web.main import get_db, reload_apps
         get_db().log_audit("secret.upsert", user_id=current_user["id"],
                            username=current_user.get("username"), target=name)
+        # Refresh the in-memory _apps snapshot so the new secret is visible
+        # to subsequent $VAR resolution without touching os.environ.
+        reload_apps()
     return RedirectResponse("/secrets", status_code=303)
 
 
@@ -90,12 +95,15 @@ async def secrets_delete(
     request: Request,
     name: str,
     current_user: dict = Depends(require_role("admin")),
+    _csrf=Depends(verify_csrf),
 ):
-    from web.main import get_secrets_store, get_db
+    from web.main import get_secrets_store, get_db, reload_apps
     store = get_secrets_store()
     if store:
         store.delete(name)
-        os.environ.pop(name, None)
         get_db().log_audit("secret.delete", user_id=current_user["id"],
                            username=current_user.get("username"), target=name)
+        # Refresh the in-memory _apps snapshot so the removed secret falls
+        # out of the resolved $VAR table.
+        reload_apps()
     return RedirectResponse("/secrets", status_code=303)

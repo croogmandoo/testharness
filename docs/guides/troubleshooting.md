@@ -91,7 +91,7 @@ Or press `Ctrl+D`.
 
 ## Verify in the Web Dashboard
 
-1. Open the dashboard: http://localhost:8000 (or your configured URL)
+1. Open the dashboard: http://localhost:9552 (or your configured URL)
 2. Navigate to the app and environment
 3. You should now be able to trigger a new run
 4. The stuck run should appear in the history with status "complete" (or "fail" if you prefer)

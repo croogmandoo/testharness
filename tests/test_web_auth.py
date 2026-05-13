@@ -28,6 +28,8 @@ def db(tmp_path):
 def client(db, tmp_path):
     (tmp_path / "apps").mkdir()
     app = create_app(db=db, config=CONFIG, apps_dir=str(tmp_path / "apps"))
+    from web.csrf import verify_csrf
+    app.dependency_overrides[verify_csrf] = lambda: None
     return TestClient(app, follow_redirects=False)
 
 

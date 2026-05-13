@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from starlette.background import BackgroundTask
 from web.auth import require_role
+from web.csrf import csrf_token_for
 
 router = APIRouter()
 templates = Jinja2Templates(
@@ -22,6 +23,7 @@ def _ctx(request: Request, current_user: dict, **extra) -> dict:
         "environments": config.get("environments", {}),
         "environment": None,
         "current_user": current_user,
+        "csrf_token": csrf_token_for(request),
         **extra,
     }
 

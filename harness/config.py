@@ -89,6 +89,12 @@ def resolve_env_vars(obj: Any, strict: bool = True, extra_vars: dict = None) -> 
         return [resolve_env_vars(v, strict, extra_vars) for v in obj]
     if not isinstance(obj, str) or "$" not in obj:
         return obj
+    # `$X.token` vs `$.token`: only strings starting with `$` followed by an
+    # IDENTIFIER (letters/underscore/digits, optional `#env` suffix) are treated
+    # as env-var references. JSONPath expressions like `$.token` or
+    # `$.user.id` start with `$.` (a non-identifier char) and so do NOT match
+    # _ENV_REF / _INLINE_REF — they fall through and are returned unchanged.
+    # This lets `extract:` paths (`$.token`) coexist with `$VAR` substitution.
     # Whole-string `$VAR` ref — preserve value type (could be a non-string).
     if _ENV_REF.match(obj):
         val = _resolve_var(obj[1:], strict, _extra)

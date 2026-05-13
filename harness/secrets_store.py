@@ -81,6 +81,11 @@ class SecretsStore:
         return result
 
     def inject_to_env(self) -> None:
+        """Deprecated — prefer ``get_all_decrypted()`` passed as ``extra_vars=``
+        to resolvers. Mutating ``os.environ`` globally is no longer the
+        supported pattern; this method is retained only for backwards
+        compatibility with callers that haven't migrated yet.
+        """
         import os as _os
         import logging
         _log = logging.getLogger(__name__)

@@ -1,7 +1,7 @@
 # Writing Tests
 
 This guide covers every way to define tests in the harness — from simple uptime checks to
-multi-step browser flows and custom Python scripts.
+multi-step browser flows. (A Python-script test type is reserved for a future release; see §6.)
 
 ---
 
@@ -18,10 +18,7 @@ multi-step browser flows and custom Python scripts.
    - [Selectors reference](#selectors-reference)
 4. [All Browser Steps](#4-all-browser-steps)
 5. [Environment Variables](#5-environment-variables)
-6. [Python Scripts](#6-python-scripts)
-   - [When to use a script](#when-to-use-a-script)
-   - [AppTest base class](#apptest-base-class)
-   - [Full example script](#full-example-script)
+6. [Python Scripts](#6-python-scripts) — *not yet implemented*
 7. [Config Reference](#7-config-reference)
 
 ---
@@ -798,279 +795,21 @@ TEAMS_WEBHOOK_URL=https://...
 
 ## 6. Python Scripts
 
-### When to use a script
-
-YAML is enough for the majority of tests. Reach for a Python script when you
-need something YAML cannot express:
-
-| Scenario | Use |
-|----------|-----|
-| Simple availability / status check | YAML `availability` |
-| JSON field assertions | YAML `api` |
-| Click-through a UI flow | YAML `browser` |
-| Dynamic test data (generate IDs, timestamps) | Python |
-| Multi-step API flows (create → read → delete) | Python |
-| Custom authentication headers or signed requests | Python |
-| Database / queue assertions | Python |
-| Conditional logic — skip if env is staging | Python |
-| Reusable helpers shared across many tests | Python |
-
-### AppTest base class
-
-Subclass `AppTest` from `harness` and add `test_*` methods. Each method is
-discovered and run as an individual test, exactly like a pytest test.
-
-```python
-from harness import AppTest
-
-class MyAppTest(AppTest):
-    name = "My Application"               # shown in dashboard
-    base_url = "https://myapp.example.com"
-
-    environments = {                       # optional
-        "staging":    "https://staging.myapp.example.com",
-        "production": "https://myapp.example.com",
-    }
-
-    def test_something(self):
-        ...
-```
-
-**Helpers available in every method:**
-
-| Helper | Description |
-|--------|-------------|
-| `self.env("VAR_NAME")` | Read an environment variable; raises `ConfigError` if missing |
-| `self.resolve_base_url("production")` | Return the base URL for an environment |
-| `self.name` | App display name |
-
----
-
-### Full example script
-
-The file below demonstrates the main patterns. Save it as `apps/my_api_test.py`.
-
-```python
-"""
-apps/my_api_test.py
-
-Example Python test script for the Web Testing Harness.
-
-Demonstrates:
-- Multi-step API flows (create → read → update → delete)
-- Reading secrets from environment variables
-- Custom request headers
-- Dynamic test data
-- Conditional assertions
-"""
-
-import httpx
-import uuid
-from datetime import datetime
-from harness import AppTest
-
-
-class MyApiTest(AppTest):
-    name = "My API"
-    base_url = "https://api.example.com"
-
-    environments = {
-        "staging":    "https://staging.api.example.com",
-        "production": "https://api.example.com",
-    }
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _headers(self) -> dict:
-        """Build auth headers using an environment variable secret."""
-        api_key = self.env("MY_API_KEY")
-        return {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type":  "application/json",
-        }
-
-    def _base(self) -> str:
-        """Resolve the base URL for the current run environment."""
-        # Defaults to production if no environment is matched.
-        try:
-            return self.resolve_base_url("production")
-        except Exception:
-            return self.base_url
-
-    # ------------------------------------------------------------------
-    # Tests
-    # ------------------------------------------------------------------
-
-    def test_health_check(self):
-        """GET /health returns 200 with status ok."""
-        r = httpx.get(f"{self._base()}/health", timeout=10)
-        assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-
-        body = r.json()
-        assert body.get("status") == "ok", (
-            f"Expected status='ok', got {body.get('status')!r}"
-        )
-
-    def test_unauthenticated_request_rejected(self):
-        """Requests without a token must return 401."""
-        r = httpx.get(f"{self._base()}/api/me", timeout=10)
-        assert r.status_code == 401, (
-            f"Expected 401 Unauthorized, got {r.status_code}"
-        )
-
-    def test_create_and_delete_item(self):
-        """
-        Full lifecycle: create an item, verify it exists, then delete it.
-
-        This tests the happy path for the core CRUD API.
-        Uses a unique name so parallel runs don't collide.
-        """
-        base = self._base()
-        headers = self._headers()
-        unique_name = f"harness-test-{uuid.uuid4().hex[:8]}"
-
-        # 1. Create
-        create_resp = httpx.post(
-            f"{base}/api/items",
-            headers=headers,
-            json={"name": unique_name, "active": True},
-            timeout=10,
-        )
-        assert create_resp.status_code == 201, (
-            f"Create failed: {create_resp.status_code} — {create_resp.text}"
-        )
-        item_id = create_resp.json()["id"]
-
-        # 2. Read back
-        get_resp = httpx.get(f"{base}/api/items/{item_id}", headers=headers, timeout=10)
-        assert get_resp.status_code == 200, (
-            f"Read failed: {get_resp.status_code}"
-        )
-        assert get_resp.json()["name"] == unique_name, "Name mismatch after create"
-
-        # 3. Delete
-        del_resp = httpx.delete(f"{base}/api/items/{item_id}", headers=headers, timeout=10)
-        assert del_resp.status_code in (200, 204), (
-            f"Delete failed: {del_resp.status_code}"
-        )
-
-        # 4. Confirm gone
-        gone_resp = httpx.get(f"{base}/api/items/{item_id}", headers=headers, timeout=10)
-        assert gone_resp.status_code == 404, (
-            f"Item still exists after delete: {gone_resp.status_code}"
-        )
-
-    def test_pagination(self):
-        """
-        List endpoint returns paginated results with correct metadata.
-        """
-        base = self._base()
-        headers = self._headers()
-
-        r = httpx.get(
-            f"{base}/api/items",
-            headers=headers,
-            params={"page": 1, "per_page": 5},
-            timeout=10,
-        )
-        assert r.status_code == 200, f"List failed: {r.status_code}"
-
-        body = r.json()
-
-        # Verify the pagination envelope is present
-        assert "items" in body,      "Response missing 'items' key"
-        assert "total" in body,      "Response missing 'total' key"
-        assert "page" in body,       "Response missing 'page' key"
-        assert "per_page" in body,   "Response missing 'per_page' key"
-
-        # Verify the slice size is within bounds
-        assert len(body["items"]) <= 5, (
-            f"Got {len(body['items'])} items but requested per_page=5"
-        )
-
-    def test_response_contains_timestamp(self):
-        """
-        Every item in the list must have an ISO 8601 `created_at` timestamp.
-        """
-        r = httpx.get(
-            f"{self._base()}/api/items",
-            headers=self._headers(),
-            timeout=10,
-        )
-        assert r.status_code == 200
-
-        for item in r.json().get("items", []):
-            assert "created_at" in item, f"Item {item.get('id')} missing 'created_at'"
-            # Validate it parses as ISO 8601
-            try:
-                datetime.fromisoformat(item["created_at"].replace("Z", "+00:00"))
-            except ValueError:
-                raise AssertionError(
-                    f"Invalid created_at for item {item.get('id')}: {item['created_at']!r}"
-                )
-
-    def test_staging_only_feature_flag(self):
-        """
-        The /api/config endpoint should expose a 'beta_features' flag.
-        On staging it must be true; on production it may be false.
-
-        This test demonstrates conditional logic based on environment.
-        """
-        env_name = "staging"   # adjust as needed
-        base = self.resolve_base_url(env_name)
-
-        r = httpx.get(f"{base}/api/config", headers=self._headers(), timeout=10)
-        assert r.status_code == 200
-
-        flags = r.json().get("feature_flags", {})
-
-        if env_name == "staging":
-            assert flags.get("beta_features") is True, (
-                "Expected beta_features=True on staging"
-            )
-        else:
-            # Production — just assert the key exists, don't enforce value
-            assert "beta_features" in flags, (
-                "Expected beta_features key to exist in production config"
-            )
-```
-
----
-
-### Tips for Python scripts
-
-**Keep each `test_*` method independent.** The harness runs methods in
-definition order but does not guarantee a shared state between them. If
-`test_b` needs a resource created by `test_a`, put the whole flow in a single
-method (like `test_create_and_delete_item` above).
-
-**Always clean up.** If a test creates a resource (user, item, record), delete
-it in the same method — even on assertion failure. A `try/finally` block is
-the safest pattern:
-
-```python
-def test_resource_lifecycle(self):
-    item_id = None
-    try:
-        r = httpx.post(...)
-        item_id = r.json()["id"]
-        # ... assertions ...
-    finally:
-        if item_id:
-            httpx.delete(f"{self._base()}/api/items/{item_id}",
-                         headers=self._headers(), timeout=10)
-```
-
-**Use `self.env()` for every secret.** Never hard-code credentials. The method
-raises a clear `ConfigError` at startup if the variable is missing, rather than
-failing silently mid-test.
-
-**Use specific assertion messages.** When an `assert` fails, the harness shows
-the message in the dashboard. `assert r.status_code == 200` shows only the
-expression; `assert r.status_code == 200, f"Got {r.status_code}: {r.text}"` shows
-exactly what went wrong.
+> **Status: Not yet implemented.**
+>
+> The Python-script test type (subclassing `AppTest` from the `harness`
+> package) is reserved for a future release. The class exists in
+> `harness/__init__.py` as a stable public surface, but the harness
+> loader does not currently discover or execute `AppTest` subclasses —
+> defining one will not produce any test results yet.
+>
+> For now, use the YAML test types — `availability`, `api`, and
+> `browser` — documented above. The `api` type with
+> [variable extraction & chaining](#variable-extraction--chaining) can
+> express most multi-step flows that would otherwise need a script.
+>
+> This section will be expanded with full documentation and examples
+> once the runner support lands.
 
 ---
 

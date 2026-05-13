@@ -2,9 +2,9 @@
 # This app definition shows how to test the internal harness API endpoints
 
 app: "Harness API"
-url: "http://localhost:8000"
+url: "http://localhost:9552"
 environments:
-  local: "http://localhost:8000"
+  local: "http://localhost:9552"
   production: "https://your-harness.com"
 
 tests:

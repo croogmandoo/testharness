@@ -5,6 +5,7 @@ from harness.app_manager import get_known_vars
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from web.auth import get_current_user, require_role
+from web.csrf import csrf_token_for
 
 router = APIRouter()
 templates = Jinja2Templates(
@@ -19,6 +20,7 @@ def _nav_ctx(request: Request) -> dict:
         "request": request,
         "environments": config.get("environments", {}),
         "environment": None,
+        "csrf_token": csrf_token_for(request),
     }
 
 

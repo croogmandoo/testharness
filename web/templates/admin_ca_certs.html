@@ -11,6 +11,7 @@
     <div class="form-error">{{ error }}</div>
     {% endif %}
     <form method="post" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="field">
         <label class="label">Name</label>
         <input class="input" name="name" placeholder="Corp Root CA" required>
@@ -48,6 +49,7 @@
           <td class="text-muted text-xs font-mono">{{ cert.created_at[:10] }}</td>
           <td class="text-right">
             <form method="post" action="/admin/ca-certs/{{ cert.id }}/delete" class="inline-block">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <button type="submit" class="btn btn-sm btn-danger">Delete</button>
             </form>
           </td>

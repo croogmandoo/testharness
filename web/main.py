@@ -42,7 +42,11 @@ def get_scheduler():
 
 def reload_apps() -> None:
     global _apps
-    _apps = load_apps(_apps_dir) if os.path.isdir(_apps_dir) else []
+    if not os.path.isdir(_apps_dir):
+        _apps = []
+        return
+    extra = _secrets_store.get_all_decrypted() if _secrets_store is not None else None
+    _apps = load_apps(_apps_dir, extra_vars=extra)
 
 
 def _start_scheduler() -> None:
@@ -139,8 +143,8 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     _config = config or {}
     _apps_dir = apps_dir
 
-    # Initialise DB and SecretsStore first so secrets are in os.environ
-    # before app YAML files are loaded and env vars are resolved.
+    # Initialise DB and SecretsStore first so decrypted secrets can be passed
+    # into app YAML resolution via extra_vars (no os.environ mutation).
     if db is None:
         os.makedirs("data", exist_ok=True)
         _db = Database("data/harness.db")
@@ -151,9 +155,12 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     from harness.secrets_store import SecretsStore
     from web.auth import set_auth_config
     _secrets_store = SecretsStore(_db)
-    _secrets_store.inject_to_env()
 
-    _apps = load_apps(apps_dir) if os.path.isdir(apps_dir) else []
+    _apps = (
+        load_apps(apps_dir, extra_vars=_secrets_store.get_all_decrypted())
+        if os.path.isdir(apps_dir)
+        else []
+    )
     auth_cfg = _config.get("auth", {})
     set_auth_config(
         signing_key=_secrets_store.session_signing_key,

@@ -19,6 +19,8 @@ def client(tmp_path):
         "created_at": datetime.now(timezone.utc).isoformat(), "last_login_at": None,
     })
     app = create_app(db=db, config={})
+    from web.csrf import verify_csrf
+    app.dependency_overrides[verify_csrf] = lambda: None
     return TestClient(app, raise_server_exceptions=True)
 
 

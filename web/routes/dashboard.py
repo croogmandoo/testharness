@@ -6,6 +6,7 @@ from fastapi.templating import Jinja2Templates
 import os
 
 from web.auth import get_current_user
+from web.csrf import csrf_token_for
 
 router = APIRouter()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "..", "templates"))
@@ -55,6 +56,7 @@ async def dashboard(request: Request, environment: str = None,
         "environment": env,
         "environments": envs,
         "current_user": current_user,
+        "csrf_token": csrf_token_for(request),
     })
 
 
@@ -117,4 +119,5 @@ async def app_detail(request: Request, app: str, environment: str, run_id: str =
         "is_live": is_live,
         "pending_test_names": pending_test_names,
         "current_user": current_user,
+        "csrf_token": csrf_token_for(request),
     })

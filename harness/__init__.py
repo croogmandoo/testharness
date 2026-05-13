@@ -4,11 +4,23 @@ from harness.api import run_api_test
 from harness.config import ConfigError
 
 # AppTest base class for Python escape-hatch test files
+#
+# RESERVED / NOT YET WIRED: this class is the public surface for the
+# Python-script test type documented in docs/guides/writing-tests.md §6,
+# but the loader/runner does not yet discover or execute subclasses of
+# AppTest. The class is kept here so the import path is stable and the
+# eventual implementation does not break existing user scripts. See the
+# "Not yet implemented" notice in docs/guides/writing-tests.md §6.
 import os
 
 
 class AppTest:
-    """Base class for Python-defined app tests. Subclass and add test_* methods."""
+    """Base class for Python-defined app tests. Subclass and add test_* methods.
+
+    NOTE: This class is reserved for a future release. The harness loader
+    does not currently discover or execute AppTest subclasses — defining
+    one will not run any tests yet. See docs/guides/writing-tests.md §6.
+    """
     name: str = ""
     base_url: str = ""
     environments: dict | None = None

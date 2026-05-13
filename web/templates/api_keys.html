@@ -20,6 +20,7 @@
 <div class="card max-w-lg">
   <div class="card-title">Create API Key</div>
   <form method="post" action="/api-keys">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="form-grid-2 mb-4">
       <div>
         <label class="label">Name</label>
@@ -71,6 +72,7 @@
         <td class="text-right">
           {% if k.is_active %}
           <form method="post" action="/api-keys/{{ k.id }}/revoke" class="inline-block">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-danger">Revoke</button>
           </form>
           {% endif %}
@@ -117,6 +119,7 @@
         <td class="text-right">
           {% if k.is_active %}
           <form method="post" action="/api-keys/{{ k.id }}/revoke" class="inline-block">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-danger">Revoke</button>
           </form>
           {% endif %}

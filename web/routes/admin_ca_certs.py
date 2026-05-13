@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from web.auth import require_role
+from web.csrf import csrf_token_for, verify_csrf
 
 router = APIRouter()
 templates = Jinja2Templates(
@@ -21,6 +22,7 @@ def _ctx(request: Request, current_user: dict, **extra) -> dict:
         "environments": config.get("environments", {}),
         "environment": None,
         "current_user": current_user,
+        "csrf_token": csrf_token_for(request),
         **extra,
     }
 
@@ -50,6 +52,7 @@ async def ca_certs_add(
     pem_content: str = Form(""),
     pem_file: UploadFile = File(None),
     current_user: dict = Depends(require_role("admin")),
+    _csrf=Depends(verify_csrf),
 ):
     from web.main import get_db
     from harness.ssl_context import write_ca_bundle
@@ -94,6 +97,7 @@ async def ca_certs_delete(
     request: Request,
     cert_id: str,
     current_user: dict = Depends(require_role("admin")),
+    _csrf=Depends(verify_csrf),
 ):
     from web.main import get_db
     from harness.ssl_context import write_ca_bundle

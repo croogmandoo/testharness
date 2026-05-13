@@ -20,7 +20,12 @@ def resolve_base_url(app: dict, environment: str) -> str:
         f"No base URL found for app '{app.get('app', '?')}' in environment '{environment}'"
     )
 
-def load_apps(apps_dir: str = "apps") -> list:
+def load_apps(apps_dir: str = "apps", extra_vars: dict | None = None) -> list:
+    """Load app YAML files from ``apps_dir`` and resolve ``$VAR`` references.
+
+    Pass ``extra_vars`` (e.g. decrypted secrets from ``SecretsStore``) to make
+    them available during resolution without mutating ``os.environ``.
+    """
     paths = sorted(
         glob.glob(os.path.join(apps_dir, "*.yaml")) +
         glob.glob(os.path.join(apps_dir, "*.yml"))
@@ -29,7 +34,7 @@ def load_apps(apps_dir: str = "apps") -> list:
     for path in paths:
         with open(path) as f:
             raw = yaml.safe_load(f)
-        resolved = resolve_env_vars(raw, strict=False)
+        resolved = resolve_env_vars(raw, strict=False, extra_vars=extra_vars)
         resolved["_source"] = path
         resolved["_type"] = "yaml"
         apps.append(resolved)
