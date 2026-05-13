@@ -80,6 +80,21 @@ def _start_scheduler() -> None:
             _log.info("scheduler: %s/%s already active, skipping",
                       app_def["app"], environment)
             return
+        # Apps with `run_on:` are dispatched to remote workers — queue the
+        # job here and a polling worker picks it up. Otherwise execute
+        # in-process as before.
+        try:
+            from harness.worker_dispatch import (
+                queue_remote_run, should_dispatch_remotely,
+            )
+            if should_dispatch_remotely(app_def):
+                queue_remote_run(
+                    _db, app_def, environment, "schedule",
+                    secrets_store=_secrets_store,
+                )
+                return
+        except Exception:
+            _log.exception("scheduler: dispatch check failed; falling back to in-process")
         try:
             await run_app(app_def, environment, "schedule",
                           _db, _config, secrets_store=_secrets_store)
@@ -279,6 +294,12 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
 
     from web.routes.status import router as status_router
     app.include_router(status_router)
+
+    from web.routes.runner import router as runner_router
+    app.include_router(runner_router)
+
+    from web.routes.admin_runners import router as admin_runners_router
+    app.include_router(admin_runners_router)
 
     screenshots_dir = "data/screenshots"
     os.makedirs(screenshots_dir, exist_ok=True)

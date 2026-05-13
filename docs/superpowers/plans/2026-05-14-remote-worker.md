@@ -1,7 +1,9 @@
 # Remote Worker (Edge Runner) — Design Plan
 
 **Date:** 2026-05-14
-**Status:** Design — not yet implemented. Ready for review.
+**Status:** ✅ Phase 1 deployed (2026-05-13). v1 supports both Docker and
+native-Linux/systemd worker targets; admin UI live at `/admin/runners`.
+Phases 2-5 remain as roadmap.
 
 ## Problem
 

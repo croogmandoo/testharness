@@ -51,6 +51,11 @@ async def trigger_run(req: RunRequest, background_tasks: BackgroundTasks,
 
     # Pre-insert Run records so callers get real IDs back immediately.
     # The background task updates status from 'pending' → 'running' → 'complete'.
+    # Apps with `run_on:` are queued for remote workers instead of running
+    # in-process — see harness/worker_dispatch.py.
+    from harness.worker_dispatch import (
+        queue_remote_run, should_dispatch_remotely,
+    )
     queued = []
     for app_def in target_apps:
         if db.is_run_active(app_def["app"], req.environment):
@@ -60,6 +65,13 @@ async def trigger_run(req: RunRequest, background_tasks: BackgroundTasks,
                     detail=f"A run for {app_def['app']} ({req.environment}) is already in progress"
                 )
             continue  # skip already-running apps in "run all" mode
+        if should_dispatch_remotely(app_def):
+            run_id = queue_remote_run(
+                db, app_def, req.environment, req.triggered_by,
+                secrets_store=get_secrets_store(),
+            )
+            queued.append(run_id)
+            continue
         run = Run(app=app_def["app"], environment=req.environment, triggered_by=req.triggered_by)
         db.insert_run(run)
         background_tasks.add_task(run_app, app_def, req.environment, req.triggered_by, db, config,

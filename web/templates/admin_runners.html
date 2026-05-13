@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Remote Workers</h1>
+</div>
+
+<div class="card">
+  <div class="card-title">Registered Workers</div>
+  <p class="text-muted text-sm mb-4">
+    Remote workers run app checks from network zones the central harness
+    can't reach. Apps that should run remotely declare
+    <code class="text-amber">run_on: &lt;worker-name&gt;</code> or
+    <code class="text-amber">run_on: { tag: &lt;tag&gt; }</code> in their YAML.
+    See <a href="/docs/guides/remote-workers.md" target="_blank">remote-workers.md</a>.
+  </p>
+
+  {% if runners %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Status</th>
+        <th>Tags</th>
+        <th>Capabilities</th>
+        <th>Version</th>
+        <th>In-flight</th>
+        <th>Last seen (UTC)</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runners %}
+      <tr>
+        <td class="font-semibold font-mono">{{ r.name }}</td>
+        <td>
+          {% if r.display_status == "online" %}
+            <span class="beacon beacon-pass"></span>
+            <span class="text-pass">online</span>
+          {% elif r.display_status == "draining" %}
+            <span class="beacon beacon-unknown"></span>
+            <span class="text-secondary">draining</span>
+          {% else %}
+            <span class="beacon beacon-fail"></span>
+            <span class="text-fail">offline</span>
+          {% endif %}
+        </td>
+        <td class="text-sm font-mono">
+          {% for t in r.tags %}<span class="tag">{{ t }}</span>{% endfor %}
+          {% if not r.tags %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td class="text-sm font-mono">
+          {% for c in r.capabilities %}<span class="tag">{{ c }}</span>{% endfor %}
+          {% if not r.capabilities %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td class="text-xs font-mono text-secondary">{{ r.version or "—" }}</td>
+        <td class="text-center font-mono">{{ r.inflight_jobs }}</td>
+        <td class="text-xs font-mono text-muted">
+          {{ r.last_seen_at[:19].replace('T', ' ') if r.last_seen_at else "never" }}
+        </td>
+        <td class="text-right text-nowrap">
+          <div class="btn-group justify-end">
+            {% if r.status == "draining" %}
+            <form method="post" action="/admin/runners/{{ r.name }}/resume" class="inline-block">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="btn btn-sm">Resume</button>
+            </form>
+            {% else %}
+            <form method="post" action="/admin/runners/{{ r.name }}/drain" class="inline-block">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="btn btn-sm">Drain</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/admin/runners/{{ r.name }}/delete" class="inline-block"
+                  onsubmit="return confirm('Remove runner {{ r.name }}? In-flight jobs will be stranded.');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="btn btn-sm btn-danger">Remove</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No workers have registered yet.</p>
+
+  <div class="onboarding-sample mt-4">
+    <strong>Deploy a worker</strong><br><br>
+    <strong>Docker (any host with docker):</strong><br>
+    <code class="text-xs">docker run -d \
+  --name harness-worker \
+  --restart unless-stopped \
+  -e HARNESS_URL=https://your-harness.example.com \
+  -e HARNESS_API_KEY=hth_... \
+  -e HARNESS_WORKER_NAME=eu-worker-1 \
+  -e HARNESS_WORKER_TAGS=eu,media \
+  ghcr.io/croogmandoo/testharness:latest \
+  python -m worker.worker</code><br><br>
+    <strong>Native Linux (Ubuntu 22.04 / 24.04):</strong><br>
+    <code class="text-xs">curl -fsSL https://raw.githubusercontent.com/croogmandoo/testharness/master/scripts/install-worker-on-ubuntu.sh | sudo HARNESS_URL=https://your-harness.example.com HARNESS_API_KEY=hth_... HARNESS_WORKER_NAME=eu-worker-1 bash</code>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">How dispatch works</div>
+  <p class="text-secondary text-sm">
+    When a scheduled run fires or someone clicks <em>Run</em> on the
+    dashboard, the central harness checks the app's <code>run_on:</code>
+    field. If set, the run is <strong>queued</strong> instead of executed
+    locally; the next polling worker that matches the name or tag claims it.
+    Workers run the test, submit results back, and the central harness
+    fires alerts + webhooks exactly as if the test had run in-process.
+  </p>
+  <p class="text-secondary text-sm mt-2">
+    Workers are a <strong>trust boundary</strong> — they receive
+    fully-resolved app definitions with plaintext secrets. Only deploy
+    workers in segments at least as trusted as the secrets they handle.
+  </p>
+</div>
+{% endblock %}

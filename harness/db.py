@@ -106,6 +106,35 @@ CREATE TABLE IF NOT EXISTS stale_alerts (
     last_alerted_at  TEXT NOT NULL,
     PRIMARY KEY (app, environment)
 );
+CREATE TABLE IF NOT EXISTS runners (
+    id            TEXT PRIMARY KEY,
+    name          TEXT UNIQUE NOT NULL,
+    tags          TEXT NOT NULL DEFAULT '[]',     -- JSON array of strings
+    capabilities  TEXT NOT NULL DEFAULT '[]',     -- JSON array of strings
+    version       TEXT,
+    api_key_id    TEXT REFERENCES api_keys(id),
+    first_seen_at TEXT NOT NULL,
+    last_seen_at  TEXT,
+    status        TEXT NOT NULL DEFAULT 'unknown' -- online/offline/draining
+);
+CREATE TABLE IF NOT EXISTS runner_jobs (
+    id           TEXT PRIMARY KEY,
+    run_id       TEXT NOT NULL REFERENCES runs(id),
+    runner_name  TEXT,                  -- pinned worker name, or NULL for tag dispatch
+    target_tag   TEXT,                  -- tag-based dispatch, or NULL for any
+    app_def_json TEXT NOT NULL,         -- fully-resolved app def (secrets in plaintext)
+    environment  TEXT NOT NULL,
+    state        TEXT NOT NULL,         -- queued/assigned/complete/timeout/cancelled
+    queued_at    TEXT NOT NULL,
+    assigned_to  TEXT,                  -- worker name that claimed it
+    assigned_at  TEXT,
+    completed_at TEXT,
+    error        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_runner_jobs_dispatch
+    ON runner_jobs(state, runner_name, target_tag);
+CREATE INDEX IF NOT EXISTS idx_runner_jobs_run_id
+    ON runner_jobs(run_id);
 """
 
 class Database:
@@ -686,3 +715,178 @@ class Database:
                 (app, environment, test_name),
             ).fetchone()
             return row["screenshot"] if row else None
+
+    # ── Runners ─────────────────────────────────────────────────────────────
+
+    def upsert_runner(self, *, name: str, tags: list, capabilities: list,
+                       version: Optional[str] = None,
+                       api_key_id: Optional[str] = None) -> dict:
+        """Insert or update a runner row. Sets first_seen_at on insert,
+        last_seen_at on every call, and marks status='online'."""
+        now = datetime.now(timezone.utc).isoformat()
+        tags_json = json.dumps(sorted(set(tags or [])))
+        caps_json = json.dumps(sorted(set(capabilities or [])))
+        existing = self.get_runner_by_name(name)
+        with self._connect() as conn:
+            if existing is None:
+                rid = str(uuid.uuid4())
+                conn.execute(
+                    "INSERT INTO runners (id, name, tags, capabilities, version, "
+                    "api_key_id, first_seen_at, last_seen_at, status) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    (rid, name, tags_json, caps_json, version,
+                     api_key_id, now, now, "online"),
+                )
+            else:
+                conn.execute(
+                    "UPDATE runners SET tags=?, capabilities=?, version=?, "
+                    "api_key_id=COALESCE(?, api_key_id), last_seen_at=?, "
+                    "status=CASE WHEN status='draining' THEN 'draining' ELSE 'online' END "
+                    "WHERE name=?",
+                    (tags_json, caps_json, version, api_key_id, now, name),
+                )
+        return self.get_runner_by_name(name)
+
+    def get_runner_by_name(self, name: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM runners WHERE name=?", (name,)
+            ).fetchone()
+            if not row:
+                return None
+            r = dict(row)
+            r["tags"] = json.loads(r.get("tags") or "[]")
+            r["capabilities"] = json.loads(r.get("capabilities") or "[]")
+            return r
+
+    def list_runners(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM runners ORDER BY name"
+            ).fetchall()
+        result = []
+        for row in rows:
+            r = dict(row)
+            r["tags"] = json.loads(r.get("tags") or "[]")
+            r["capabilities"] = json.loads(r.get("capabilities") or "[]")
+            result.append(r)
+        return result
+
+    def touch_runner_heartbeat(self, name: str, timestamp: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE runners SET last_seen_at=?, "
+                "status=CASE WHEN status='draining' THEN 'draining' ELSE 'online' END "
+                "WHERE name=?",
+                (timestamp, name),
+            )
+
+    def set_runner_status(self, name: str, status: str) -> None:
+        """Set status to 'online' | 'offline' | 'draining'."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE runners SET status=? WHERE name=?", (status, name),
+            )
+
+    def delete_runner(self, name: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM runners WHERE name=?", (name,))
+
+    # ── Runner jobs (dispatch queue) ────────────────────────────────────────
+
+    def queue_runner_job(self, *, run_id: str, app_def_json: str,
+                          environment: str,
+                          runner_name: Optional[str] = None,
+                          target_tag: Optional[str] = None) -> str:
+        """Insert a queued job. Exactly one of runner_name / target_tag should
+        be set (or both NULL = any runner). Returns the job id."""
+        job_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO runner_jobs "
+                "(id, run_id, runner_name, target_tag, app_def_json, environment, "
+                "state, queued_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (job_id, run_id, runner_name, target_tag, app_def_json,
+                 environment, "queued", now),
+            )
+        return job_id
+
+    def claim_runner_jobs(self, *, worker_name: str, worker_tags: list,
+                           capacity: int) -> list:
+        """Atomically claim up to `capacity` queued jobs that match this worker
+        — pinned to its name OR tag-dispatched and matching one of its tags.
+        Returns the claimed job rows (with state='assigned')."""
+        if capacity <= 0:
+            return []
+        tags = list(worker_tags or [])
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            tag_placeholders = ",".join("?" * len(tags)) if tags else "NULL"
+            tag_clause = (
+                f"target_tag IN ({tag_placeholders})" if tags else "0"
+            )
+            sql = (
+                f"SELECT id FROM runner_jobs WHERE state='queued' "
+                f"AND (runner_name = ? "
+                f"     OR (runner_name IS NULL AND target_tag IS NULL) "
+                f"     OR (runner_name IS NULL AND {tag_clause})) "
+                f"ORDER BY queued_at LIMIT ?"
+            )
+            params: list = [worker_name] + tags + [capacity]
+            candidate_ids = [r["id"] for r in conn.execute(sql, params).fetchall()]
+            claimed = []
+            for jid in candidate_ids:
+                cur = conn.execute(
+                    "UPDATE runner_jobs SET state='assigned', assigned_to=?, assigned_at=? "
+                    "WHERE id=? AND state='queued'",
+                    (worker_name, now, jid),
+                )
+                if cur.rowcount == 1:
+                    row = conn.execute(
+                        "SELECT * FROM runner_jobs WHERE id=?", (jid,),
+                    ).fetchone()
+                    claimed.append(dict(row))
+            return claimed
+
+    def complete_runner_job(self, job_id: str,
+                             error: Optional[str] = None) -> Optional[dict]:
+        """Mark a job complete (or errored). Returns the job row."""
+        now = datetime.now(timezone.utc).isoformat()
+        state = "complete" if error is None else "error"
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE runner_jobs SET state=?, completed_at=?, error=? WHERE id=?",
+                (state, now, error, job_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM runner_jobs WHERE id=?", (job_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_runner_job(self, job_id: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM runner_jobs WHERE id=?", (job_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_runner_jobs_for_runner(self, name: str,
+                                     limit: int = 50) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM runner_jobs WHERE assigned_to=? "
+                "ORDER BY queued_at DESC LIMIT ?",
+                (name, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_inflight_jobs_for_runner(self, name: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM runner_jobs WHERE assigned_to=? "
+                "AND state='assigned'",
+                (name,),
+            ).fetchone()
+        return row[0] if row else 0
