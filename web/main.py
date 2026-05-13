@@ -49,6 +49,22 @@ def reload_apps() -> None:
     _apps = load_apps(_apps_dir, extra_vars=extra)
 
 
+def reload_config_and_apps() -> str:
+    """Re-read config.yaml from disk + reload apps. Returns a human-readable
+    summary of what changed. Limited reload — see docs in
+    web/templates/admin_config.html for what still needs a full restart."""
+    global _config
+    from harness.config import load_config
+    config_path = "config.yaml"
+    if not os.path.exists(config_path):
+        return f"skipped: {config_path} not found"
+    before_apps = len(_apps)
+    new_config = load_config(config_path)
+    _config = new_config
+    reload_apps()
+    return f"config re-read; apps {before_apps} -> {len(_apps)}"
+
+
 def _start_scheduler() -> None:
     """Build + start the in-process cron scheduler from current config/apps.
 
@@ -300,6 +316,9 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
 
     from web.routes.admin_runners import router as admin_runners_router
     app.include_router(admin_runners_router)
+
+    from web.routes.admin_dashboard import router as admin_dashboard_router
+    app.include_router(admin_dashboard_router)
 
     screenshots_dir = "data/screenshots"
     os.makedirs(screenshots_dir, exist_ok=True)

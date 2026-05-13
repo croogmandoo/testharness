@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="breadcrumb">
+  <a href="/admin">Admin</a> / Config
+</div>
+
+<div class="page-header">
+  <h1>Loaded configuration</h1>
+  <form method="post" action="/admin/config/reload" class="m-0">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="btn"
+            onclick="return confirm('Re-read config.yaml + reload apps?\n\nSome settings still require a full restart: scheduling, auth.session_hours, auth.ldap, alerts.maintenance_windows.')">
+      Reload config
+    </button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-title">Source paths</div>
+  <table class="table">
+    <tbody>
+      <tr>
+        <td class="text-muted text-xs ldap-key-cell">config file</td>
+        <td class="font-mono">{{ config_path }}</td>
+      </tr>
+      <tr>
+        <td class="text-muted text-xs ldap-key-cell">apps directory</td>
+        <td class="font-mono">{{ apps_dir }}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <div class="card-title">Effective settings (in-memory, post-resolution)</div>
+  <p class="text-muted text-sm mb-4">
+    This is what the harness <em>currently</em> has loaded — after env-var
+    substitution from the encrypted secrets store. Edits to the file on disk
+    don't take effect until you reload (button above) or restart. Sensitive
+    values are redacted; the redaction matches any key whose name contains
+    <code class="text-amber">password</code>, <code class="text-amber">secret</code>,
+    <code class="text-amber">token</code>, <code class="text-amber">webhook_url</code>,
+    <code class="text-amber">connection_string</code>, etc.
+  </p>
+  <pre class="config-yaml-block"><code>{{ config_yaml }}</code></pre>
+</div>
+
+<div class="card">
+  <div class="card-title">What a reload does</div>
+  <p class="text-secondary text-sm">
+    <strong>Reloaded immediately:</strong> alert channels (Teams/Slack/Discord/email/webhook URLs),
+    maintenance-window predicates, retention threshold, status-page enable,
+    metrics token, analytics target, browser timeout. App YAMLs are also
+    re-read from disk.
+  </p>
+  <p class="text-secondary text-sm mt-2">
+    <strong>Requires a full restart:</strong> the scheduler (cron expressions
+    are bound to APScheduler at startup), auth settings (session signing,
+    LDAP server connection, GitHub OAuth client), the bind port and
+    CSRF/cookie attributes, and the database path.
+  </p>
+</div>
+
+<style>
+  .config-yaml-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-4);
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    color: var(--text-2);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .config-yaml-block code { background: transparent; color: inherit; font-size: inherit; }
+</style>
+{% endblock %}

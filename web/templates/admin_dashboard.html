@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Admin</h1>
+  <span class="text-muted text-sm">Signed in as {{ current_user.username }}</span>
+</div>
+
+<div class="admin-grid">
+
+  <a href="/users" class="admin-card">
+    <div class="admin-card-title">Users</div>
+    <div class="admin-card-stat">{{ stats.users_active }}<span class="admin-card-stat-unit"> active</span></div>
+    <div class="admin-card-sub">
+      {% if stats.users_disabled %}
+        {{ stats.users_disabled }} disabled
+      {% else %}
+        No disabled accounts
+      {% endif %}
+    </div>
+  </a>
+
+  <a href="/admin/runners" class="admin-card">
+    <div class="admin-card-title">Workers</div>
+    <div class="admin-card-stat">
+      <span class="text-pass">{{ stats.workers_online }}</span><span class="admin-card-stat-unit"> online</span>
+    </div>
+    <div class="admin-card-sub">
+      {% if stats.workers_draining %}{{ stats.workers_draining }} draining · {% endif %}
+      {% if stats.workers_offline %}{{ stats.workers_offline }} offline{% endif %}
+      {% if stats.workers_total == 0 %}No workers registered{% endif %}
+    </div>
+  </a>
+
+  <a href="/admin/audit" class="admin-card">
+    <div class="admin-card-title">Audit Log</div>
+    <div class="admin-card-stat">{{ stats.audit_today }}<span class="admin-card-stat-unit"> today</span></div>
+    <div class="admin-card-sub">{{ stats.audit_total }} total entries</div>
+  </a>
+
+  <a href="/admin/backup" class="admin-card admin-card--action">
+    <div class="admin-card-title">DB Backup</div>
+    <div class="admin-card-stat admin-card-stat--small">
+      {% if stats.last_backup_at %}
+        {{ stats.last_backup_at[:10] }}
+      {% else %}
+        <span class="text-muted">Never</span>
+      {% endif %}
+    </div>
+    <div class="admin-card-sub">Download a snapshot →</div>
+  </a>
+
+  <a href="/api-keys" class="admin-card">
+    <div class="admin-card-title">API Keys</div>
+    <div class="admin-card-stat">{{ stats.api_keys_active }}<span class="admin-card-stat-unit"> active</span></div>
+    <div class="admin-card-sub">
+      {% if stats.api_keys_expiring_soon %}
+        <span class="text-warn">{{ stats.api_keys_expiring_soon }} expiring &lt; 30d</span>
+      {% else %}
+        None expiring soon
+      {% endif %}
+    </div>
+  </a>
+
+  <a href="/secrets" class="admin-card">
+    <div class="admin-card-title">Secrets</div>
+    <div class="admin-card-stat">{{ stats.secrets_count }}<span class="admin-card-stat-unit"> stored</span></div>
+    <div class="admin-card-sub">Encrypted at rest</div>
+  </a>
+
+  <a href="/admin/ldap" class="admin-card">
+    <div class="admin-card-title">LDAP / SSO</div>
+    <div class="admin-card-stat admin-card-stat--small">
+      {% if stats.ldap_enabled %}
+        <span class="text-pass">Enabled</span>
+      {% else %}
+        <span class="text-muted">Disabled</span>
+      {% endif %}
+    </div>
+    <div class="admin-card-sub">
+      {% if stats.ldap_enabled and stats.ldap_server %}
+        {{ stats.ldap_server }}
+      {% else %}
+        Configure in config.yaml
+      {% endif %}
+    </div>
+  </a>
+
+  <a href="/admin/ca-certs" class="admin-card">
+    <div class="admin-card-title">CA Certs</div>
+    <div class="admin-card-stat">{{ stats.ca_certs_count }}<span class="admin-card-stat-unit"> trusted</span></div>
+    <div class="admin-card-sub">For private TLS roots</div>
+  </a>
+
+  <a href="/admin/config" class="admin-card">
+    <div class="admin-card-title">Config</div>
+    <div class="admin-card-stat admin-card-stat--small">View</div>
+    <div class="admin-card-sub">Loaded settings, redacted</div>
+  </a>
+
+  <div class="admin-card admin-card--info">
+    <div class="admin-card-title">Maintenance</div>
+    <div class="admin-card-stat admin-card-stat--small">
+      {% if stats.maintenance_active %}
+        <span class="text-warn">Active</span>
+      {% elif stats.maintenance_windows_defined %}
+        <span class="text-pass">No active window</span>
+      {% else %}
+        <span class="text-muted">No windows defined</span>
+      {% endif %}
+    </div>
+    <div class="admin-card-sub">
+      {% if stats.maintenance_active %}
+        Alerts suppressed: {{ stats.maintenance_active }}
+      {% else %}
+        {{ stats.maintenance_windows_defined }} window(s) configured
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="admin-card admin-card--info">
+    <div class="admin-card-title">Analytics Export</div>
+    <div class="admin-card-stat admin-card-stat--small">
+      {% if stats.analytics_enabled %}
+        <span class="text-pass">Enabled</span>
+      {% else %}
+        <span class="text-muted">Disabled</span>
+      {% endif %}
+    </div>
+    <div class="admin-card-sub">
+      {% if stats.analytics_enabled %}
+        Daily Parquet to configured target
+      {% else %}
+        See docs/guides/analytics.md
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+<style>
+  .admin-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: var(--space-3);
+  }
+  .admin-card {
+    display: block;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-4) var(--space-5);
+    text-decoration: none;
+    color: inherit;
+    transition: border-color .12s, transform .12s;
+  }
+  .admin-card:hover {
+    border-color: var(--amber);
+  }
+  .admin-card--info {
+    cursor: default;
+  }
+  .admin-card--info:hover {
+    border-color: var(--border);
+  }
+  .admin-card--action {
+    border-style: dashed;
+  }
+  .admin-card-title {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: var(--space-3);
+  }
+  .admin-card-stat {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--text);
+    font-family: var(--font-mono);
+    letter-spacing: -.01em;
+    margin-bottom: var(--space-2);
+  }
+  .admin-card-stat--small {
+    font-size: var(--text-lg);
+    font-weight: 600;
+  }
+  .admin-card-stat-unit {
+    font-size: var(--text-sm);
+    color: var(--text-3);
+    font-weight: 500;
+    font-family: var(--font-sans);
+    margin-left: var(--space-1);
+  }
+  .admin-card-sub {
+    font-size: var(--text-xs);
+    color: var(--text-3);
+  }
+  .text-warn { color: var(--warn); }
+</style>
+{% endblock %}
