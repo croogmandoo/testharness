@@ -40,3 +40,15 @@ alerts:
 browser:
   headless: true
   timeout_ms: 30000
+
+# Analytics export — daily Parquet snapshot to local FS or Azure Blob/ADLS Gen2.
+# See docs/guides/analytics.md for the full BI/DIO team integration guide.
+# analytics:
+#   enabled: true
+#   export_cron: "0 1 * * *"             # daily 01:00 UTC (standard cron, 0=Sun)
+#   tables: [runs, test_results, app_state, audit_log]   # default = all
+#   target:
+#     type: azure_blob                    # "azure_blob" | "local"
+#     container: synthetics               # blob container name (must exist)
+#     prefix: harness/                    # path prefix inside container
+#     connection_string: "$AZURE_STORAGE_CONNECTION_STRING"

@@ -153,5 +153,27 @@ def add_stale_check_job(scheduler: AsyncIOScheduler,
     _log.info("auto_scheduler: stale-run check scheduled %r", cron)
 
 
+def add_analytics_export_job(scheduler: AsyncIOScheduler,
+                             export_callback: Callable[[], None],
+                             cron: str = "0 1 * * *") -> None:
+    """Wire the daily Parquet analytics export onto an existing scheduler.
+
+    `export_callback` is invoked with no args; it should call
+    `harness.analytics.export_all_tables(...)` with the configured target.
+    Default cadence is 01:00 UTC daily — late enough that any in-flight
+    runs from the previous day have finished, early enough that BI's
+    morning batch jobs see fresh data.
+    """
+    scheduler.add_job(
+        export_callback,
+        cron_trigger(cron, timezone="UTC"),
+        id="analytics::export",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    _log.info("auto_scheduler: analytics export scheduled %r", cron)
+
+
 def is_enabled(config: dict) -> bool:
     return (config.get("scheduling") or {}).get("enabled", True)

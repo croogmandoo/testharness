@@ -47,7 +47,8 @@ def _validate_config(cfg: dict) -> None:
     if not isinstance(cfg, dict):
         raise ConfigError("config.yaml must be a mapping at the top level")
     for key, expected_type in [
-        ("auth", dict), ("environments", dict), ("alerts", dict), ("browser", dict)
+        ("auth", dict), ("environments", dict), ("alerts", dict), ("browser", dict),
+        ("analytics", dict),
     ]:
         if key in cfg and cfg[key] is not None and not isinstance(cfg[key], expected_type):
             raise ConfigError(
@@ -79,6 +80,26 @@ def _validate_config(cfg: dict) -> None:
                         f"config.yaml: 'auth.ldap.{required}' is required "
                         f"when LDAP is enabled"
                     )
+    if "analytics" in cfg and isinstance(cfg["analytics"], dict):
+        analytics = cfg["analytics"]
+        if analytics.get("enabled"):
+            target = analytics.get("target")
+            if not isinstance(target, dict):
+                raise ConfigError(
+                    "config.yaml: 'analytics.target' must be a mapping when "
+                    "analytics is enabled"
+                )
+            ttype = (target.get("type") or "local").lower()
+            if ttype not in ("local", "azure_blob"):
+                raise ConfigError(
+                    f"config.yaml: 'analytics.target.type' must be 'local' or "
+                    f"'azure_blob', got {target.get('type')!r}"
+                )
+            if ttype == "azure_blob" and not target.get("container"):
+                raise ConfigError(
+                    "config.yaml: 'analytics.target.container' is required "
+                    "when target.type is 'azure_blob'"
+                )
 
 
 def resolve_env_vars(obj: Any, strict: bool = True, extra_vars: dict = None) -> Any:

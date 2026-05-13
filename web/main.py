@@ -112,6 +112,32 @@ def _start_scheduler() -> None:
                 _log.exception("scheduler: stale-run check failed")
         add_stale_check_job(sched, _stale_cb)
 
+    # Daily Parquet analytics export — see docs/guides/analytics.md.
+    # Opt-in via `analytics.enabled: true` + a target block in config.yaml.
+    analytics_cfg = _config.get("analytics") or {}
+    if analytics_cfg.get("enabled"):
+        try:
+            from harness.analytics import build_target, export_all_tables
+            from harness.auto_scheduler import add_analytics_export_job
+            _export_target = build_target(analytics_cfg.get("target") or {})
+            _export_tables = analytics_cfg.get("tables")  # None -> default set
+            _export_cron = analytics_cfg.get("export_cron", "0 1 * * *")
+
+            def _export_cb() -> None:
+                if _db is None:
+                    return
+                try:
+                    export_all_tables(_db, _export_target, tables=_export_tables)
+                except Exception:
+                    _log.exception("scheduler: analytics export failed")
+
+            add_analytics_export_job(sched, _export_cb, cron=_export_cron)
+        except Exception:
+            _log.exception(
+                "scheduler: failed to wire analytics export; export disabled "
+                "for this process. Check analytics.target config."
+            )
+
     if not sched.get_jobs():
         _log.info("scheduler: no jobs configured, not starting")
         return
