@@ -34,6 +34,19 @@ docker compose up -d
 Open <http://localhost:9552>.  First load redirects to `/setup` so you can
 create the admin account.
 
+## Quick start (Ubuntu Server — turnkey)
+
+For a single-VM deployment without a checkout:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/croogmandoo/testharness/master/scripts/install-on-ubuntu.sh \
+  | sudo bash
+```
+
+Installs Docker, lays out `/opt/harness/{data,apps,config.yaml}`, registers a
+systemd unit, and starts the container. Used as the basis for OVA/OVF
+appliance builds — see [`docs/guides/deployment-vmware-ova.md`](docs/guides/deployment-vmware-ova.md).
+
 ## Quick start (native Python)
 
 ```bash
