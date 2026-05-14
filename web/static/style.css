@@ -348,6 +348,20 @@ select.input, select.search {
   border-radius: var(--radius);
   overflow: hidden;
 }
+
+/* Opt-in horizontal scroll for wide tables (e.g. /admin/runners with 10
+   columns). Keeps the table from breaking out of its parent .card while
+   preserving every column's content. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* Counter the card's inner padding so the scrollable strip spans the
+     full card width — the table's own border + radius give the visual
+     boundary. */
+  margin: 0 calc(-1 * var(--space-6));
+  padding: 0 var(--space-6);
+}
+.table-scroll > .table { min-width: max-content; }
 .table th {
   text-align: left;
   padding: var(--space-3) var(--space-4);

@@ -37,6 +37,7 @@
   </p>
 
   {% if runners %}
+  <div class="table-scroll">
   <table class="table">
     <thead>
       <tr>
@@ -126,6 +127,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <div class="empty-state">
     <div class="empty-state-icon">🛰️</div>
@@ -163,6 +165,7 @@
     it; investigate the worker's network or capacity first if you expect repeat
     failures.
   </p>
+  <div class="table-scroll">
   <table class="table">
     <thead>
       <tr>
@@ -201,6 +204,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </div>
 {% endif %}
 
