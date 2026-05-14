@@ -6,9 +6,29 @@
 __version__ = "1.0.0"
 
 from harness.models import TestResult, Run, AppState, StepResult
-from harness.browser import run_browser_test
 from harness.api import run_api_test
 from harness.config import ConfigError
+
+
+# Lazy re-export of ``harness.browser.run_browser_test``. The browser module
+# pulls in Playwright (~1.3 GB of runtime + Chromium), which the slim worker
+# image (``worker/Dockerfile.slim``) deliberately omits. Eager re-export here
+# would crash ``import harness`` on the slim image — even for workers whose
+# capability set is ``api,availability`` only. PEP-562 module-level
+# ``__getattr__`` defers the actual import until something references the
+# attribute, so:
+#
+#   from harness import run_browser_test   # still works on full image
+#   from harness import TestResult         # works on slim image too
+#
+# On slim, ``run_browser_test`` is never referenced (the central refuses to
+# dispatch browser-typed jobs to api/availability-capable workers), so the
+# Playwright import is never triggered.
+def __getattr__(name):
+    if name == "run_browser_test":
+        from harness.browser import run_browser_test as _f
+        return _f
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # AppTest base class for Python escape-hatch test files
 #
