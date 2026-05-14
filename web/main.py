@@ -129,6 +129,16 @@ def _start_scheduler() -> None:
                 _log.exception("scheduler: retention prune failed")
         add_retention_job(sched, retention_days, _prune_cb)
 
+    # Worker stuck-job reaper — every ``worker.reaper_interval_seconds`` (60s
+    # default) the reaper scans runner_jobs in state='assigned' that have
+    # exceeded ``worker.job_timeout_seconds`` and either re-queues them or
+    # marks them failed after ``worker.max_retries`` exceeded.
+    try:
+        from harness.worker_dispatch import add_reaper_job
+        add_reaper_job(sched, _db, config=_config)
+    except Exception:
+        _log.exception("scheduler: failed to wire stuck-job reaper")
+
     # Hourly stale-run check.  Defaults are sane; opt-out via
     # `alerts.stale_check_enabled: false`.
     stale_enabled = ((_config.get("alerts") or {})

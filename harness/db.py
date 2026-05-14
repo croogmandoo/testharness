@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
     expires_at   TEXT,
     created_at   TEXT NOT NULL,
     last_used_at TEXT,
-    is_active    INTEGER NOT NULL DEFAULT 1
+    is_active    INTEGER NOT NULL DEFAULT 1,
+    scope        TEXT NOT NULL DEFAULT '["*"]'   -- JSON array of scope strings
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
 CREATE INDEX IF NOT EXISTS idx_api_keys_user   ON api_keys(user_id);
@@ -124,12 +125,13 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
     target_tag   TEXT,                  -- tag-based dispatch, or NULL for any
     app_def_json TEXT NOT NULL,         -- fully-resolved app def (secrets in plaintext)
     environment  TEXT NOT NULL,
-    state        TEXT NOT NULL,         -- queued/assigned/complete/timeout/cancelled
+    state        TEXT NOT NULL,         -- queued/assigned/complete/timeout/cancelled/failed
     queued_at    TEXT NOT NULL,
     assigned_to  TEXT,                  -- worker name that claimed it
     assigned_at  TEXT,
     completed_at TEXT,
-    error        TEXT
+    error        TEXT,
+    retry_count  INTEGER NOT NULL DEFAULT 0   -- number of times reaper requeued this job
 );
 CREATE INDEX IF NOT EXISTS idx_runner_jobs_dispatch
     ON runner_jobs(state, runner_name, target_tag);
@@ -149,21 +151,26 @@ class Database:
     def init_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(SCHEMA)
-            try:
-                conn.execute("ALTER TABLE users ADD COLUMN oauth_provider_id TEXT")
-                conn.commit()
-            except Exception:
-                pass
-            try:
-                conn.execute("ALTER TABLE users ADD COLUMN failed_login_count INTEGER NOT NULL DEFAULT 0")
-                conn.commit()
-            except Exception:
-                pass
-            try:
-                conn.execute("ALTER TABLE users ADD COLUMN locked_until TEXT")
-                conn.commit()
-            except Exception:
-                pass
+            # Additive migrations for pre-existing databases. SQLite's ALTER
+            # TABLE ... ADD COLUMN is idempotent only via the try/except dance
+            # because there's no "ADD COLUMN IF NOT EXISTS".
+            for migration in (
+                "ALTER TABLE users ADD COLUMN oauth_provider_id TEXT",
+                "ALTER TABLE users ADD COLUMN failed_login_count INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN locked_until TEXT",
+                # workers-v2: retry tracking on runner_jobs (feature #1)
+                "ALTER TABLE runner_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
+                # workers-v2: per-key scopes (feature #5). Existing keys default
+                # to '["*"]' (all scopes) for backward compatibility.
+                "ALTER TABLE api_keys ADD COLUMN scope TEXT NOT NULL DEFAULT '[\"*\"]'",
+                # workers-v2: link test_results to screenshot file paths (feature #2)
+                "ALTER TABLE test_results ADD COLUMN screenshot_path TEXT",
+            ):
+                try:
+                    conn.execute(migration)
+                    conn.commit()
+                except Exception:
+                    pass
 
     def insert_run(self, run: Run) -> None:
         with self._connect() as conn:
@@ -890,3 +897,54 @@ class Database:
                 (name,),
             ).fetchone()
         return row[0] if row else 0
+
+    def find_stuck_runner_jobs(self, *, older_than: str) -> list:
+        """Return runner_jobs in 'assigned' (claimed) state whose
+        ``assigned_at`` is older than the supplied ISO timestamp. Used by the
+        stuck-job reaper to detect workers that crashed mid-job.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM runner_jobs WHERE state='assigned' "
+                "AND assigned_at IS NOT NULL AND assigned_at < ? "
+                "ORDER BY assigned_at",
+                (older_than,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def requeue_runner_job(self, job_id: str) -> Optional[dict]:
+        """Flip a stuck 'assigned' job back to 'queued' so another worker can
+        claim it. Clears assignment metadata and bumps retry_count by 1.
+        Returns the row after the update (or None if not found)."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE runner_jobs "
+                "SET state='queued', assigned_to=NULL, assigned_at=NULL, "
+                "    retry_count = retry_count + 1 "
+                "WHERE id=? AND state='assigned'",
+                (job_id,),
+            )
+            row = conn.execute(
+                "SELECT * FROM runner_jobs WHERE id=?", (job_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def fail_runner_job(self, job_id: str, error: str) -> Optional[dict]:
+        """Permanently mark a job 'failed' (retry budget exhausted). The
+        associated Run is moved to 'error' so the dashboard surfaces it."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE runner_jobs SET state='failed', completed_at=?, error=? "
+                "WHERE id=?",
+                (now, error, job_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM runner_jobs WHERE id=?", (job_id,),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE runs SET status='error', finished_at=? WHERE id=?",
+                    (now, row["run_id"]),
+                )
+        return dict(row) if row else None
