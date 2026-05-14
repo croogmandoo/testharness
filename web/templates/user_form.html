@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="breadcrumb">
-  <a href="/users">Users</a> / {% if mode == "create" %}New User{% else %}Edit {{ user.username }}{% endif %}
+  <a href="/admin">Admin</a> / <a href="/users">Users</a> / {% if mode == "create" %}New User{% else %}Edit {{ user.username }}{% endif %}
 </div>
 
 <div class="max-w-md">
