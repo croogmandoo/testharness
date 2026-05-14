@@ -244,3 +244,37 @@ def test_harness_js_has_validator_helpers():
     assert 'field-error' in js
     # And listen on blur (not submit) per spec.
     assert 'addEventListener("blur"' in js
+
+
+def test_harness_js_uses_friendly_constraint_table():
+    """friendlyMessage() must dispatch through a per-constraint FRIENDLY
+    table rather than fall back to input.validationMessage. Ugly stock
+    browser strings ('Please fill out this field') should never surface."""
+    js = Path("web/static/harness.js").read_text(encoding="utf-8")
+    # The dispatch table itself
+    assert "FRIENDLY" in js
+    assert "CONSTRAINT_ORDER" in js
+    # Required-first ordering: valueMissing must precede typeMismatch
+    vm_idx = js.index('"valueMissing"')
+    tm_idx = js.index('"typeMismatch"')
+    assert vm_idx < tm_idx, (
+        "valueMissing must win over typeMismatch so empty email fields "
+        "show 'This field is required.' rather than 'Enter a valid email…'"
+    )
+    # Friendly strings end-users actually see
+    assert "This field is required." in js
+    assert "Enter a valid email address." in js
+    assert "Enter a valid URL like https://example.com." in js
+    assert "Must be at least " in js
+    assert "Must be at most " in js
+    assert "Must be " in js  # range underflow / overflow
+    # Pattern fields read a custom hint via data-error (with safe default)
+    assert "input.dataset.error" in js
+    assert "Doesn't match the expected format." in js
+    # All ten standard ValidityState constraints have a friendly mapping
+    for key in (
+        "valueMissing", "typeMismatch", "tooShort", "tooLong",
+        "rangeUnderflow", "rangeOverflow", "patternMismatch",
+        "stepMismatch", "badInput", "customError",
+    ):
+        assert key in js, f"FRIENDLY table missing {key} mapping"
