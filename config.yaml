@@ -1,5 +1,16 @@
 default_environment: production
 
+# Structured logging — root + harness.* loggers go through a rotating file
+# handler plus a console handler (for systemd / docker journaling). All knobs
+# below show defaults; the whole section is optional.
+# logging:
+#   path: data/logs/harness.log    # rotating log file (created if missing)
+#   level: INFO                    # DEBUG | INFO | WARNING | ERROR | CRITICAL
+#   max_bytes: 10000000            # rotate when file exceeds ~10 MB
+#   backup_count: 5                # keep N rotated files (.1 .. .N)
+#   console: true                  # also emit to stderr (set false in prod containers)
+#   console_level: INFO            # defaults to `level` when omitted
+
 auth:
   session_hours: 8
   secure_cookie: false   # set true for HTTPS deployments

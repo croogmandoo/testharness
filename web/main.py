@@ -200,6 +200,12 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     _config = config or {}
     _apps_dir = apps_dir
 
+    # Wire structured logging FIRST so anything that logs during startup
+    # (scheduler, secrets store, app loader) lands in the rotating file.
+    # Idempotent: safe to call again from main() / test fixtures.
+    from harness.logging_config import configure as _configure_logging
+    _configure_logging(_config)
+
     # Initialise DB and SecretsStore first so decrypted secrets can be passed
     # into app YAML resolution via extra_vars (no os.environ mutation).
     if db is None:
