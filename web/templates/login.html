@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sign in — Harness</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
   <script>
     (function(){
       var t = localStorage.getItem('theme') || 'dark';
       document.documentElement.setAttribute('data-theme', t);
     })();
   </script>
-  <script src="/static/harness.js" defer></script>
+  <script src="/static/harness.js?v={{ asset_version }}" defer></script>
 </head>
 <body>
 <div class="auth-wrap">

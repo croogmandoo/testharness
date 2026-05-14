@@ -4,15 +4,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from fastapi.templating import Jinja2Templates
 from starlette.background import BackgroundTask
 from web.auth import require_role
 from web.csrf import csrf_token_for
+from web.templating import make_templates
 
 router = APIRouter()
-templates = Jinja2Templates(
-    directory=os.path.join(os.path.dirname(__file__), "..", "templates")
-)
+templates = make_templates()
 
 
 def _ctx(request: Request, current_user: dict, **extra) -> dict:

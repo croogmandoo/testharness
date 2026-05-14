@@ -9,14 +9,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, Request, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 from web.auth import KNOWN_SCOPES, get_current_user
 from web.csrf import csrf_token_for, verify_csrf
+from web.templating import make_templates
 
 router = APIRouter()
-templates = Jinja2Templates(
-    directory=os.path.join(os.path.dirname(__file__), "..", "templates")
-)
+templates = make_templates()
 
 _EXPIRY_MAP = {
     "7": 7,

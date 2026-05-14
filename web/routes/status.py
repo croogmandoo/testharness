@@ -10,12 +10,10 @@ import os
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
+from web.templating import make_templates
 
 router = APIRouter()
-templates = Jinja2Templates(
-    directory=os.path.join(os.path.dirname(__file__), "..", "templates")
-)
+templates = make_templates()
 
 
 def _summarise(summary_rows: list) -> str:

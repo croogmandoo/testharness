@@ -292,8 +292,8 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     # 403 exception handler — renders 403.html for HTML requests.
     from fastapi.exceptions import HTTPException as _HTTPExc
     from fastapi.responses import JSONResponse
-    from fastapi.templating import Jinja2Templates as _Tmpl
-    _tmpl = _Tmpl(directory=os.path.join(os.path.dirname(__file__), "templates"))
+    from web.templating import make_templates as _make_tmpl
+    _tmpl = _make_tmpl()
 
     @app.exception_handler(_HTTPExc)
     async def _http_exc_handler(request, exc: _HTTPExc):

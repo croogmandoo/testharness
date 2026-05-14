@@ -2,14 +2,12 @@ import json
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-import os
-
 from web.auth import get_current_user
 from web.csrf import csrf_token_for
+from web.templating import make_templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "..", "templates"))
+templates = make_templates()
 
 
 @router.get("/", response_class=HTMLResponse)

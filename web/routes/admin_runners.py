@@ -5,17 +5,14 @@ from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-
 from web.auth import get_api_key_scopes, require_role
 from web.csrf import csrf_token_for, verify_csrf
+from web.templating import make_templates
 
 _log = logging.getLogger("web.admin_runners")
 
 router = APIRouter()
-templates = Jinja2Templates(
-    directory=os.path.join(os.path.dirname(__file__), "..", "templates")
-)
+templates = make_templates()
 
 
 def _ctx(request: Request, current_user: dict, **extra) -> dict:

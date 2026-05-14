@@ -3,14 +3,12 @@ import yaml
 from fastapi import APIRouter, Depends, Request, HTTPException
 from harness.app_manager import get_known_vars
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 from web.auth import get_current_user, require_role
 from web.csrf import csrf_token_for
+from web.templating import make_templates
 
 router = APIRouter()
-templates = Jinja2Templates(
-    directory=os.path.join(os.path.dirname(__file__), "..", "templates")
-)
+templates = make_templates()
 
 
 def _nav_ctx(request: Request) -> dict:
