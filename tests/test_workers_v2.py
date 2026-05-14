@@ -1138,3 +1138,216 @@ def test_admin_runners_page_shows_skew_badge(app_client, db, monkeypatch):
     assert "stale" in body
 
 
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# workers-v2-1 Feature B: Volume health check + auto-drain
+# ══════════════════════════════════════════════════════════════════════════
+
+def test_volume_health_clean_when_dirs_writable(tmp_path):
+    """Both outbox parent and screenshot dir present + writable → no issues."""
+    import worker.worker as w
+    (tmp_path / "data").mkdir()
+    (tmp_path / "screens").mkdir()
+    cfg = _make_worker_cfg(
+        tmp_path,
+        outbox_path=str(tmp_path / "data" / "outbox.jsonl"),
+        screenshot_dir=str(tmp_path / "screens"),
+    )
+    issues = w._check_volume_health(cfg)
+    assert issues == []
+
+
+def test_volume_health_creates_missing_outbox_parent(tmp_path):
+    """A missing outbox parent dir should be auto-created by the probe —
+    the probe is "verify writable" and ``os.makedirs(exist_ok=True)`` is
+    cheap. After probe, the dir exists and no issues are reported."""
+    import worker.worker as w
+    cfg = _make_worker_cfg(
+        tmp_path,
+        outbox_path=str(tmp_path / "newly-made" / "outbox.jsonl"),
+        screenshot_dir=str(tmp_path / "screens"),
+    )
+    (tmp_path / "screens").mkdir()
+    issues = w._check_volume_health(cfg)
+    assert issues == []
+    assert (tmp_path / "newly-made").is_dir()
+
+
+def test_volume_health_reports_unwritable_outbox(tmp_path):
+    """When the outbox parent is made read-only mid-run, the probe should
+    catch it via the temp-write attempt and surface an 'outbox' issue."""
+    import worker.worker as w
+    outbox_parent = tmp_path / "data"
+    outbox_parent.mkdir()
+    screens = tmp_path / "screens"
+    screens.mkdir()
+    cfg = _make_worker_cfg(
+        tmp_path,
+        outbox_path=str(outbox_parent / "outbox.jsonl"),
+        screenshot_dir=str(screens),
+    )
+    # Healthy first
+    assert w._check_volume_health(cfg) == []
+
+    # Now drop the outbox dir
+    import shutil
+    shutil.rmtree(outbox_parent)
+    # The probe will attempt to recreate via makedirs(exist_ok=True), so
+    # plain removal won't reproduce the spec. Replace it with a FILE so
+    # makedirs raises FileExistsError → still not a directory.
+    outbox_parent.write_text("blocker")
+
+    issues = w._check_volume_health(cfg)
+    assert any("outbox" in i for i in issues), issues
+
+
+def test_volume_health_reports_readonly_screenshot_dir(tmp_path):
+    """``os.chmod(..., 0o400)`` makes the screenshot dir non-writable —
+    the temp-write probe should surface a 'screenshots' issue."""
+    import worker.worker as w
+    # If running as root, chmod-based permission tests don't apply — root
+    # bypasses POSIX checks. Skip cleanly.
+    if os.geteuid() == 0:
+        pytest.skip("permission-based test useless as root")
+    outbox_parent = tmp_path / "data"
+    outbox_parent.mkdir()
+    screens = tmp_path / "screens"
+    screens.mkdir()
+    cfg = _make_worker_cfg(
+        tmp_path,
+        outbox_path=str(outbox_parent / "outbox.jsonl"),
+        screenshot_dir=str(screens),
+    )
+    os.chmod(screens, 0o400)
+    try:
+        issues = w._check_volume_health(cfg)
+        assert any("screenshots" in i for i in issues), issues
+    finally:
+        # Cleanup so pytest can remove tmp_path
+        os.chmod(screens, 0o700)
+
+
+def test_submit_results_runs_preflight_health_check(tmp_path, caplog):
+    """submit_results should log a volume-health warning when the outbox
+    parent is unwritable, BUT still attempt the POST. The outbox is the
+    recovery path; we don't drop results just because the disk is sad."""
+    import logging as _logging
+    import worker.worker as w
+
+    outbox_parent = tmp_path / "data"
+    outbox_parent.mkdir()
+    cfg = _make_worker_cfg(
+        tmp_path,
+        outbox_path=str(outbox_parent / "outbox.jsonl"),
+        screenshot_dir=str(tmp_path / "screens"),
+    )
+    # Replace screenshot dir with a file so the probe flags it.
+    (tmp_path / "screens").write_text("blocker")
+
+    posted = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        posted.append(json.loads(req.content))
+        return httpx.Response(200, json={"ok": True})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await w.submit_results(client, cfg, "job-x", "complete", [])
+
+    with caplog.at_level(_logging.ERROR, logger="harness.worker"):
+        asyncio.run(run())
+    # Still posted, despite the health complaint
+    assert len(posted) == 1
+    assert posted[0]["job_id"] == "job-x"
+    # And the warning was logged
+    assert any("volume health" in rec.message.lower() for rec in caplog.records)
+
+
+def test_heartbeat_payload_includes_health_field(tmp_path):
+    """The worker's heartbeat() helper sends the optional ``health`` field
+    when supplied. Captured via MockTransport."""
+    import worker.worker as w
+    cfg = _make_worker_cfg(tmp_path)
+    captured: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(req.content))
+        return httpx.Response(200, json={"ok": True, "server_time": "now"})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await w.heartbeat(client, cfg, health="unhealthy")
+
+    asyncio.run(run())
+    assert captured.get("health") == "unhealthy"
+    assert captured.get("version") == cfg.version
+
+
+def test_heartbeat_logs_notice_from_response(tmp_path, caplog):
+    """If central returns a ``notice``, the worker logs it at WARNING."""
+    import logging as _logging
+    import worker.worker as w
+    cfg = _make_worker_cfg(tmp_path)
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "ok": True, "server_time": "now",
+            "notice": "central says: incompatible major version",
+        })
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await w.heartbeat(client, cfg, health="healthy")
+
+    with caplog.at_level(_logging.WARNING, logger="harness.worker"):
+        asyncio.run(run())
+    assert any("incompatible major version" in rec.message
+               for rec in caplog.records)
+
+
+def test_unhealthy_heartbeat_auto_drains_runner(app_client, db):
+    """When a worker reports health='unhealthy', central flips its row to
+    status='draining'. Subsequent 'healthy' restores it to 'online'."""
+    _, key = _seed_user_and_key(db)
+    app_client.post("/api/runner/register", headers=_bearer(key), json={
+        "name": "w", "tags": [], "capabilities": [], "version": "1.0.0",
+    })
+    assert db.get_runner_by_name("w")["status"] == "online"
+
+    # Unhealthy → drain
+    resp = app_client.post(
+        "/api/runner/heartbeat", headers=_bearer(key),
+        json={"name": "w", "health": "unhealthy"},
+    )
+    assert resp.status_code == 200
+    assert db.get_runner_by_name("w")["status"] == "draining"
+    assert db.get_runner_by_name("w")["health"] == "unhealthy"
+
+    # Recover → restore
+    resp = app_client.post(
+        "/api/runner/heartbeat", headers=_bearer(key),
+        json={"name": "w", "health": "healthy"},
+    )
+    assert resp.status_code == 200
+    assert db.get_runner_by_name("w")["status"] == "online"
+    assert db.get_runner_by_name("w")["health"] == "healthy"
+
+
+def test_heartbeat_without_health_field_is_backcompat(app_client, db):
+    """Older worker builds don't send ``health`` — should still work."""
+    _, key = _seed_user_and_key(db)
+    app_client.post("/api/runner/register", headers=_bearer(key), json={
+        "name": "w", "tags": [], "capabilities": [],
+    })
+    resp = app_client.post(
+        "/api/runner/heartbeat", headers=_bearer(key), json={"name": "w"},
+    )
+    assert resp.status_code == 200
+
+
+def test_is_worker_unhealthy_default_false(tmp_path):
+    """Fresh module state: the worker-side flag starts at False."""
+    import worker.worker as w
+    w._set_unhealthy(False)  # reset between tests (module global)
+    assert w.is_worker_unhealthy() is False
