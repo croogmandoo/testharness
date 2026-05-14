@@ -185,13 +185,23 @@ async def _poll_for_jobs_short(client: httpx.AsyncClient, cfg: WorkerConfig,
 async def submit_results(client: httpx.AsyncClient, cfg: WorkerConfig,
                           job_id: str, run_status: str,
                           results: list[dict],
-                          error: Optional[str] = None) -> None:
+                          error: Optional[str] = None,
+                          screenshots: Optional[list[dict]] = None) -> None:
+    """POST results to /api/runner/results. On connection error or 5xx,
+    persist the payload to the local outbox for later replay. On success,
+    opportunistically flush any queued outbox entries.
+
+    A 4xx (client error) is logged but NOT buffered — replaying a malformed
+    payload won't help. Buffering is reserved for transient failures.
+    """
     payload = {
         "job_id": job_id,
         "run_status": run_status,
         "error": error,
         "results": results,
     }
+    if screenshots:
+        payload["screenshots"] = screenshots
     try:
         resp = await client.post(
             f"{cfg.harness_url}/api/runner/results",
@@ -199,10 +209,126 @@ async def submit_results(client: httpx.AsyncClient, cfg: WorkerConfig,
             headers=_headers(cfg),
         )
         resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        if 500 <= e.response.status_code < 600:
+            _log.warning(
+                "submit_results 5xx for job %s (%s) — buffering for replay",
+                job_id, e.response.status_code,
+            )
+            outbox_append(cfg, payload)
+        else:
+            _log.error(
+                "submit_results 4xx for job %s (%s) — not retrying: %s",
+                job_id, e.response.status_code, e,
+            )
+        return
     except httpx.HTTPError as e:
-        # Log + raise — caller may want to retry / queue locally
-        _log.error("submit_results failed for job %s: %s", job_id, e)
-        raise
+        # Connection error, timeout, DNS, etc. — buffer for replay.
+        _log.warning(
+            "submit_results network error for job %s: %s — buffering for replay",
+            job_id, e,
+        )
+        outbox_append(cfg, payload)
+        return
+
+    # Success path — try to flush the outbox (one entry).
+    await outbox_flush_one(client, cfg)
+
+
+# ── Outbox: durable buffer for failed result uploads (feature #3) ───────────
+
+def outbox_append(cfg: WorkerConfig, payload: dict) -> None:
+    """Append one JSON-serialisable payload to the outbox. If the file is
+    already at ``cfg.outbox_max`` entries, drop the oldest line and warn."""
+    import json as _json
+    try:
+        os.makedirs(os.path.dirname(cfg.outbox_path) or ".", exist_ok=True)
+    except OSError as e:
+        _log.error("outbox: cannot create dir for %s: %s", cfg.outbox_path, e)
+        return
+
+    # Count existing lines
+    existing: list[str] = []
+    if os.path.exists(cfg.outbox_path):
+        try:
+            with open(cfg.outbox_path, "r", encoding="utf-8") as f:
+                existing = [ln for ln in f.read().splitlines() if ln.strip()]
+        except OSError as e:
+            _log.error("outbox: read failed: %s", e)
+
+    while len(existing) >= cfg.outbox_max:
+        dropped = existing.pop(0)
+        _log.warning(
+            "outbox: capacity %d reached — dropping oldest entry (%d bytes)",
+            cfg.outbox_max, len(dropped),
+        )
+
+    existing.append(_json.dumps(payload, separators=(",", ":")))
+    try:
+        with open(cfg.outbox_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(existing) + "\n")
+    except OSError as e:
+        _log.error("outbox: write failed: %s", e)
+
+
+async def outbox_flush_one(client: httpx.AsyncClient, cfg: WorkerConfig) -> bool:
+    """Try to replay the oldest entry. On HTTP success, remove it from the
+    file; on failure, leave it for the next attempt. Returns True if an
+    entry was successfully flushed."""
+    import json as _json
+    if not os.path.exists(cfg.outbox_path):
+        return False
+    try:
+        with open(cfg.outbox_path, "r", encoding="utf-8") as f:
+            lines = [ln for ln in f.read().splitlines() if ln.strip()]
+    except OSError as e:
+        _log.error("outbox: read failed during flush: %s", e)
+        return False
+    if not lines:
+        return False
+    head = lines[0]
+    try:
+        payload = _json.loads(head)
+    except ValueError:
+        _log.warning("outbox: head entry is malformed JSON — discarding")
+        lines = lines[1:]
+        with open(cfg.outbox_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + ("\n" if lines else ""))
+        return False
+
+    try:
+        resp = await client.post(
+            f"{cfg.harness_url}/api/runner/results",
+            json=payload,
+            headers=_headers(cfg),
+        )
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        if 400 <= e.response.status_code < 500:
+            # Permanent — drop it so the rest of the queue isn't blocked.
+            _log.error(
+                "outbox: head entry %s — dropping (4xx)",
+                e.response.status_code,
+            )
+            lines = lines[1:]
+            with open(cfg.outbox_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + ("\n" if lines else ""))
+            return True  # made progress (one entry removed)
+        _log.info("outbox: replay failed (%s) — keeping in queue", e.response.status_code)
+        return False
+    except httpx.HTTPError as e:
+        _log.info("outbox: replay network error — keeping in queue: %s", e)
+        return False
+
+    lines = lines[1:]
+    try:
+        with open(cfg.outbox_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + ("\n" if lines else ""))
+    except OSError as e:
+        _log.error("outbox: truncate failed after successful replay: %s", e)
+        return True
+    _log.info("outbox: replayed 1 entry (%d remaining)", len(lines))
+    return True
 
 
 # ── Job execution ───────────────────────────────────────────────────────────
