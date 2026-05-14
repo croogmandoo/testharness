@@ -697,6 +697,16 @@ class Database:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def get_api_key_by_id(self, key_id: str) -> Optional[dict]:
+        """Look up an api_keys row by primary key. Returns None if not found.
+        Used by /admin/runners to surface the scope of the key a worker
+        registered with (feature workers-v2 #5 cross-link)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM api_keys WHERE id=?", (key_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
     def revoke_api_key(self, key_id: str, user_id: Optional[str] = None) -> None:
         with self._connect() as conn:
             if user_id is None:
@@ -956,6 +966,70 @@ class Database:
             ).fetchone()
         return row[0] if row else 0
 
+    def sum_retry_count_for_runner(self, name: str, *, since_iso: str) -> int:
+        """Sum of runner_jobs.retry_count for jobs assigned to this worker
+        whose queued_at >= since_iso. Surfaces in the /admin/runners 'Retries'
+        column so operators can spot a worker that keeps stranding jobs.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(retry_count), 0) AS total "
+                "FROM runner_jobs WHERE assigned_to=? AND queued_at >= ?",
+                (name, since_iso),
+            ).fetchone()
+        return int(row["total"]) if row else 0
+
+    def list_recent_screenshots_for_workers(self, since_iso: str) -> list:
+        """Return test_results rows whose run was executed by ANY worker
+        (runner_jobs.worker IS NOT NULL) and whose screenshot_path is set,
+        finished within the last 24h. Used by /admin/runners 'Last 24h
+        artifacts' panel.
+
+        Each row: {test_result_id, screenshot_path, finished_at, run_id,
+        worker_name}.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT tr.id AS test_result_id, "
+                "       tr.screenshot_path, "
+                "       tr.finished_at, "
+                "       tr.run_id, "
+                "       rj.assigned_to AS worker_name "
+                "FROM test_results tr "
+                "JOIN runner_jobs rj ON rj.run_id = tr.run_id "
+                "WHERE tr.screenshot_path IS NOT NULL "
+                "  AND tr.screenshot_path != '' "
+                "  AND rj.assigned_to IS NOT NULL "
+                "  AND tr.finished_at IS NOT NULL "
+                "  AND tr.finished_at >= ?",
+                (since_iso,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_reaper_failed_runs(self, *, limit: int = 50) -> list:
+        """Return runs that the reaper permanently failed (retry budget
+        exhausted). Joins runner_jobs → runs so the dashboard panel can
+        surface the original app name + last error in one query.
+
+        A "reaper-exhausted" job is recognised by state='failed' on
+        runner_jobs with retry_count >= max_retries; since we don't store
+        max_retries per-job (it's a config value), we surface every
+        failed runner_job that has retry_count > 0 — that's the practical
+        definition: the reaper touched it at least once and gave up.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT rj.id AS job_id, rj.run_id, rj.error AS last_error, "
+                "       rj.retry_count, rj.completed_at, rj.assigned_to AS worker_name, "
+                "       r.app AS app_name, r.environment, r.triggered_by "
+                "FROM runner_jobs rj "
+                "JOIN runs r ON r.id = rj.run_id "
+                "WHERE rj.state='failed' AND rj.retry_count > 0 "
+                "ORDER BY rj.completed_at DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def find_stuck_runner_jobs(self, *, older_than: str) -> list:
         """Return runner_jobs in 'assigned' (claimed) state whose
         ``assigned_at`` is older than the supplied ISO timestamp. Used by the
@@ -1004,5 +1078,36 @@ class Database:
                 conn.execute(
                     "UPDATE runs SET status='error', finished_at=? WHERE id=?",
                     (now, row["run_id"]),
+                )
+        return dict(row) if row else None
+
+    def manually_requeue_failed_job(self, job_id: str) -> Optional[dict]:
+        """Admin-initiated re-queue of a job the reaper had given up on.
+        Resets state='queued', clears assignment metadata, leaves retry_count
+        in place (so operators can see the history), and flips the linked
+        Run back to 'queued' so the dashboard reflects the re-attempt.
+
+        Returns the row after the update, or None if the job didn't exist
+        or wasn't in state='failed'. The caller is expected to call
+        ``notify_job_queued`` to wake polling workers.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE runner_jobs "
+                "SET state='queued', assigned_to=NULL, assigned_at=NULL, "
+                "    completed_at=NULL, error=NULL, queued_at=? "
+                "WHERE id=? AND state='failed'",
+                (now, job_id),
+            )
+            if cur.rowcount == 0:
+                return None
+            row = conn.execute(
+                "SELECT * FROM runner_jobs WHERE id=?", (job_id,),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE runs SET status='queued', finished_at=NULL WHERE id=?",
+                    (row["run_id"],),
                 )
         return dict(row) if row else None

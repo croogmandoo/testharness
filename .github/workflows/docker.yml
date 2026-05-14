@@ -39,3 +39,48 @@ jobs:
           # Layer cache speeds up the Playwright/Chromium install on repeat runs
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # ── Slim worker image ────────────────────────────────────────────────
+      # Build the trimmed worker variant (no Playwright/Chromium). This is
+      # the image operators deploy in zones that only need API / availability
+      # checks. We build it locally first so we can assert the size budget
+      # BEFORE pushing — if the slim image balloons past 200 MB, fail the
+      # job rather than publish a "slim" image that isn't.
+      - name: Build slim worker image (local, for size check)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: worker/Dockerfile.slim
+          # Always load to the local Docker daemon so `docker image inspect`
+          # can see it. We push in a later step only if the size assertion
+          # passes and this is a real push event.
+          load: true
+          push: false
+          tags: |
+            ghcr.io/croogmandoo/testharness-worker-slim:latest
+            ghcr.io/croogmandoo/testharness-worker-slim:${{ github.sha }}
+          # Separate cache scope from the central image so neither evicts the
+          # other. mode=max stores intermediate layers so the multi-stage
+          # build's wheel-compile stage is reused on repeat runs.
+          cache-from: type=gha,scope=worker-slim
+          cache-to: type=gha,mode=max,scope=worker-slim
+
+      - name: Assert slim image is under 200 MB
+        env:
+          IMG_TAG: ghcr.io/croogmandoo/testharness-worker-slim:${{ github.sha }}
+        run: |
+          SIZE=$(docker image inspect "$IMG_TAG" --format='{{.Size}}')
+          echo "Slim image size: $SIZE bytes ($((SIZE / 1024 / 1024)) MB)"
+          if [ "$SIZE" -gt 209715200 ]; then
+            echo "::error::Slim image exceeds 200 MB cap: $SIZE bytes"
+            exit 1
+          fi
+
+      - name: Push slim worker image
+        if: github.event_name == 'push'
+        env:
+          IMG_LATEST: ghcr.io/croogmandoo/testharness-worker-slim:latest
+          IMG_SHA: ghcr.io/croogmandoo/testharness-worker-slim:${{ github.sha }}
+        run: |
+          docker push "$IMG_LATEST"
+          docker push "$IMG_SHA"
