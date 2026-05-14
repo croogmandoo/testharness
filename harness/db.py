@@ -668,13 +668,17 @@ class Database:
     # ── API Keys ────────────────────────────────────────────────────────────
 
     def insert_api_key(self, row: dict) -> None:
+        # ``scope`` is optional for back-compat with callers that pre-date
+        # feature #5. Default to wildcard JSON.
+        row = {**row}
+        row.setdefault("scope", '["*"]')
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO api_keys "
                 "(id, user_id, name, key_prefix, key_hash, expires_at, "
-                "created_at, last_used_at, is_active) "
+                "created_at, last_used_at, is_active, scope) "
                 "VALUES (:id,:user_id,:name,:key_prefix,:key_hash,:expires_at,"
-                ":created_at,:last_used_at,:is_active)",
+                ":created_at,:last_used_at,:is_active,:scope)",
                 row,
             )
 
