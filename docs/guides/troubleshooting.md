@@ -11,6 +11,16 @@ This prevents new runs from being triggered because the harness detects an activ
 
 ## Solution: Reset the Stuck Run
 
+> **As of v2 (2026-05-13), the stuck-job reaper handles this automatically.**
+> Claimed jobs older than `worker.job_timeout_seconds` (default **600** seconds)
+> are requeued every `worker.reaper_interval_seconds` (default **60** seconds),
+> up to `worker.max_retries` (default **3**) before being marked `failed`. The
+> manual procedure below is a last-resort fallback for catastrophic cases —
+> e.g. the reaper itself isn't running (look for
+> `scheduler: failed to wire stuck-job reaper` in the log), the run was
+> dispatched in-process and the central crashed mid-run, or you need to clear
+> a stuck row right now and don't want to wait out the timeout.
+
 ### Prerequisites
 - SQLite3 command-line tool (or any SQLite client)
 - The app name and environment that's stuck

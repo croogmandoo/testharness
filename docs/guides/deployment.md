@@ -198,6 +198,37 @@ server {
 
 ---
 
+## v2 config knobs
+
+Two new optional sections shipped on 2026-05-13. Both have safe defaults
+and can be omitted entirely.
+
+```yaml
+# Structured logging — root + harness.* loggers go through a rotating
+# file handler plus a console handler (systemd / docker journal).
+logging:
+  path: data/logs/harness.log    # rotating log file (created if missing)
+  level: INFO                    # DEBUG | INFO | WARNING | ERROR | CRITICAL
+  max_bytes: 10000000            # rotate when file exceeds ~10 MB
+  backup_count: 5                # keep N rotated files (.1 .. .N)
+  console: true                  # also emit to stderr (set false in containers if journal is enough)
+
+# Remote-worker server-side tunables. Set only if you run remote workers.
+worker:
+  job_timeout_seconds: 600         # stuck-job reaper threshold
+  reaper_interval_seconds: 60      # how often the reaper scans
+  max_retries: 3                   # requeue this many times before failing
+  mtls:                            # optional — see remote-workers.md § "mTLS recipe"
+    enabled: false
+    client_ca_path: /etc/harness/client-ca.pem
+```
+
+The full worker env-var reference (worker-side `HARNESS_*` variables) lives
+in [`remote-workers.md`](remote-workers.md). The two sections above are the
+only **central-side** v2 knobs.
+
+---
+
 ## Upgrading
 
 ```bash
