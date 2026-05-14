@@ -91,26 +91,56 @@ on the central:
 1. Create a dedicated user account, e.g. `worker-bot`, with role `runner`.
 2. Sign in as that user; visit `/api-keys`; generate one key per worker
    (so you can revoke individually).
-3. Set the key on the worker as `HARNESS_API_KEY`.
+3. **Set the scope to `worker:pull,worker:results`** in the "Scopes" field
+   of the key-create form. This gives the key access to exactly the four
+   `/api/runner/*` endpoints the worker needs (`register`, `poll`/`jobs`,
+   `results`, `heartbeat`) — and nothing else. Do **not** use `*` or `admin`;
+   a leaked worker key with full scope is a much bigger blast radius than one
+   that can only push run results.
+4. Set the key on the worker as `HARNESS_API_KEY`.
 
 The `runner` role is sufficient — workers don't need admin. The key is
 stored as a SHA-256 hash on the central; the plaintext is shown once at
 creation. Treat it like a credential.
+
+> Keys created before scopes shipped have an implicit `*` (wildcard) scope
+> and continue to work. New worker keys should always set the explicit
+> minimum: `worker:pull,worker:results`.
 
 ## Configuration (environment variables only)
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
 | `HARNESS_URL` | ✅ | — | Central harness URL; no trailing slash needed |
-| `HARNESS_API_KEY` | ✅ | — | `hth_…` Bearer token |
+| `HARNESS_API_KEY` | ✅ | — | `hth_…` Bearer token (scope `worker:pull,worker:results`) |
 | `HARNESS_WORKER_NAME` | ✅ | — | Globally unique; used by `run_on:` in app YAML |
 | `HARNESS_WORKER_TAGS` | | (empty) | Comma-separated. Matched by `run_on: { tag: ... }` |
 | `HARNESS_CAPABILITIES` | | `api,availability,browser` | Reported at register; informational |
 | `HARNESS_CAPACITY` | | `4` | Max concurrent jobs |
-| `HARNESS_POLL_INTERVAL` | | `10` | Seconds between polls (short-poll v1) |
+| `HARNESS_POLL_INTERVAL` | | `10` | Fallback fixed-interval poll (used after long-poll 204) |
+| `HARNESS_LONG_POLL_WAIT` | | `30` | Long-poll: how long the server holds the connection waiting for a job (max 60) |
 | `HARNESS_HEARTBEAT_INTERVAL` | | `30` | Seconds between heartbeats |
 | `HARNESS_VERIFY_TLS` | | `true` | Set `false` only for self-signed central in dev |
 | `HARNESS_WORKER_VERSION` | | `1.0.0` | Reported at register |
+| `HARNESS_OUTBOX_PATH` | | `data/worker_outbox.jsonl` | On-disk buffer for results when the central is unreachable |
+| `HARNESS_OUTBOX_MAX` | | `1000` | Max queued results in the outbox; oldest evicted on overflow |
+| `HARNESS_SCREENSHOT_DIR` | | `data/worker_screenshots` | Where `harness.runner` writes failure screenshots before upload |
+| `HARNESS_MAX_SCREENSHOT_BYTES` | | `5242880` (5 MiB) | Hard cap per screenshot; worker drops anything larger before posting |
+
+## v2 features
+
+These shipped on 2026-05-13. Each one is wired by default — no flag needed —
+but most have a tunable env var.
+
+| Feature | Env var(s) | Central-side requirement | Notes |
+|---|---|---|---|
+| **Stuck-job reaper** | (server-side; no worker config) | `worker.job_timeout_seconds` (600) and `worker.reaper_interval_seconds` (60) in `config.yaml` | Server scans `runner_jobs` in `assigned` state older than the timeout every interval; requeues them (up to `worker.max_retries=3`, then marks `failed`). You no longer need to manually clear stuck rows when a worker crashes. |
+| **Screenshot upload** | `HARNESS_SCREENSHOT_DIR`, `HARNESS_MAX_SCREENSHOT_BYTES` | None — the existing `/api/runner/results` endpoint accepts base64-encoded screenshots in the same POST. Server-side cap is 5 MiB per image (rejects 413 above that). | Failure screenshots for browser tests land under `data/screenshots/{run_id}/{step_name}.png` on the central, exactly like in-process runs. Worker reads from `HARNESS_SCREENSHOT_DIR` and embeds in the results payload. |
+| **Offline result buffering** | `HARNESS_OUTBOX_PATH`, `HARNESS_OUTBOX_MAX` | None — the worker handles retries and replay internally. | If the central is unreachable when results are ready, the worker appends them to a local JSONL outbox and replays on reconnect. Survives worker restarts (file is persistent). Oldest entries are dropped on overflow with a `WARNING`-level log. |
+| **Long-poll** | `HARNESS_LONG_POLL_WAIT` | Central exposes `GET /api/runner/jobs?name=…&wait=…&capacity=…`. Returns 200+jobs as soon as one is queued, or 204 + `Retry-After` on timeout. Max wait clamped to 60 s server-side. | Sub-second pickup of newly queued runs (vs. up to 10 s with short-poll). On 204 the worker falls back to `HARNESS_POLL_INTERVAL` before the next long-poll. |
+| **Scoped API keys** | (uses `HARNESS_API_KEY`) | Create the key with scope `worker:pull,worker:results` instead of `*`. See "Provisioning credentials" above. | A scoped key that leaks can only push job results — it cannot read other apps' state, manage users, or change config. |
+| **Optional mTLS** | `HARNESS_VERIFY_TLS=true` (default); worker presents a cert via the underlying httpx config — see `docs/guides/remote-workers.md` § "mTLS recipe" | `worker.mtls.enabled: true` and `worker.mtls.client_ca_path: /path/to/ca.pem` in `config.yaml`, **and** uvicorn started with `--ssl-cert-reqs 2 --ssl-ca-certs <ca>`. | Bearer-only is still the default and recommended path; mTLS is for hostile-network deployments where you need a second factor beyond the API key. The middleware reads the cert from `request.scope["client_cert"]` — that means **uvicorn must terminate TLS** (a nginx-in-front deployment requires an extra header-forwarding shim, not yet wired). |
+| **Slim Docker image** | (image choice; no env var) | None | `worker/Dockerfile.slim` is a multi-stage build with no Playwright/Chromium — ~120 MB. Hard-codes `HARNESS_CAPABILITIES=api,availability` so the dispatcher won't route browser jobs to it. |
 
 ## Routing apps to workers
 
@@ -148,18 +178,16 @@ This means **workers are a trust boundary.** Don't deploy a worker in a
 segment less trusted than the secrets the apps it runs require. Future
 versions will support tag-scoped secret release; v1 is all-or-nothing.
 
-## What workers don't do (yet)
+## What workers still don't do
 
-- **Upload screenshots** to the central. Browser tests still pass/fail
-  correctly, but the failure-screenshot artefact stays on the worker host.
-  Coming in a follow-up: base64-embedded screenshots in the results POST.
-- **Buffer offline results.** If the worker can't reach the central, the
-  job's results are lost. Coming in a follow-up.
-- **Long-poll.** v1 uses short-poll on `HARNESS_POLL_INTERVAL`. Long-poll
-  is on the roadmap for sub-second job pickup.
 - **Self-update.** Operators redeploy / `apt-get` to upgrade. No
-  orchestration plane.
-- **mTLS.** Bearer-only in v1; mTLS is a planned phase-5 enhancement.
+  orchestration plane is planned — workers are intentionally dumb.
+- **Worker-to-worker federation.** Each worker only knows about the
+  central. There is no mesh or peer discovery.
+- **Per-tag secret scoping.** A worker that runs any app sees every
+  `$VAR` substitution in that app's resolved definition. Workers remain a
+  trust boundary; deploy them only in segments at least as trusted as the
+  secrets the apps they run depend on.
 
 ## Monitoring the worker
 
