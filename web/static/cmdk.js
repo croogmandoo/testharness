@@ -4,9 +4,15 @@
  * when first opened. Results draw from two sources:
  *
  *   1. Static routes (Dashboard, Apps, Users, etc.)
- *   2. Dynamic app list — fetched once from GET /api/apps; if that
- *      fails or returns nothing, we fall back to scraping
- *      .app-tile-name anchors from the current DOM.
+ *   2. Dynamic app list — fetched once from GET /api/apps (session/
+ *      api-key auth, returns app summary rows for the default
+ *      environment). The endpoint returns rows of the form:
+ *        { app, total, passing, failing, unknown,
+ *          last_run, last_run_id, active_run_id }
+ *      For brand-new installs where no run has been recorded yet the
+ *      endpoint returns [] — we then fall back to scraping
+ *      [data-app-name] / .app-tile-name from the current DOM so the
+ *      palette is still useful on the first visit.
  *
  * Keyboard:
  *   Cmd/Ctrl+K   open
@@ -82,19 +88,29 @@
     return out;
   }
 
+  // Exposed for tests + future per-env palettes. The default environment
+  // matches the server-side default in web/routes/api.py::list_apps.
+  var APPS_ENDPOINT = "/api/apps";
+  var DEFAULT_ENV = "production";
+
   function loadDynamicApps() {
     if (dynamicApps !== null) return Promise.resolve(dynamicApps);
-    return fetch("/api/apps", { credentials: "same-origin" })
+    return fetch(APPS_ENDPOINT, { credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) {
         var out = [];
         if (Array.isArray(data)) {
           var seen = {};
           data.forEach(function (row) {
+            // The endpoint keys app names under .app; .name is tolerated
+            // for forward-compat with a future shape switch.
             var name = row && (row.app || row.name);
             if (!name || seen[name]) return;
             seen[name] = true;
-            var env = row.environment || "production";
+            // The server query'd a single environment (default
+            // production); .environment is not in the response, so fall
+            // through to the same default the server used.
+            var env = row.environment || DEFAULT_ENV;
             out.push({
               label: name,
               url: "/app/" + encodeURIComponent(name) + "/" + encodeURIComponent(env),
@@ -102,11 +118,14 @@
             });
           });
         }
+        // Fresh installs return [] (no app_state rows yet). DOM-scrape
+        // ensures the palette is still useful before the first run.
         if (out.length === 0) out = scrapeAppsFromDom();
         dynamicApps = out;
         return out;
       })
       .catch(function () {
+        // Network/auth failure — degrade gracefully to DOM scrape.
         dynamicApps = scrapeAppsFromDom();
         return dynamicApps;
       });

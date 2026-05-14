@@ -142,6 +142,78 @@ def test_detail_template_inherits_viewport_meta():
     assert 'extends "base.html"' in detail_body
 
 
+def test_cmdk_js_references_api_apps_endpoint():
+    """The Cmd+K palette must hit GET /api/apps for the dynamic app list,
+    not just scrape the DOM. We pin the literal URL so a casual rename
+    breaks loudly here."""
+    path = os.path.join(STATIC_DIR, "cmdk.js")
+    body = open(path, "r", encoding="utf-8").read()
+    assert '/api/apps' in body, "cmdk.js must fetch /api/apps"
+    # The fetch must travel session cookies / api keys with the request.
+    assert 'credentials: "same-origin"' in body
+    # Endpoint URL is centralised in a named constant — easier to audit.
+    assert 'APPS_ENDPOINT' in body
+
+
+def test_api_apps_endpoint_returns_json_for_authenticated_user(client):
+    """Authenticated user hitting /api/apps gets a JSON list (possibly
+    empty on a fresh DB). This is the contract cmdk.js depends on."""
+    with client:
+        resp = client.get("/api/apps")
+    assert resp.status_code == 200
+    assert resp.headers.get("content-type", "").startswith("application/json")
+    data = resp.json()
+    assert isinstance(data, list), f"expected list, got {type(data).__name__}"
+
+
+def test_api_apps_endpoint_returns_app_keyed_rows(client):
+    """Each row in /api/apps must carry an 'app' key — that's what
+    cmdk.js dereferences as the label. Seeding an app_state row
+    exercises the populated-list path."""
+    from datetime import datetime, timezone
+    from harness.models import AppState
+    from web.main import get_db
+    db = get_db()
+    db.upsert_app_state(AppState(
+        app="paletteapp",
+        environment="production",
+        test_name="ping",
+        state="passing",
+        since=datetime.now(timezone.utc).isoformat(),
+    ))
+    with client:
+        resp = client.get("/api/apps?environment=production")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert any(r.get("app") == "paletteapp" for r in rows), \
+        f"expected 'paletteapp' in /api/apps response, got {rows!r}"
+
+
+def test_api_apps_endpoint_requires_auth(tmp_path):
+    """Without a session/api-key, /api/apps must not leak the app list.
+    The route depends on get_current_user, which returns 401/redirect
+    when no credentials are present."""
+    db = Database(str(tmp_path / "noauth.db"))
+    db.init_schema()
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    app = create_app(
+        db=db,
+        config={"default_environment": "production",
+                "environments": {"production": {"label": "Production"}}},
+        apps_dir=str(apps_dir),
+    )
+    c = TestClient(app, follow_redirects=False)
+    with c:
+        resp = c.get("/api/apps")
+    # Either 401 (browser-style) or 302/303 (redirect to login) are
+    # acceptable — what matters is that anonymous traffic doesn't get
+    # 200-OK with a JSON body of app names.
+    assert resp.status_code in (401, 302, 303, 307), (
+        f"/api/apps should not be anonymous; got {resp.status_code}"
+    )
+
+
 def test_detail_classes_have_mobile_rules():
     """The mobile media query targets at least one class actually used by
     detail.html so the rules aren't dead code."""
