@@ -185,6 +185,12 @@ class Database(APIKeysMixin, AppStateMixin, AuditMixin, RunnerJobsMixin,
                 # NULL means "no health signal yet" (treat as healthy for back-
                 # compat). 'healthy' | 'unhealthy'.
                 "ALTER TABLE runners ADD COLUMN health TEXT",
+                # ca-cert hardening: enforce unique names so the admin UI
+                # doesn't show two rows that look identical. Existing DBs
+                # with pre-existing duplicates will silently keep them (the
+                # try/except below swallows the IntegrityError), but new
+                # inserts will be blocked at the SQL layer.
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_ca_certs_name ON ca_certs(name)",
             ):
                 try:
                     conn.execute(migration)

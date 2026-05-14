@@ -107,8 +107,13 @@ async def run_browser_test(run_id: str, app: str, environment: str,
                         test_name=test_def["name"])
     step_log = []
     start = time.monotonic()
+    # SSL_CERT_FILE is process-global; once set, Playwright will keep
+    # using it. If the bundle was removed (admin deleted the last cert),
+    # we must unset the env var so we don't point at a vanished file.
     if os.path.exists(BUNDLE_PATH):
         os.environ["SSL_CERT_FILE"] = BUNDLE_PATH
+    elif os.environ.get("SSL_CERT_FILE") == BUNDLE_PATH:
+        os.environ.pop("SSL_CERT_FILE", None)
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=headless)
         page = await browser.new_page()

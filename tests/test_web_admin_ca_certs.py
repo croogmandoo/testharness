@@ -1,17 +1,43 @@
 # tests/test_web_admin_ca_certs.py
 import uuid
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi.testclient import TestClient
 from web.main import create_app
 from harness.db import Database
 
 
-FAKE_PEM = (
-    "-----BEGIN CERTIFICATE-----\n"
-    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAfake\n"
-    "-----END CERTIFICATE-----"
-)
+def _build_real_pem() -> str:
+    """Generate a real self-signed CA cert so the route's PEM validator
+    (cryptography.x509.load_pem_x509_certificates) actually accepts it.
+    The old hard-coded ``FAKE_PEM`` only passed the now-removed substring
+    check; with real validation it would be rejected at upload time."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test CA")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM).decode("utf-8")
+
+
+REAL_PEM = _build_real_pem()
+# Back-compat alias. The route strips trailing whitespace on insert, so the
+# stored copy is also stripped — equality assertions in existing tests
+# expect the storage-shape value here.
+FAKE_PEM = REAL_PEM.strip()
 
 
 def _seed_admin(db) -> dict:
@@ -205,3 +231,63 @@ def test_non_admin_cannot_delete(runner_client, db):
     r = runner_client.post("/admin/ca-certs/cert-prot/delete", follow_redirects=False)
     assert r.status_code == 403
     assert db.get_ca_cert("cert-prot") is not None  # cert was NOT deleted
+
+
+# ── Hardening regression tests ──────────────────────────────────────────
+
+
+def test_add_cert_malformed_pem_rejected(admin_client, db):
+    """Cert content that has BEGIN/END markers but invalid base64 between
+    them must fail the real x509 parser, not just the substring check."""
+    bogus = (
+        "-----BEGIN CERTIFICATE-----\n"
+        "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAfake\n"
+        "-----END CERTIFICATE-----"
+    )
+    r = admin_client.post("/admin/ca-certs",
+                          data={"name": "Bogus", "pem_content": bogus},
+                          follow_redirects=False)
+    assert r.status_code == 422
+    assert "Invalid certificate" in r.text or "could not" in r.text.lower()
+    assert db.list_ca_certs() == []
+
+
+def test_add_cert_binary_file_rejected_with_helpful_message(admin_client, db):
+    """Uploading a DER/binary file gives an actionable error instead of
+    silently U+FFFD-mangling the bytes and then failing with a generic
+    'must contain BEGIN CERTIFICATE' message."""
+    binary_payload = bytes(range(256)) * 4  # 1 KB of random binary
+    r = admin_client.post(
+        "/admin/ca-certs",
+        data={"name": "DER File", "pem_content": ""},
+        files={"pem_file": ("cert.der", binary_payload, "application/octet-stream")},
+        follow_redirects=False,
+    )
+    assert r.status_code == 422
+    # The error should mention DER or PEM conversion, not a generic substring miss.
+    assert ("DER" in r.text) or ("convert to PEM" in r.text)
+    assert db.list_ca_certs() == []
+
+
+def test_delete_missing_cert_404(admin_client, db):
+    """Deleting a non-existent cert_id used to silently succeed (no-op
+    DELETE) and write a misleading audit-log entry. It should 404."""
+    r = admin_client.post("/admin/ca-certs/does-not-exist/delete",
+                          follow_redirects=False)
+    assert r.status_code == 404
+
+
+def test_add_cert_duplicate_name_rejected(admin_client, db):
+    """The ca_certs.name column is now UNIQUE; a second insert with the
+    same name must surface a friendly error from the route."""
+    r1 = admin_client.post("/admin/ca-certs",
+                           data={"name": "Corp Root", "pem_content": REAL_PEM},
+                           follow_redirects=False)
+    assert r1.status_code in (200, 303)
+    assert len(db.list_ca_certs()) == 1
+    r2 = admin_client.post("/admin/ca-certs",
+                           data={"name": "Corp Root", "pem_content": REAL_PEM},
+                           follow_redirects=False)
+    assert r2.status_code == 422
+    assert "already exists" in r2.text
+    assert len(db.list_ca_certs()) == 1  # second insert was rejected

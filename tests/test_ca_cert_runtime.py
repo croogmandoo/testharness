@@ -158,6 +158,51 @@ def test_run_browser_test_sets_ssl_cert_file_when_bundle_exists(monkeypatch, tmp
     assert env_copy.get("SSL_CERT_FILE") == str(bundle)
 
 
+def test_run_browser_test_unsets_ssl_cert_file_when_bundle_disappears(monkeypatch, tmp_path):
+    """Regression: once SSL_CERT_FILE has been pointed at the bundle, deleting
+    the last CA cert removes the bundle file but historically left the env
+    var dangling at the now-missing path. The browser test must reset the
+    env var so Playwright doesn't try to read a vanished file.
+    """
+    import asyncio
+    import os
+    from harness import browser as browser_mod
+
+    bundle = tmp_path / "ca-bundle.pem"  # intentionally NOT created
+    monkeypatch.setattr(browser_mod, "BUNDLE_PATH", str(bundle))
+
+    # Simulate a prior run that set SSL_CERT_FILE to this same bundle path.
+    env_copy = dict(os.environ)
+    env_copy["SSL_CERT_FILE"] = str(bundle)
+    monkeypatch.setattr(browser_mod.os, "environ", env_copy)
+
+    class FakePage:
+        def set_default_timeout(self, t): pass
+        async def screenshot(self, path=None): pass
+
+    class FakeBrowser:
+        async def new_page(self): return FakePage()
+        async def close(self): pass
+
+    class FakeChromium:
+        async def launch(self, **kw): return FakeBrowser()
+
+    class FakePW:
+        chromium = FakeChromium()
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+
+    monkeypatch.setattr(browser_mod, "async_playwright", lambda: FakePW())
+
+    test_def = {"name": "visit", "type": "browser", "steps": []}
+    asyncio.run(
+        browser_mod.run_browser_test("run-1", "myapp", "prod",
+                                     "http://example.com", test_def)
+    )
+    # Env var should have been cleaned up since the bundle file doesn't exist.
+    assert "SSL_CERT_FILE" not in env_copy
+
+
 def test_run_browser_test_no_ssl_cert_file_when_no_bundle(monkeypatch, tmp_path):
     """run_browser_test does NOT set SSL_CERT_FILE when bundle file is absent."""
     import asyncio
