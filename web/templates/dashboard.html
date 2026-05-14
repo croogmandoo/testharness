@@ -121,8 +121,7 @@ if (activeRunIds.size > 0) startPolling();
 
 async function triggerRun(app) {
   var btn = event.target;
-  btn.textContent = 'Running…';
-  btn.disabled = true;
+  harness.setButtonLoading(btn, true, 'Queuing…');
   var resp = await fetch('/api/runs', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -137,13 +136,13 @@ async function triggerRun(app) {
       try { var body = (await resp.text()).slice(0, 200);
         msg += ' (HTTP ' + resp.status + ')' + (body ? ': ' + body : ''); } catch (_) {}
     }
-    alert(msg);
-    btn.textContent = 'Run';
-    btn.disabled = false;
+    harness.showToast(msg, 'error', 6000);
+    harness.setButtonLoading(btn, false);
     return;
   }
   var data = await resp.json();
   data.run_ids.forEach(function(id) { activeRunIds.add(id); runAppMap[id] = app; });
+  harness.showToast('Run queued for ' + app, 'success');
   setTileRunning(app);
   startPolling();
 }
@@ -158,13 +157,25 @@ async function runAll() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body)
   });
-  if (!resp.ok) return;
+  if (!resp.ok) {
+    var msg = 'Failed to queue runs (HTTP ' + resp.status + ')';
+    try {
+      var ctype = (resp.headers.get('content-type') || '').toLowerCase();
+      if (ctype.includes('application/json')) {
+        var err = await resp.json(); msg = err.detail || msg;
+      }
+    } catch (_) {}
+    harness.showToast(msg, 'error', 6000);
+    return;
+  }
   var data = await resp.json();
   data.run_ids.forEach(function(id, i) {
     activeRunIds.add(id);
     runAppMap[id] = data.apps[i];
     setTileRunning(data.apps[i]);
   });
+  var n = data.run_ids.length;
+  harness.showToast('Queued ' + n + ' run' + (n === 1 ? '' : 's'), 'success');
   startPolling();
 }
 

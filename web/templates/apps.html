@@ -107,6 +107,13 @@ async function handleDeletePermanent(name) {
   else showError(await _readError(resp, 'Delete failed'));
 }
 function showError(msg) {
+  // Route through the global toast system. Fallback to the inline banner
+  // if the toast container isn't on the page (e.g. tests that mount a
+  // partial template).
+  if (window.harness && typeof window.harness.showToast === 'function') {
+    window.harness.showToast(msg, 'error', 6000);
+    return;
+  }
   const el = document.getElementById('status-msg');
   el.textContent = msg;
   el.className = 'status-msg status-msg-err';

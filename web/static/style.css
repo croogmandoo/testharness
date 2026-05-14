@@ -1059,7 +1059,40 @@ select.input, select.search {
 }
 .btn-remove:hover { background: var(--fail-dim); border-color: var(--fail); }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   PALETTE PRESETS — `data-palette="<name>"` on <html>. Stacks on top of
+   data-theme="dark|light". Each preset overrides only the accent triplet
+   (--amber*) and the focus ring; status colors (pass/fail/warn/run) and
+   bg/text are untouched so the visual rhythm stays consistent across
+   palettes. Apply via the swatch picker in base.html.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+[data-palette="slate"] {
+  --amber:     #3b82f6;          /* blue-500 — calm enterprise accent  */
+  --amber-hi:  #60a5fa;
+  --amber-lo:  rgba(59,130,246,.10);
+  --focus-ring: 0 0 0 3px rgba(59,130,246,.25);
+}
+[data-palette="forest"] {
+  --amber:     #10b981;          /* emerald-500 — calm, "ops-friendly" */
+  --amber-hi:  #34d399;
+  --amber-lo:  rgba(16,185,129,.10);
+  --focus-ring: 0 0 0 3px rgba(16,185,129,.25);
+}
+[data-palette="monochrome"] {
+  --amber:     #a1a1aa;          /* zinc-400 — no chromatic identity   */
+  --amber-hi:  #d4d4d8;
+  --amber-lo:  rgba(161,161,170,.10);
+  --focus-ring: 0 0 0 3px rgba(161,161,170,.25);
+}
+
 /* ── LIGHT THEME ────────────────────────────────────────────────────────── */
+/* Light-mode tweaks for each palette so the accent stays legible against the
+   off-white background. (Light variants only need to darken the hover state.) */
+[data-theme="light"][data-palette="slate"]      { --amber: #2563eb; --amber-hi: #1d4ed8; --amber-lo: rgba(37,99,235,.08); }
+[data-theme="light"][data-palette="forest"]     { --amber: #059669; --amber-hi: #047857; --amber-lo: rgba(5,150,105,.08); }
+[data-theme="light"][data-palette="monochrome"] { --amber: #52525b; --amber-hi: #3f3f46; --amber-lo: rgba(82,82,91,.08); }
+
 [data-theme="light"] {
   --bg:        #fafaf9;
   --bg-1:      #ffffff;
@@ -1086,3 +1119,102 @@ select.input, select.search {
   --shadow:    0 4px 12px rgba(0,0,0,.08);
   --focus-ring: 0 0 0 3px rgba(190,18,56,.18);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TOASTS — bottom-right stack, auto-dismiss, manual dismiss with X.
+   Used via harness.showToast(msg, type, durationMs).
+   ══════════════════════════════════════════════════════════════════════════ */
+.toast-container {
+  position: fixed;
+  bottom: var(--space-5);
+  right: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  z-index: 1000;
+  max-width: min(420px, calc(100vw - 2 * var(--space-5)));
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+  animation: toast-in .18s ease-out;
+}
+.toast--success { border-left-color: var(--pass); }
+.toast--error   { border-left-color: var(--fail); }
+.toast--warn    { border-left-color: var(--warn); }
+.toast--info    { border-left-color: var(--run); }
+.toast--leaving { animation: toast-out .18s ease-in forwards; }
+.toast-msg   { flex: 1; line-height: 1.5; word-break: break-word; }
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+  margin: -2px -4px 0 0;
+}
+.toast-close:hover { color: var(--text); }
+@keyframes toast-in  { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes toast-out { to   { opacity: 0; transform: translateY(8px); } }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BUTTON LOADING STATE — adds a small spinner before the label.
+   Used via harness.setButtonLoading(btn, true).
+   ══════════════════════════════════════════════════════════════════════════ */
+.btn--loading {
+  cursor: wait;
+  opacity: .85;
+}
+.btn--loading::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: var(--space-2);
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin .6s linear infinite;
+  vertical-align: -2px;
+}
+@keyframes btn-spin { to { transform: rotate(360deg); } }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PALETTE PICKER — 4 small color swatches in the nav.
+   ══════════════════════════════════════════════════════════════════════════ */
+.palette-picker {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  padding: 0 var(--space-2);
+}
+.swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--border-2);
+  padding: 0;
+  cursor: pointer;
+  transition: transform .12s, box-shadow .12s;
+}
+.swatch:hover  { transform: scale(1.15); }
+.swatch--active {
+  box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 3px currentColor;
+}
+.swatch--crimson    { background: #d11f44; color: #d11f44; }
+.swatch--slate      { background: #3b82f6; color: #3b82f6; }
+.swatch--forest     { background: #10b981; color: #10b981; }
+.swatch--monochrome { background: #a1a1aa; color: #a1a1aa; }

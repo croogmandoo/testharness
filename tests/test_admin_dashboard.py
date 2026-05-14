@@ -198,3 +198,32 @@ def test_nav_shows_single_admin_link_not_five(db, tmp_path):
     assert b'nav-link">Users<' not in body
     assert b'nav-link">LDAP<' not in body
     assert b'nav-link">CA Certs<' not in body
+
+
+# ── Theme picker + toast container (UI polish tier 1) ──────────────────────
+
+def test_palette_swatches_render_in_nav(db, tmp_path):
+    admin = _seed_user(db, "admin")
+    c = _client(db, admin, tmp_path)
+    r = c.get("/admin")
+    body = r.content
+    assert b'class="palette-picker"' in body
+    assert b'data-palette=""' in body            # crimson (default)
+    assert b'data-palette="slate"' in body
+    assert b'data-palette="forest"' in body
+    assert b'data-palette="monochrome"' in body
+
+
+def test_toast_container_present_in_base(db, tmp_path):
+    admin = _seed_user(db, "admin")
+    c = _client(db, admin, tmp_path)
+    r = c.get("/admin")
+    assert b'id="toast-container"' in r.content
+    assert b'aria-live="polite"' in r.content
+
+
+def test_harness_js_loaded_via_base(db, tmp_path):
+    admin = _seed_user(db, "admin")
+    c = _client(db, admin, tmp_path)
+    r = c.get("/admin")
+    assert b'/static/harness.js' in r.content

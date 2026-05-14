@@ -5,16 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script>
     (function(){
-      var t = localStorage.getItem('theme') || 'dark';
-      document.documentElement.setAttribute('data-theme', t);
+      // Anti-flash: apply saved theme + palette *before* CSS renders.
+      try {
+        var t = localStorage.getItem('theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', t);
+        var p = localStorage.getItem('palette') || '';
+        if (p) document.documentElement.setAttribute('data-palette', p);
+      } catch (e) {}
       document.addEventListener('DOMContentLoaded', function(){
         var btn = document.getElementById('theme-toggle');
+        var t = document.documentElement.getAttribute('data-theme') || 'dark';
         if (btn) btn.textContent = t === 'dark' ? '☀' : '☾';
       });
     })();
   </script>
   <title>Testing Harness</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/harness.js" defer></script>
 </head>
 <body>
   <nav class="nav">
@@ -34,6 +41,12 @@
       {% endif %}
     </div>
     <div class="nav-right">
+      <div class="palette-picker" role="group" aria-label="Accent color">
+        <button class="swatch swatch--crimson"    data-palette=""           title="Crimson (default)" aria-label="Crimson"></button>
+        <button class="swatch swatch--slate"      data-palette="slate"      title="Slate"             aria-label="Slate"></button>
+        <button class="swatch swatch--forest"     data-palette="forest"     title="Forest"            aria-label="Forest"></button>
+        <button class="swatch swatch--monochrome" data-palette="monochrome" title="Monochrome"        aria-label="Monochrome"></button>
+      </div>
       <button id="theme-toggle" class="theme-toggle" onclick="(function(){
         var cur = document.documentElement.getAttribute('data-theme') || 'dark';
         var next = cur === 'dark' ? 'light' : 'dark';
@@ -67,5 +80,6 @@
   <main class="main">
     {% block content %}{% endblock %}
   </main>
+  <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="false"></div>
 </body>
 </html>
