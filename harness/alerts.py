@@ -1,8 +1,11 @@
 import asyncio
+import logging
 import httpx
 import smtplib
 from email.message import EmailMessage
 from harness.types import AlertType
+
+logger = logging.getLogger("harness.alerts")
 
 def format_alert_message(alert_type: AlertType, app: str, environment: str,
                           test_name: str, error_msg) -> str:
@@ -54,25 +57,25 @@ async def dispatch_alerts(alerts: list, alerts_config: dict) -> None:
             try:
                 await _send_teams(teams_cfg["webhook_url"], text)
             except Exception as e:
-                print(f"[alerts] Teams webhook failed: {e}")
+                logger.warning("Teams webhook failed: %s", e)
         slack_cfg = alerts_config.get("slack", {})
         if slack_cfg.get("webhook_url"):
             try:
                 await _send_slack(slack_cfg["webhook_url"], text)
             except Exception as e:
-                print(f"[alerts] Slack error: {e}")
+                logger.warning("Slack error: %s", e)
         discord_cfg = alerts_config.get("discord", {})
         if discord_cfg.get("webhook_url"):
             try:
                 await _send_discord(discord_cfg["webhook_url"], text)
             except Exception as e:
-                print(f"[alerts] Discord error: {e}")
+                logger.warning("Discord error: %s", e)
         if email_cfg:
             subject = f"[Harness] {app} — {test_name} {'FAILED' if alert_type == AlertType.FAIL else 'RESOLVED'}"
             try:
                 await asyncio.get_event_loop().run_in_executor(None, _send_email, email_cfg, subject, text)
             except Exception as e:
-                print(f"[alerts] Email failed: {e}")
+                logger.error("Email failed: %s", e)
 
 
 async def dispatch_run_webhook(
@@ -111,4 +114,4 @@ async def dispatch_run_webhook(
         async with httpx.AsyncClient(timeout=10) as client:
             await client.post(url, json=payload, headers=headers)
     except Exception as e:
-        print(f"[alerts] Outbound webhook error: {e}")
+        logger.error("Outbound webhook error: %s", e)

@@ -318,10 +318,19 @@ async def poll_loop(client: httpx.AsyncClient, cfg: WorkerConfig) -> None:
 
 
 async def amain() -> int:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    # Honor config.yaml's `logging:` block when present; falls back to sensible
+    # defaults (rotating data/logs/harness.log + console) if config is missing
+    # or unreadable, so the worker can still start in minimal environments.
+    try:
+        from harness.config import load_config
+        from harness.logging_config import configure as _configure_logging
+        _cfg = load_config("config.yaml") if os.path.exists("config.yaml") else {}
+        _configure_logging(_cfg)
+    except Exception:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        )
     cfg = WorkerConfig()
     _install_signal_handlers(asyncio.get_event_loop())
 
