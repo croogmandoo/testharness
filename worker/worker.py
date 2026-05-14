@@ -15,9 +15,17 @@ Configuration is environment-variable only (twelve-factor):
     HARNESS_WORKER_VERSION   — reported back at registration (default: harness version)
     HARNESS_CAPABILITIES     — comma-separated (default: api,availability,browser)
     HARNESS_POLL_INTERVAL    — seconds between polls (default: 10)
+    HARNESS_LONG_POLL_WAIT   — server-side block on GET /jobs (default: 30)
     HARNESS_HEARTBEAT_INTERVAL — seconds between heartbeats (default: 30)
     HARNESS_CAPACITY         — max concurrent jobs (default: 4)
     HARNESS_VERIFY_TLS       — "true"/"false" (default: true)
+    HARNESS_OUTBOX_PATH      — local buffer for failed result uploads
+                                (default: data/worker_outbox.jsonl)
+    HARNESS_OUTBOX_MAX       — max entries in the outbox (default: 1000)
+    HARNESS_SCREENSHOT_DIR   — local screenshot directory to upload
+                                (default: data/worker_screenshots)
+    HARNESS_MAX_SCREENSHOT_BYTES — reject screenshots larger than this
+                                (default: 5_242_880 = 5 MiB)
 
 Run:
     python -m worker.worker
@@ -53,10 +61,21 @@ class WorkerConfig:
         )
         self.version = os.environ.get("HARNESS_WORKER_VERSION", "1.0.0")
         self.poll_interval = int(os.environ.get("HARNESS_POLL_INTERVAL", "10"))
+        self.long_poll_wait = int(os.environ.get("HARNESS_LONG_POLL_WAIT", "30"))
         self.heartbeat_interval = int(os.environ.get("HARNESS_HEARTBEAT_INTERVAL", "30"))
         self.capacity = int(os.environ.get("HARNESS_CAPACITY", "4"))
         verify_str = os.environ.get("HARNESS_VERIFY_TLS", "true").lower()
         self.verify_tls = verify_str not in ("false", "0", "no", "off")
+        self.outbox_path = os.environ.get(
+            "HARNESS_OUTBOX_PATH", "data/worker_outbox.jsonl",
+        )
+        self.outbox_max = int(os.environ.get("HARNESS_OUTBOX_MAX", "1000"))
+        self.screenshot_dir = os.environ.get(
+            "HARNESS_SCREENSHOT_DIR", "data/worker_screenshots",
+        )
+        self.max_screenshot_bytes = int(
+            os.environ.get("HARNESS_MAX_SCREENSHOT_BYTES", str(5 * 1024 * 1024))
+        )
 
 
 def _required_env(key: str) -> str:
@@ -111,19 +130,56 @@ async def heartbeat(client: httpx.AsyncClient, cfg: WorkerConfig) -> None:
 
 
 async def poll_for_jobs(client: httpx.AsyncClient, cfg: WorkerConfig,
-                         capacity: int) -> list[dict]:
+                         capacity: int) -> tuple[list[dict], Optional[int]]:
+    """Ask the central for queued jobs. Returns (jobs, retry_after_seconds).
+
+    Uses the long-poll ``GET /api/runner/jobs?wait=…`` endpoint added in
+    workers-v2 — the connection blocks server-side until a job is available
+    or ``cfg.long_poll_wait`` seconds elapse. On 204 No Content, falls back
+    to fixed-interval polling using ``Retry-After`` (or ``cfg.poll_interval``).
+    """
+    wait = max(0, min(int(cfg.long_poll_wait), 60))
+    # Client read timeout must outlast the server's wait by a buffer (~10s)
+    # to account for header round-trip and small clock skew.
+    read_timeout = wait + 10
     try:
-        resp = await client.post(
-            f"{cfg.harness_url}/api/runner/poll",
-            json={"name": cfg.name, "capacity": capacity},
+        resp = await client.get(
+            f"{cfg.harness_url}/api/runner/jobs",
+            params={"name": cfg.name, "wait": wait, "capacity": capacity},
             headers=_headers(cfg),
-            timeout=30.0,
+            timeout=httpx.Timeout(read_timeout, connect=10.0),
         )
+        if resp.status_code == 204:
+            retry_after = resp.headers.get("Retry-After")
+            try:
+                return [], int(retry_after) if retry_after else None
+            except (ValueError, TypeError):
+                return [], None
+        if resp.status_code == 404:
+            # Server is older / endpoint missing — fall back to POST /poll
+            return await _poll_for_jobs_short(client, cfg, capacity), None
         resp.raise_for_status()
-        return resp.json().get("jobs", [])
+        return resp.json().get("jobs", []), None
     except httpx.HTTPError as e:
-        _log.warning("poll failed: %s", e)
-        return []
+        _log.warning("long-poll failed: %s — falling back to short poll", e)
+        try:
+            return await _poll_for_jobs_short(client, cfg, capacity), None
+        except httpx.HTTPError as e2:
+            _log.warning("poll failed: %s", e2)
+            return [], None
+
+
+async def _poll_for_jobs_short(client: httpx.AsyncClient, cfg: WorkerConfig,
+                                capacity: int) -> list[dict]:
+    """Legacy short-poll fallback when the long-poll endpoint is unavailable."""
+    resp = await client.post(
+        f"{cfg.harness_url}/api/runner/poll",
+        json={"name": cfg.name, "capacity": capacity},
+        headers=_headers(cfg),
+        timeout=30.0,
+    )
+    resp.raise_for_status()
+    return resp.json().get("jobs", [])
 
 
 async def submit_results(client: httpx.AsyncClient, cfg: WorkerConfig,
@@ -295,13 +351,21 @@ async def poll_loop(client: httpx.AsyncClient, cfg: WorkerConfig) -> None:
         # Available slots = capacity - currently in flight
         # (semaphore approximates this; for poll we ask for what we can take on)
         remaining = max(1, cfg.capacity - len([t for t in inflight if not t.done()]))
-        jobs = await poll_for_jobs(client, cfg, remaining)
+        jobs, retry_after = await poll_for_jobs(client, cfg, remaining)
         for job in jobs:
             task = asyncio.create_task(_run_one(job))
             inflight.add(task)
             task.add_done_callback(inflight.discard)
+        if jobs:
+            # Got work — go straight back for more without sleeping.
+            continue
+        # No jobs. If server advertised Retry-After honour it (capped); else
+        # use the configured short-poll interval as the back-off floor. Long-
+        # poll itself already absorbed up to ``long_poll_wait`` seconds.
+        backoff = retry_after if retry_after is not None else cfg.poll_interval
+        backoff = max(1, min(backoff, 300))
         try:
-            await asyncio.wait_for(_shutdown_event.wait(), timeout=cfg.poll_interval)
+            await asyncio.wait_for(_shutdown_event.wait(), timeout=backoff)
             break  # shutdown requested
         except asyncio.TimeoutError:
             continue

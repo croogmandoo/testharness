@@ -5,18 +5,24 @@ type. CSRF doesn't apply (Bearer-only, /api/* exempt).
 
 See ``docs/superpowers/plans/2026-05-14-remote-worker.md`` for the design.
 """
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from typing import Optional
 
-from web.auth import get_current_user
+from web.auth import get_current_user, require_scope
 
 router = APIRouter(prefix="/api/runner")
-_log = logging.getLogger(__name__)
+_log = logging.getLogger("harness.runner_api")
+
+# Hard cap on how long the server will hold a long-poll connection open.
+# Longer than this and intermediate proxies / cloud LBs start killing the
+# connection silently.
+_MAX_LONG_POLL_WAIT_SECONDS = 60
 
 
 # ── Schemas ─────────────────────────────────────────────────────────────────
@@ -76,7 +82,7 @@ class RunnerHeartbeatRequest(BaseModel):
 async def runner_register(
     req: RunnerRegisterRequest,
     request: Request,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("worker:results")),
 ):
     """Worker announces itself on startup. Idempotent: re-registering with
     the same name updates tags/capabilities/version and resets last_seen_at.
@@ -115,7 +121,7 @@ async def runner_register(
 @router.post("/poll")
 async def runner_poll(
     req: RunnerPollRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("worker:pull")),
 ):
     """Worker asks for next jobs. Returns 0..capacity job descriptors,
     immediately (short-poll v1). Updates the worker's last_seen_at."""
@@ -153,7 +159,7 @@ async def runner_poll(
 @router.post("/results")
 async def runner_results(
     req: RunnerResultsRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("worker:results")),
 ):
     """Worker submits completed test results for a job it owns."""
     from web.main import get_db, get_config
@@ -187,7 +193,7 @@ async def runner_results(
 @router.post("/heartbeat")
 async def runner_heartbeat(
     req: RunnerHeartbeatRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("worker:results")),
 ):
     """Liveness ping. Workers call this periodically (~30s) between polls
     so the /admin/runners status display stays accurate even if the worker
@@ -198,6 +204,92 @@ async def runner_heartbeat(
         raise HTTPException(status_code=404, detail=f"runner {req.name!r} not registered")
     db.touch_runner_heartbeat(req.name, datetime.now(timezone.utc).isoformat())
     return {"ok": True, "server_time": datetime.now(timezone.utc).isoformat()}
+
+
+# ── Long-poll job retrieval (feature #4) ────────────────────────────────────
+#
+# GET /api/runner/jobs?wait=30&name=eu-worker-1&capacity=4
+#
+# Blocks up to ``wait`` seconds waiting for a queued job that matches this
+# worker. The block ends as soon as harness.worker_dispatch.notify_job_queued()
+# is called by the dispatcher (when ``queue_remote_run`` lands a new job, or
+# when the reaper requeues a stuck one).
+#
+# If no job is delivered within the timeout, returns 204 No Content with a
+# ``Retry-After`` header so the worker can fall back to fixed-interval polling.
+
+@router.get("/jobs")
+async def runner_jobs_long_poll(
+    request: Request,
+    response: Response,
+    name: str,
+    wait: int = 0,
+    capacity: int = 1,
+    current_user: dict = Depends(require_scope("worker:pull")),
+):
+    """Long-poll alternative to POST /poll. Matches the same dispatch semantics
+    but blocks until a job is available (or ``wait`` seconds elapse)."""
+    from web.main import get_db
+    from harness.worker_dispatch import get_job_queued_event
+
+    db = get_db()
+    runner = db.get_runner_by_name(name)
+    if runner is None:
+        raise HTTPException(status_code=404, detail=f"runner {name!r} not registered")
+
+    # Clamp wait into [0, 60] — beyond that, intermediate proxies kill it.
+    wait = max(0, min(int(wait), _MAX_LONG_POLL_WAIT_SECONDS))
+    cap = max(1, min(int(capacity), 16))
+
+    db.touch_runner_heartbeat(name, datetime.now(timezone.utc).isoformat())
+
+    if runner.get("status") == "draining":
+        response.headers["Retry-After"] = "30"
+        response.status_code = 204
+        return Response(status_code=204, headers={"Retry-After": "30"})
+
+    deadline = asyncio.get_event_loop().time() + wait
+    event = get_job_queued_event()
+
+    while True:
+        claimed = db.claim_runner_jobs(
+            worker_name=name,
+            worker_tags=runner.get("tags") or [],
+            capacity=cap,
+        )
+        if claimed:
+            jobs = []
+            for j in claimed:
+                try:
+                    app_def = json.loads(j["app_def_json"])
+                except Exception:
+                    app_def = {}
+                jobs.append({
+                    "job_id": j["id"],
+                    "run_id": j["run_id"],
+                    "environment": j["environment"],
+                    "app_def": app_def,
+                })
+            return {"jobs": jobs}
+
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            return Response(
+                status_code=204,
+                headers={"Retry-After": str(max(1, wait // 2 if wait else 30))},
+            )
+        # Wait on the queued-job event; on wake, re-attempt the claim. Spurious
+        # wake-ups are fine — the next claim attempt simply returns nothing
+        # and we loop back here.
+        try:
+            await asyncio.wait_for(event.wait(), timeout=remaining)
+        except asyncio.TimeoutError:
+            return Response(
+                status_code=204,
+                headers={"Retry-After": str(max(1, wait // 2 if wait else 30))},
+            )
+        # Defensive: clear so the next iteration blocks again.
+        event.clear()
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
