@@ -119,15 +119,24 @@ def test_export_isolates_failures_per_table(db, tmp_path, monkeypatch):
 
 
 def test_export_default_partition_is_yesterday(db, tmp_path):
-    """When no partition_date is given, default = yesterday UTC."""
+    """When no partition_date is given, default = yesterday UTC.
+
+    The seeded run's finished_at must fall inside yesterday's UTC window
+    (i.e. ``[yesterday 00:00, today 00:00)``). Earlier versions of this
+    test used ``now - timedelta(days=1, hours=2)`` which is 26 hours ago —
+    that falls into the day-BEFORE-yesterday's window whenever the test
+    runs in the first 2 hours UTC of any given day (which is exactly when
+    CI ran). Anchor to a fixed point inside yesterday instead.
+    """
     target_dir = tmp_path / "exports"
     target = LocalFilesystemTarget(str(target_dir))
 
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
-    finished_iso = (
-        datetime.now(timezone.utc) - timedelta(days=1, hours=2)
-    ).isoformat()
-    _seed_completed_run(db, "App", "production", finished_iso)
+    yesterday_noon = datetime(
+        yesterday.year, yesterday.month, yesterday.day, 12, 0, 0,
+        tzinfo=timezone.utc,
+    )
+    _seed_completed_run(db, "App", "production", yesterday_noon.isoformat())
 
     results = export_all_tables(db, target)  # no partition_date
     runs_path = (
