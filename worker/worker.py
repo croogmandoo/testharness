@@ -114,17 +114,42 @@ async def register(client: httpx.AsyncClient, cfg: WorkerConfig) -> dict:
         headers=_headers(cfg),
     )
     resp.raise_for_status()
-    return resp.json()
+    body = resp.json()
+    # workers-v2-1: log any major-version-mismatch notice the central sent
+    # along on registration. The notice repeats on every heartbeat (see
+    # ``heartbeat`` above) so ops keep seeing it.
+    notice = body.get("notice") if isinstance(body, dict) else None
+    if notice:
+        _log.warning("worker[%s] central notice on register: %s", cfg.name, notice)
+    return body
 
 
-async def heartbeat(client: httpx.AsyncClient, cfg: WorkerConfig) -> None:
+async def heartbeat(client: httpx.AsyncClient, cfg: WorkerConfig,
+                     health: Optional[str] = None) -> None:
+    """Send a liveness ping. ``health`` is the worker's self-reported
+    'healthy'|'unhealthy' (workers-v2-1). The central uses this to auto-
+    drain a worker that reports unhealthy and auto-restore one that
+    recovers. The response may carry a ``notice`` string when the central
+    has refused to dispatch jobs (major-version mismatch) — we log it at
+    WARNING so ops see it on every heartbeat until the worker is upgraded.
+    """
+    payload: dict = {"name": cfg.name, "version": cfg.version}
+    if health is not None:
+        payload["health"] = health
     try:
         resp = await client.post(
             f"{cfg.harness_url}/api/runner/heartbeat",
-            json={"name": cfg.name},
+            json=payload,
             headers=_headers(cfg),
         )
         resp.raise_for_status()
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        notice = body.get("notice")
+        if notice:
+            _log.warning("worker[%s] central notice: %s", cfg.name, notice)
     except httpx.HTTPError as e:
         _log.warning("heartbeat failed: %s", e)
 
@@ -194,6 +219,16 @@ async def submit_results(client: httpx.AsyncClient, cfg: WorkerConfig,
     A 4xx (client error) is logged but NOT buffered — replaying a malformed
     payload won't help. Buffering is reserved for transient failures.
     """
+    # workers-v2-1: pre-flight volume health check. If unhealthy, log loudly
+    # but STILL attempt the POST — the outbox is the recovery path. The HB
+    # loop will pick up the same state on its next tick and update central.
+    pre_issues = _check_volume_health(cfg)
+    if pre_issues:
+        _log.error(
+            "submit_results pre-flight: volume health degraded for job %s: %s",
+            job_id, "; ".join(pre_issues),
+        )
+
     payload = {
         "job_id": job_id,
         "run_status": run_status,
@@ -233,6 +268,113 @@ async def submit_results(client: httpx.AsyncClient, cfg: WorkerConfig,
 
     # Success path — try to flush the outbox (one entry).
     await outbox_flush_one(client, cfg)
+
+
+# ── Volume health (workers-v2-1) ────────────────────────────────────────────
+#
+# A worker's two on-disk dependencies — the outbox parent dir and the
+# screenshot dir — must be writable for the worker to function. We poll
+# both once per heartbeat tick. If either is unhealthy:
+#   1. Log ERROR with the issue list.
+#   2. Attempt one recreate via os.makedirs(exist_ok=True).
+#   3. If STILL unhealthy, flip the worker-side flag — the next heartbeat
+#      payload carries health="unhealthy" so the central can drain this
+#      worker from dispatch. Recovery on the next healthy tick restores it.
+# Submit-results path also runs a check before each POST; failures are
+# logged but the POST still attempts (the outbox is the recovery fallback).
+
+def _check_volume_health(cfg: WorkerConfig) -> list[str]:
+    """Verify the outbox parent dir and screenshot dir exist + are writable.
+    Returns a list of human-readable issue strings — empty means healthy.
+
+    Method: ``os.makedirs(exist_ok=True)`` then write+delete a tiny temp
+    file under each directory. We DO NOT rely on os.access(W_OK) — it
+    famously lies on root-squashed NFS and overlay filesystems. The temp
+    write is the authoritative test.
+    """
+    import tempfile
+
+    issues: list[str] = []
+
+    def _probe(label: str, path: str) -> Optional[str]:
+        parent = os.path.dirname(path) or "."
+        if not os.path.isdir(parent):
+            try:
+                os.makedirs(parent, exist_ok=True)
+            except OSError as e:
+                return f"{label} parent {parent!r} not a directory and cannot be created: {e}"
+        if not os.path.isdir(parent):
+            return f"{label} parent {parent!r} is not a directory"
+        try:
+            fd, tmp = tempfile.mkstemp(
+                prefix=".health-", suffix=".tmp", dir=parent,
+            )
+        except OSError as e:
+            return f"{label} parent {parent!r} not writable: {e}"
+        try:
+            os.write(fd, b"ok")
+        except OSError as e:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            return f"{label} parent {parent!r} write probe failed: {e}"
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            # File written but not unlinked — not fatal, but worth flagging.
+            pass
+        return None
+
+    # Outbox parent is what we actually write to (the file itself may not
+    # exist yet); probe the parent.
+    issue = _probe("outbox", cfg.outbox_path)
+    if issue:
+        issues.append(issue)
+    # Screenshot dir IS the directory the worker writes into — probe a temp
+    # file directly inside it. Use a sentinel filename path under it so the
+    # same _probe helper works.
+    issue = _probe("screenshots", os.path.join(cfg.screenshot_dir, ".sentinel"))
+    if issue:
+        issues.append(issue)
+    return issues
+
+
+def _attempt_volume_recreate(cfg: WorkerConfig, issues: list[str]) -> None:
+    """One-shot best-effort: make the outbox parent and screenshot dir
+    exist. Used after _check_volume_health flags problems — if the recreate
+    fixes things the next probe will come back clean."""
+    for path in (os.path.dirname(cfg.outbox_path) or ".", cfg.screenshot_dir):
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError as e:
+            _log.error("volume-health: makedirs(%s) failed: %s", path, e)
+
+
+# Process-wide flag set by ``heartbeat_loop`` after a failed health check +
+# recreate retry. Tests + ``submit_results`` may read it to surface state
+# in the next heartbeat / log line.
+_unhealthy: bool = False
+
+
+def is_worker_unhealthy() -> bool:
+    """Returns the current cached health flag. Useful for tests and for the
+    heartbeat payload assembly."""
+    return _unhealthy
+
+
+def _set_unhealthy(value: bool) -> None:
+    global _unhealthy
+    _unhealthy = bool(value)
 
 
 # ── Outbox: durable buffer for failed result uploads (feature #3) ───────────
@@ -524,8 +666,38 @@ def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
 
 
 async def heartbeat_loop(client: httpx.AsyncClient, cfg: WorkerConfig) -> None:
+    """Periodic heartbeat. workers-v2-1: every tick also runs a volume
+    health probe. If unhealthy, log ERROR with the issue list, attempt one
+    recreate, then re-probe; if still bad set the worker-side _unhealthy
+    flag and inform central via the heartbeat ``health`` field. Recovery
+    is automatic — the very next clean probe flips the flag back."""
     while _shutdown_event is None or not _shutdown_event.is_set():
-        await heartbeat(client, cfg)
+        issues = _check_volume_health(cfg)
+        if issues:
+            _log.error(
+                "worker[%s] volume health degraded: %s",
+                cfg.name, "; ".join(issues),
+            )
+            _attempt_volume_recreate(cfg, issues)
+            issues = _check_volume_health(cfg)
+            if issues:
+                _log.error(
+                    "worker[%s] volume health still degraded after recreate: %s",
+                    cfg.name, "; ".join(issues),
+                )
+                _set_unhealthy(True)
+            else:
+                _log.info("worker[%s] volume health recovered after recreate", cfg.name)
+                _set_unhealthy(False)
+        else:
+            if is_worker_unhealthy():
+                _log.info("worker[%s] volume health recovered", cfg.name)
+            _set_unhealthy(False)
+
+        await heartbeat(
+            client, cfg,
+            health="unhealthy" if is_worker_unhealthy() else "healthy",
+        )
         try:
             await asyncio.wait_for(_shutdown_event.wait(), timeout=cfg.heartbeat_interval)
             return  # shutdown requested

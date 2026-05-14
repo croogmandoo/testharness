@@ -866,3 +866,488 @@ def test_slim_dockerfile_uses_slim_runtime():
     text = SLIM_DOCKERFILE.read_text()
     # The runtime stage should be on slim
     assert "python:3.11-slim" in text
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# workers-v2-1 Feature A: Version skew detection + major-version refusal
+# ══════════════════════════════════════════════════════════════════════════
+
+import harness  # noqa: E402
+from harness.version_skew import (  # noqa: E402
+    classify_skew,
+    incompatibility_notice,
+    is_major_incompatible,
+    is_version_stale,
+    parse_version,
+)
+
+
+def test_parse_version_basic():
+    assert parse_version("1.2.3") == (1, 2, 3)
+    assert parse_version("v1.2.3") == (1, 2, 3)
+    assert parse_version("1.0") == (1, 0, 0)
+    assert parse_version("2") == (2, 0, 0)
+
+
+def test_parse_version_invalid_returns_none():
+    assert parse_version("") is None
+    assert parse_version(None) is None
+    assert parse_version("not.a.version") is None
+
+
+def test_parse_version_ignores_suffix():
+    """SemVer suffix like '-rc1' is dropped from comparison."""
+    assert parse_version("1.2.3-rc1") == (1, 2, 3)
+
+
+def test_classify_skew_same_version_is_ok():
+    assert classify_skew("1.0.0", "1.0.0") == "ok"
+
+
+def test_classify_skew_minor_within_warning_is_ok():
+    """Worker 1.1 vs central 1.3 with warning_minors=2 → ok."""
+    assert classify_skew("1.1.0", "1.3.0", warning_minors=2) == "ok"
+
+
+def test_classify_skew_minor_far_behind_is_stale():
+    """Worker 1.0 vs central 1.5 with warning_minors=2 → stale."""
+    assert classify_skew("1.0.0", "1.5.0", warning_minors=2) == "stale"
+
+
+def test_classify_skew_major_diff_is_incompatible():
+    assert classify_skew("1.0.0", "2.0.0") == "incompatible"
+    assert classify_skew("3.5.0", "2.0.0") == "incompatible"
+
+
+def test_classify_skew_newer_worker_is_ok():
+    """A worker ahead of central is always OK — rolling deploys."""
+    assert classify_skew("1.5.0", "1.2.0", warning_minors=2) == "ok"
+
+
+def test_classify_skew_unknown_when_unparseable():
+    assert classify_skew(None, "1.0.0") == "unknown"
+    assert classify_skew("garbage", "1.0.0") == "unknown"
+
+
+def test_is_version_stale_helper_matches_classify():
+    assert is_version_stale("1.0.0", "1.5.0", warning_minors=2) is True
+    assert is_version_stale("1.4.0", "1.5.0", warning_minors=2) is False
+
+
+def test_is_major_incompatible_helper():
+    assert is_major_incompatible("1.0.0", "2.0.0") is True
+    assert is_major_incompatible("1.5.0", "1.6.0") is False
+    # Unknown is NOT incompatible — defaults to permissive.
+    assert is_major_incompatible(None, "1.0.0") is False
+
+
+def test_incompatibility_notice_text_mentions_versions():
+    notice = incompatibility_notice("1.0.0", "2.0.0")
+    assert notice is not None
+    assert "1.0.0" in notice
+    assert "2.0.0" in notice
+    assert incompatibility_notice("1.0.0", "1.0.0") is None
+
+
+def test_central_exposes_version():
+    """harness/__init__.py defines __version__."""
+    assert hasattr(harness, "__version__")
+    assert parse_version(harness.__version__) is not None
+
+
+def test_db_runners_version_stale_default_zero(db):
+    """The version_stale column is additive and defaults to 0."""
+    db.upsert_runner(name="w", tags=[], capabilities=[], version="1.0.0")
+    runner = db.get_runner_by_name("w")
+    assert runner["version_stale"] == 0
+
+
+def test_db_set_runner_version_stale_flips(db):
+    db.upsert_runner(name="w", tags=[], capabilities=[], version="1.0.0")
+    db.set_runner_version_stale("w", True)
+    assert db.get_runner_by_name("w")["version_stale"] == 1
+    db.set_runner_version_stale("w", False)
+    assert db.get_runner_by_name("w")["version_stale"] == 0
+
+
+def test_db_init_schema_idempotent(tmp_path):
+    """init_schema() should be safely callable twice on a fresh DB —
+    the workers-v2-1 ALTER TABLE migrations must not error on re-run."""
+    from harness.db import Database
+    d = Database(str(tmp_path / "twice.db"))
+    d.init_schema()
+    d.init_schema()  # must not raise
+    # Confirm the new columns exist
+    with d._connect() as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(runners)").fetchall()}
+    assert "version_stale" in cols
+    assert "health" in cols
+
+
+def test_register_sets_version_stale_when_far_behind(app_client, db, monkeypatch):
+    """Worker reporting a minor version more than warning_minors behind
+    central should land in the DB with version_stale=1."""
+    monkeypatch.setattr(harness, "__version__", "1.5.0")
+    _, key = _seed_user_and_key(db)
+    resp = app_client.post(
+        "/api/runner/register", headers=_bearer(key),
+        json={"name": "w", "tags": [], "capabilities": [], "version": "1.0.0"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["notice"] is None  # same major
+    assert db.get_runner_by_name("w")["version_stale"] == 1
+
+
+def test_register_clears_stale_when_close_to_central(app_client, db, monkeypatch):
+    """A worker within warning_minors should land with version_stale=0
+    even if a previous registration set the flag."""
+    monkeypatch.setattr(harness, "__version__", "1.5.0")
+    _, key = _seed_user_and_key(db)
+    # First register too-far behind → stale
+    app_client.post("/api/runner/register", headers=_bearer(key), json={
+        "name": "w", "tags": [], "capabilities": [], "version": "1.0.0",
+    })
+    assert db.get_runner_by_name("w")["version_stale"] == 1
+    # Now re-register closer → stale should clear
+    app_client.post("/api/runner/register", headers=_bearer(key), json={
+        "name": "w", "tags": [], "capabilities": [], "version": "1.4.0",
+    })
+    assert db.get_runner_by_name("w")["version_stale"] == 0
+
+
+def test_register_returns_notice_on_major_mismatch(app_client, db, monkeypatch):
+    """Register response should carry a ``notice`` string when major versions
+    differ — the worker logs it. Compatibility otherwise: notice is None."""
+    monkeypatch.setattr(harness, "__version__", "2.0.0")
+    _, key = _seed_user_and_key(db)
+    resp = app_client.post(
+        "/api/runner/register", headers=_bearer(key),
+        json={"name": "w", "tags": [], "capabilities": [], "version": "1.0.0"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["notice"] is not None
+    assert "1.0.0" in body["notice"]
+    assert "2.0.0" in body["notice"]
+    assert body["central_version"] == "2.0.0"
+
+
+def test_heartbeat_returns_notice_on_major_mismatch(app_client, db, monkeypatch):
+    """The notice repeats on every heartbeat until the worker is upgraded."""
+    monkeypatch.setattr(harness, "__version__", "2.0.0")
+    _, key = _seed_user_and_key(db)
+    app_client.post("/api/runner/register", headers=_bearer(key), json={
+        "name": "w", "tags": [], "capabilities": [], "version": "1.0.0",
+    })
+    resp = app_client.post(
+        "/api/runner/heartbeat", headers=_bearer(key),
+        json={"name": "w", "version": "1.0.0"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["notice"] is not None
+
+
+def test_long_poll_refuses_incompatible_worker(app_client, db, monkeypatch):
+    """An incompatible worker's long-poll should 204 even with a job queued.
+    This is the HARD REFUSAL described in the workers-v2-1 spec."""
+    monkeypatch.setattr(harness, "__version__", "2.0.0")
+    _, key = _seed_user_and_key(db)
+    app_client.post("/api/runner/register", headers=_bearer(key), json={
+        "name": "w", "tags": [], "capabilities": [], "version": "1.0.0",
+    })
+    # Queue a job for this worker
+    r = Run(app="A", environment="prod", triggered_by="test", status="queued")
+    db.insert_run(r)
+    db.queue_runner_job(run_id=r.id, app_def_json='{"app":"A","tests":[]}',
+                         environment="prod", runner_name="w")
+    resp = app_client.get(
+        "/api/runner/jobs",
+        params={"name": "w", "wait": 1, "capacity": 1},
+        headers=_bearer(key),
+    )
+    assert resp.status_code == 204
+    assert "Retry-After" in resp.headers
+
+
+def test_short_poll_refuses_incompatible_worker(app_client, db, monkeypatch):
+    """POST /poll path also enforces the major-version refusal."""
+    monkeypatch.setattr(harness, "__version__", "2.0.0")
+    _, key = _seed_user_and_key(db)
+    app_client.post("/api/runner/register", headers=_bearer(key), json={
+        "name": "w", "tags": [], "capabilities": [], "version": "1.0.0",
+    })
+    r = Run(app="A", environment="prod", triggered_by="test", status="queued")
+    db.insert_run(r)
+    db.queue_runner_job(run_id=r.id, app_def_json='{"app":"A","tests":[]}',
+                         environment="prod", runner_name="w")
+    resp = app_client.post(
+        "/api/runner/poll", headers=_bearer(key),
+        json={"name": "w", "capacity": 1},
+    )
+    assert resp.status_code == 200
+    # Empty job list (refused) but the worker stays registered with online HB.
+    assert resp.json() == {"jobs": []}
+
+
+def test_dispatch_allowed_for_compatible_worker(app_client, db, monkeypatch):
+    """Sanity: a same-version worker still gets jobs through long-poll."""
+    monkeypatch.setattr(harness, "__version__", "1.0.0")
+    _, key = _seed_user_and_key(db)
+    app_client.post("/api/runner/register", headers=_bearer(key), json={
+        "name": "w", "tags": [], "capabilities": [], "version": "1.0.0",
+    })
+    r = Run(app="A", environment="prod", triggered_by="test", status="queued")
+    db.insert_run(r)
+    db.queue_runner_job(run_id=r.id, app_def_json='{"app":"A","tests":[]}',
+                         environment="prod", runner_name="w")
+    resp = app_client.get(
+        "/api/runner/jobs",
+        params={"name": "w", "wait": 2, "capacity": 1},
+        headers=_bearer(key),
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["jobs"]) == 1
+
+
+def test_admin_runners_page_shows_skew_badge(app_client, db, monkeypatch):
+    """The /admin/runners template renders the 'incompatible' / 'stale'
+    badge in the version cell. Smoke check: GET as admin, see badge text."""
+    monkeypatch.setattr(harness, "__version__", "2.0.0")
+    # Seed an admin + session
+    admin_id = str(uuid.uuid4())
+    db.insert_user({
+        "id": admin_id, "username": "admin", "display_name": "Admin",
+        "email": None, "password_hash": None, "role": "admin",
+        "auth_provider": "local", "role_override": 0, "is_active": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    })
+    from web.auth import _make_token
+    token = _make_token(admin_id)
+    app_client.cookies.set("session", token)
+    # Incompatible worker
+    db.upsert_runner(name="old", tags=[], capabilities=[], version="1.0.0")
+    # Stale (within major, far behind minor)
+    db.upsert_runner(name="trailing", tags=[], capabilities=[], version="2.0.0")
+    db.set_runner_version_stale("trailing", True)
+
+    resp = app_client.get("/admin/runners")
+    assert resp.status_code == 200
+    body = resp.content.decode()
+    assert "incompatible" in body
+    assert "stale" in body
+
+
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# workers-v2-1 Feature B: Volume health check + auto-drain
+# ══════════════════════════════════════════════════════════════════════════
+
+def test_volume_health_clean_when_dirs_writable(tmp_path):
+    """Both outbox parent and screenshot dir present + writable → no issues."""
+    import worker.worker as w
+    (tmp_path / "data").mkdir()
+    (tmp_path / "screens").mkdir()
+    cfg = _make_worker_cfg(
+        tmp_path,
+        outbox_path=str(tmp_path / "data" / "outbox.jsonl"),
+        screenshot_dir=str(tmp_path / "screens"),
+    )
+    issues = w._check_volume_health(cfg)
+    assert issues == []
+
+
+def test_volume_health_creates_missing_outbox_parent(tmp_path):
+    """A missing outbox parent dir should be auto-created by the probe —
+    the probe is "verify writable" and ``os.makedirs(exist_ok=True)`` is
+    cheap. After probe, the dir exists and no issues are reported."""
+    import worker.worker as w
+    cfg = _make_worker_cfg(
+        tmp_path,
+        outbox_path=str(tmp_path / "newly-made" / "outbox.jsonl"),
+        screenshot_dir=str(tmp_path / "screens"),
+    )
+    (tmp_path / "screens").mkdir()
+    issues = w._check_volume_health(cfg)
+    assert issues == []
+    assert (tmp_path / "newly-made").is_dir()
+
+
+def test_volume_health_reports_unwritable_outbox(tmp_path):
+    """When the outbox parent is made read-only mid-run, the probe should
+    catch it via the temp-write attempt and surface an 'outbox' issue."""
+    import worker.worker as w
+    outbox_parent = tmp_path / "data"
+    outbox_parent.mkdir()
+    screens = tmp_path / "screens"
+    screens.mkdir()
+    cfg = _make_worker_cfg(
+        tmp_path,
+        outbox_path=str(outbox_parent / "outbox.jsonl"),
+        screenshot_dir=str(screens),
+    )
+    # Healthy first
+    assert w._check_volume_health(cfg) == []
+
+    # Now drop the outbox dir
+    import shutil
+    shutil.rmtree(outbox_parent)
+    # The probe will attempt to recreate via makedirs(exist_ok=True), so
+    # plain removal won't reproduce the spec. Replace it with a FILE so
+    # makedirs raises FileExistsError → still not a directory.
+    outbox_parent.write_text("blocker")
+
+    issues = w._check_volume_health(cfg)
+    assert any("outbox" in i for i in issues), issues
+
+
+def test_volume_health_reports_readonly_screenshot_dir(tmp_path):
+    """``os.chmod(..., 0o400)`` makes the screenshot dir non-writable —
+    the temp-write probe should surface a 'screenshots' issue."""
+    import worker.worker as w
+    # If running as root, chmod-based permission tests don't apply — root
+    # bypasses POSIX checks. Skip cleanly.
+    if os.geteuid() == 0:
+        pytest.skip("permission-based test useless as root")
+    outbox_parent = tmp_path / "data"
+    outbox_parent.mkdir()
+    screens = tmp_path / "screens"
+    screens.mkdir()
+    cfg = _make_worker_cfg(
+        tmp_path,
+        outbox_path=str(outbox_parent / "outbox.jsonl"),
+        screenshot_dir=str(screens),
+    )
+    os.chmod(screens, 0o400)
+    try:
+        issues = w._check_volume_health(cfg)
+        assert any("screenshots" in i for i in issues), issues
+    finally:
+        # Cleanup so pytest can remove tmp_path
+        os.chmod(screens, 0o700)
+
+
+def test_submit_results_runs_preflight_health_check(tmp_path, caplog):
+    """submit_results should log a volume-health warning when the outbox
+    parent is unwritable, BUT still attempt the POST. The outbox is the
+    recovery path; we don't drop results just because the disk is sad."""
+    import logging as _logging
+    import worker.worker as w
+
+    outbox_parent = tmp_path / "data"
+    outbox_parent.mkdir()
+    cfg = _make_worker_cfg(
+        tmp_path,
+        outbox_path=str(outbox_parent / "outbox.jsonl"),
+        screenshot_dir=str(tmp_path / "screens"),
+    )
+    # Replace screenshot dir with a file so the probe flags it.
+    (tmp_path / "screens").write_text("blocker")
+
+    posted = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        posted.append(json.loads(req.content))
+        return httpx.Response(200, json={"ok": True})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await w.submit_results(client, cfg, "job-x", "complete", [])
+
+    with caplog.at_level(_logging.ERROR, logger="harness.worker"):
+        asyncio.run(run())
+    # Still posted, despite the health complaint
+    assert len(posted) == 1
+    assert posted[0]["job_id"] == "job-x"
+    # And the warning was logged
+    assert any("volume health" in rec.message.lower() for rec in caplog.records)
+
+
+def test_heartbeat_payload_includes_health_field(tmp_path):
+    """The worker's heartbeat() helper sends the optional ``health`` field
+    when supplied. Captured via MockTransport."""
+    import worker.worker as w
+    cfg = _make_worker_cfg(tmp_path)
+    captured: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(req.content))
+        return httpx.Response(200, json={"ok": True, "server_time": "now"})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await w.heartbeat(client, cfg, health="unhealthy")
+
+    asyncio.run(run())
+    assert captured.get("health") == "unhealthy"
+    assert captured.get("version") == cfg.version
+
+
+def test_heartbeat_logs_notice_from_response(tmp_path, caplog):
+    """If central returns a ``notice``, the worker logs it at WARNING."""
+    import logging as _logging
+    import worker.worker as w
+    cfg = _make_worker_cfg(tmp_path)
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "ok": True, "server_time": "now",
+            "notice": "central says: incompatible major version",
+        })
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await w.heartbeat(client, cfg, health="healthy")
+
+    with caplog.at_level(_logging.WARNING, logger="harness.worker"):
+        asyncio.run(run())
+    assert any("incompatible major version" in rec.message
+               for rec in caplog.records)
+
+
+def test_unhealthy_heartbeat_auto_drains_runner(app_client, db):
+    """When a worker reports health='unhealthy', central flips its row to
+    status='draining'. Subsequent 'healthy' restores it to 'online'."""
+    _, key = _seed_user_and_key(db)
+    app_client.post("/api/runner/register", headers=_bearer(key), json={
+        "name": "w", "tags": [], "capabilities": [], "version": "1.0.0",
+    })
+    assert db.get_runner_by_name("w")["status"] == "online"
+
+    # Unhealthy → drain
+    resp = app_client.post(
+        "/api/runner/heartbeat", headers=_bearer(key),
+        json={"name": "w", "health": "unhealthy"},
+    )
+    assert resp.status_code == 200
+    assert db.get_runner_by_name("w")["status"] == "draining"
+    assert db.get_runner_by_name("w")["health"] == "unhealthy"
+
+    # Recover → restore
+    resp = app_client.post(
+        "/api/runner/heartbeat", headers=_bearer(key),
+        json={"name": "w", "health": "healthy"},
+    )
+    assert resp.status_code == 200
+    assert db.get_runner_by_name("w")["status"] == "online"
+    assert db.get_runner_by_name("w")["health"] == "healthy"
+
+
+def test_heartbeat_without_health_field_is_backcompat(app_client, db):
+    """Older worker builds don't send ``health`` — should still work."""
+    _, key = _seed_user_and_key(db)
+    app_client.post("/api/runner/register", headers=_bearer(key), json={
+        "name": "w", "tags": [], "capabilities": [],
+    })
+    resp = app_client.post(
+        "/api/runner/heartbeat", headers=_bearer(key), json={"name": "w"},
+    )
+    assert resp.status_code == 200
+
+
+def test_is_worker_unhealthy_default_false(tmp_path):
+    """Fresh module state: the worker-side flag starts at False."""
+    import worker.worker as w
+    w._set_unhealthy(False)  # reset between tests (module global)
+    assert w.is_worker_unhealthy() is False

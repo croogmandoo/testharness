@@ -1,3 +1,10 @@
+# Central harness version. Workers report their own version on register/
+# heartbeat (HARNESS_WORKER_VERSION env var, defaulting to "1.0.0"). The
+# dispatch path compares major versions to decide whether to give a worker
+# any jobs; minor-version drift is allowed but flagged in the UI. See
+# harness/version_skew.py for the comparison logic.
+__version__ = "1.0.0"
+
 from harness.models import TestResult, Run, AppState, StepResult
 from harness.browser import run_browser_test
 from harness.api import run_api_test

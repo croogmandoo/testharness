@@ -46,9 +46,20 @@ def _is_online(last_seen_at: str | None, now: datetime | None = None) -> bool:
 @router.get("/admin/runners", response_class=HTMLResponse)
 async def runners_list(request: Request,
                        current_user: dict = Depends(require_role("admin"))):
-    from web.main import get_db
+    from web.main import get_db, get_config
+    from harness.version_skew import central_version, classify_skew
     db = get_db()
     runners = db.list_runners()
+    # workers-v2-1: classify each runner's version against central so the
+    # template can render the stale / incompatible badges. We compute this
+    # at render time rather than reading the DB column alone because the
+    # column only tracks "stale" (minor drift) — the "incompatible" decision
+    # depends on the LIVE central version which can shift between heartbeats.
+    cv = central_version()
+    cfg = get_config() or {}
+    warning_minors = int(
+        ((cfg.get("worker") or {}).get("version_skew_warning_minors", 2))
+    )
     enriched = []
     for r in runners:
         is_on = _is_online(r.get("last_seen_at"))
@@ -58,11 +69,15 @@ async def runners_list(request: Request,
             display_status = "online"
         else:
             display_status = "offline"
+        skew = classify_skew(
+            r.get("version"), cv, warning_minors=warning_minors,
+        )
         enriched.append({
             **r,
             "is_online": is_on,
             "display_status": display_status,
             "inflight_jobs": db.count_inflight_jobs_for_runner(r["name"]),
+            "version_skew": skew,
         })
     return templates.TemplateResponse(
         request, "admin_runners.html",
