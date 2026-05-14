@@ -65,11 +65,20 @@ class RunnerTestResult(BaseModel):
     screenshot: Optional[str] = None
 
 
+class RunnerScreenshot(BaseModel):
+    step_name: str
+    content_base64: str
+    mime_type: str = "image/png"
+
+
 class RunnerResultsRequest(BaseModel):
     job_id: str
     run_status: str = "complete"   # "complete" | "error"
     error: Optional[str] = None
     results: list[RunnerTestResult]
+    # Optional artifact uploads — base64-encoded image bytes keyed by step
+    # name. Each entry is capped at MAX_SCREENSHOT_BYTES on the server.
+    screenshots: list[RunnerScreenshot] = []
 
 
 class RunnerHeartbeatRequest(BaseModel):
@@ -161,7 +170,12 @@ async def runner_results(
     req: RunnerResultsRequest,
     current_user: dict = Depends(require_scope("worker:results")),
 ):
-    """Worker submits completed test results for a job it owns."""
+    """Worker submits completed test results for a job it owns.
+
+    Optional ``screenshots`` entries are base64-decoded and written under
+    ``data/screenshots/{run_id}/{step_name}.{ext}``. Any individual screenshot
+    larger than ``MAX_SCREENSHOT_BYTES`` (5 MiB) is rejected with 413.
+    """
     from web.main import get_db, get_config
     from harness.worker_dispatch import ingest_runner_results
     db = get_db()
@@ -173,9 +187,25 @@ async def runner_results(
             status_code=409,
             detail=f"job {req.job_id} is in state {job['state']!r}, expected 'assigned'",
         )
-    # The worker that claimed it must be the one submitting (sanity check)
-    # We don't enforce hard caller-name binding in v1 — admins reassign by
-    # forcing state changes in the DB if needed.
+
+    # Pre-flight: size-check every base64 screenshot before doing any work.
+    # We compute the *decoded* size from the base64 length so a malicious
+    # worker can't OOM us by sending a huge encoded blob.
+    for s in req.screenshots:
+        decoded_size = (len(s.content_base64) * 3) // 4
+        if decoded_size > MAX_SCREENSHOT_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"screenshot for step {s.step_name!r} is {decoded_size} bytes; "
+                    f"max is {MAX_SCREENSHOT_BYTES}"
+                ),
+            )
+
+    # Save screenshots to disk, keyed by run_id / step_name. Update
+    # ``test_results.screenshot_path`` so the dashboard's image links work.
+    saved_paths = _save_screenshots(job["run_id"], req.screenshots)
+
     try:
         summary = await ingest_runner_results(
             db,
@@ -184,10 +214,74 @@ async def runner_results(
             run_status=req.run_status,
             test_results=[r.model_dump() for r in req.results],
             error=req.error,
+            screenshot_paths=saved_paths,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"ok": True, **summary}
+    return {"ok": True, "screenshots_saved": len(saved_paths), **summary}
+
+
+MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024  # 5 MiB, mirrors worker-side limit
+
+# Map MIME types to safe file extensions. Anything not on this list is
+# stored as ``.bin`` rather than letting the worker dictate the file
+# suffix — defence in depth against arbitrary-extension uploads.
+_MIME_EXT = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+}
+
+
+def _save_screenshots(run_id: str, screenshots: list) -> dict:
+    """Decode and persist screenshots under ``data/screenshots/<run_id>/``.
+    Returns ``{step_name: relative_path}`` for every successfully saved
+    file. Anything that fails to decode is logged and skipped — bad data
+    from one screenshot shouldn't drop an entire results payload.
+    """
+    import base64
+    import os
+    import re
+
+    if not screenshots:
+        return {}
+
+    # Guard against directory-traversal in run_id. UUIDs are safe but never
+    # trust input — sanitise hard.
+    safe_run = re.sub(r"[^A-Za-z0-9._-]", "_", run_id)[:100]
+    out_dir = os.path.join("data", "screenshots", safe_run)
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except OSError as e:
+        _log.error("screenshots: cannot create %s: %s", out_dir, e)
+        return {}
+
+    saved: dict = {}
+    for s in screenshots:
+        ext = _MIME_EXT.get(s.mime_type, "bin")
+        safe_step = re.sub(r"[^A-Za-z0-9._-]", "_", s.step_name)[:120] or "step"
+        path = os.path.join(out_dir, f"{safe_step}.{ext}")
+        try:
+            data = base64.b64decode(s.content_base64, validate=True)
+        except Exception as e:  # pragma: no cover — malformed b64 is rare
+            _log.warning("screenshots: decode failed for %s: %s", s.step_name, e)
+            continue
+        if len(data) > MAX_SCREENSHOT_BYTES:
+            _log.warning(
+                "screenshots: decoded size %d exceeds cap; skipping %s",
+                len(data), s.step_name,
+            )
+            continue
+        try:
+            with open(path, "wb") as f:
+                f.write(data)
+        except OSError as e:
+            _log.error("screenshots: write %s failed: %s", path, e)
+            continue
+        # Store the URL path the dashboard's <img src> uses.
+        saved[s.step_name] = f"/screenshots/{safe_run}/{safe_step}.{ext}"
+    return saved
 
 
 @router.post("/heartbeat")

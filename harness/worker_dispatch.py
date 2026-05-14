@@ -160,6 +160,7 @@ async def ingest_runner_results(
     run_status: str,
     test_results: list,
     error: Optional[str] = None,
+    screenshot_paths: Optional[dict] = None,
 ) -> dict:
     """Persist worker-submitted results, run alert state-transition logic,
     fire the run webhook if configured. Mirrors the post-execution half of
@@ -169,7 +170,10 @@ async def ingest_runner_results(
     `test_results` is a list of dicts shaped like TestResult JSON:
         {test_name, status, error_msg, duration_ms, finished_at, step_log}
     `run_status` is "complete" or "error".
+    ``screenshot_paths`` maps step_name → URL path (set by
+    web/routes/runner.py when the worker uploaded artifacts).
     """
+    screenshot_paths = screenshot_paths or {}
     from harness.alerts import dispatch_alerts, dispatch_run_webhook
     from harness.models import AppState, StepResult, TestResult
     from harness.maintenance import is_in_maintenance
@@ -202,6 +206,16 @@ async def ingest_runner_results(
             )
             for s in (r.get("step_log") or [])
         ]
+        # If the worker uploaded a screenshot for this test, prefer the local
+        # storage path over whatever the worker recorded in ``r["screenshot"]``
+        # (which may be a path on the worker's own filesystem). The match
+        # logic looks for either the test name or a step name as the dict key.
+        resolved_screenshot = r.get("screenshot")
+        for candidate_key in (r["test_name"], *(s.get("step", "") for s in (r.get("step_log") or []))):
+            if candidate_key and candidate_key in screenshot_paths:
+                resolved_screenshot = screenshot_paths[candidate_key]
+                break
+
         tr = TestResult(
             run_id=run["id"],
             app=app,
@@ -210,11 +224,16 @@ async def ingest_runner_results(
             status=r.get("status", "error"),
             error_msg=r.get("error_msg"),
             step_log=step_log,
-            screenshot=r.get("screenshot"),
+            screenshot=resolved_screenshot,
             duration_ms=r.get("duration_ms"),
             finished_at=r.get("finished_at"),
         )
         db.insert_test_result(tr)
+        if resolved_screenshot and resolved_screenshot.startswith("/screenshots/"):
+            # Record on test_results.screenshot_path too — the dashboard
+            # falls back to the canonical column when the embedded blob
+            # isn't usable.
+            db.set_test_result_screenshot_path(tr.id, resolved_screenshot)
 
         prev = db.get_app_state(app, environment, tr.test_name)
         prev_state = prev["state"] if prev else "unknown"

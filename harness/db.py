@@ -211,6 +211,15 @@ class Database:
                  tr.screenshot, tr.duration_ms, tr.finished_at)
             )
 
+    def set_test_result_screenshot_path(self, result_id: str, path: str) -> None:
+        """Record a server-side screenshot URL on a test_results row.
+        Used by the worker-results ingest pipeline (feature #2)."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE test_results SET screenshot_path=? WHERE id=?",
+                (path, result_id),
+            )
+
     def get_results_for_run(self, run_id: str) -> list:
         with self._connect() as conn:
             rows = conn.execute(

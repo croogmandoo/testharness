@@ -347,17 +347,87 @@ def _test_result_to_dict(tr: TestResult) -> dict:
                 "status": s.status,
                 "duration_ms": s.duration_ms,
                 "error": s.error,
-                "screenshot": None,  # screenshots aren't uploaded in v1
+                "screenshot": None,  # raw bytes go in the top-level screenshots[] block
             }
             for s in (tr.step_log or [])
         ],
-        "screenshot": None,
+        # The worker records the local path it wrote to disk; this is
+        # informational. The actual upload happens via the top-level
+        # ``screenshots`` block — see ``_collect_screenshots`` below.
+        "screenshot": tr.screenshot,
     }
 
 
-async def execute_job(job: dict, cfg: WorkerConfig) -> tuple[str, list[dict], Optional[str]]:
+def _collect_screenshots(tr_list: list[TestResult],
+                          cfg: WorkerConfig) -> list[dict]:
+    """Walk every TestResult + StepResult, base64-encode any on-disk
+    screenshot artifact, and return a list of {step_name, content_base64,
+    mime_type} entries suitable for the /api/runner/results payload.
+
+    Entries exceeding ``cfg.max_screenshot_bytes`` are dropped with a
+    warning — the central enforces the same limit and would 413 them
+    anyway. Best-effort: missing files are logged and skipped.
+    """
+    import base64
+    import os
+
+    out: list[dict] = []
+    for tr in tr_list:
+        # Per-test screenshot
+        if tr.screenshot and os.path.isfile(tr.screenshot):
+            entry = _encode_screenshot_file(tr.test_name, tr.screenshot, cfg)
+            if entry is not None:
+                out.append(entry)
+        # Per-step screenshots
+        for step in (tr.step_log or []):
+            if step.screenshot and os.path.isfile(step.screenshot):
+                entry = _encode_screenshot_file(step.step, step.screenshot, cfg)
+                if entry is not None:
+                    out.append(entry)
+    return out
+
+
+def _encode_screenshot_file(step_name: str, path: str,
+                             cfg: WorkerConfig) -> Optional[dict]:
+    import base64
+    import os
+
+    try:
+        size = os.path.getsize(path)
+    except OSError as e:
+        _log.warning("screenshots: stat %s failed: %s", path, e)
+        return None
+    if size > cfg.max_screenshot_bytes:
+        _log.warning(
+            "screenshots: %s is %d bytes (max %d) — skipping upload",
+            path, size, cfg.max_screenshot_bytes,
+        )
+        return None
+    try:
+        with open(path, "rb") as f:
+            content = f.read()
+    except OSError as e:
+        _log.warning("screenshots: read %s failed: %s", path, e)
+        return None
+    ext = os.path.splitext(path)[1].lstrip(".").lower()
+    mime_map = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                "webp": "image/webp", "gif": "image/gif"}
+    mime = mime_map.get(ext, "application/octet-stream")
+    return {
+        "step_name": step_name,
+        "content_base64": base64.b64encode(content).decode("ascii"),
+        "mime_type": mime,
+    }
+
+
+async def execute_job(
+    job: dict, cfg: WorkerConfig,
+) -> tuple[str, list[dict], Optional[str], list[TestResult]]:
     """Run all tests in `job["app_def"]` against `job["environment"]`.
-    Returns (run_status, results, error).
+    Returns ``(run_status, results_dicts, error, raw_test_results)`` — the
+    last element is the list of TestResult dataclasses, needed by
+    ``_collect_screenshots`` to walk step screenshots without re-parsing
+    the wire payload.
     """
     from harness.api import run_api_test
     from harness.browser import run_availability_test, run_browser_test
@@ -379,6 +449,7 @@ async def execute_job(job: dict, cfg: WorkerConfig) -> tuple[str, list[dict], Op
 
     browser_cfg = {"headless": True, "timeout_ms": 30000}
     results_out: list[dict] = []
+    raw_results: list[TestResult] = []
 
     # Sequential mode is forced when any test has `extract:` — but since the
     # central already resolved `$VAR` references, capture chaining is the only
@@ -432,8 +503,9 @@ async def execute_job(job: dict, cfg: WorkerConfig) -> tuple[str, list[dict], Op
             captures.update(result.captures)
         if result is not None:
             results_out.append(_test_result_to_dict(result))
+            raw_results.append(result)
 
-    return ("complete", results_out, None)
+    return ("complete", results_out, None, raw_results)
 
 
 # ── Main loop ───────────────────────────────────────────────────────────────
@@ -468,8 +540,12 @@ async def poll_loop(client: httpx.AsyncClient, cfg: WorkerConfig) -> None:
     async def _run_one(job: dict) -> None:
         async with semaphore:
             try:
-                status, results, error = await execute_job(job, cfg)
-                await submit_results(client, cfg, job["job_id"], status, results, error)
+                status, results, error, raw = await execute_job(job, cfg)
+                screenshots = _collect_screenshots(raw, cfg)
+                await submit_results(
+                    client, cfg, job["job_id"], status, results, error,
+                    screenshots=screenshots,
+                )
             except Exception:
                 _log.exception("execute_job failed for %s", job.get("job_id"))
 
