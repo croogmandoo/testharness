@@ -26,7 +26,7 @@ def test_run_api_test_accepts_ssl_ctx(monkeypatch):
 
     ctx = ssl.create_default_context()
     test_def = {"name": "ping", "type": "api", "method": "GET", "endpoint": "/ping"}
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         run_api_test("run-1", "myapp", "prod", "http://example.com", test_def, ssl_ctx=ctx)
     )
     assert captured.get("verify") is ctx
@@ -53,7 +53,7 @@ def test_run_api_test_default_ssl_no_ctx(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
 
     test_def = {"name": "ping", "type": "api", "method": "GET", "endpoint": "/ping"}
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         run_api_test("run-1", "myapp", "prod", "http://example.com", test_def)
     )
     assert captured.get("verify") is True
@@ -80,7 +80,7 @@ def test_run_availability_test_accepts_ssl_ctx(monkeypatch):
 
     ctx = ssl.create_default_context()
     test_def = {"name": "up", "type": "availability"}
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         browser_mod.run_availability_test("run-1", "myapp", "prod",
                                           "http://example.com", test_def, ssl_ctx=ctx)
     )
@@ -107,7 +107,7 @@ def test_run_availability_test_default_ssl_no_ctx(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
 
     test_def = {"name": "up", "type": "availability"}
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         browser_mod.run_availability_test("run-1", "myapp", "prod",
                                           "http://example.com", test_def)
     )
@@ -151,7 +151,7 @@ def test_run_browser_test_sets_ssl_cert_file_when_bundle_exists(monkeypatch, tmp
     monkeypatch.setattr(browser_mod, "async_playwright", lambda: FakePW())
 
     test_def = {"name": "visit", "type": "browser", "steps": []}
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         browser_mod.run_browser_test("run-1", "myapp", "prod",
                                      "http://example.com", test_def)
     )
@@ -190,7 +190,7 @@ def test_run_browser_test_no_ssl_cert_file_when_no_bundle(monkeypatch, tmp_path)
     monkeypatch.setattr(browser_mod, "async_playwright", lambda: FakePW())
 
     test_def = {"name": "visit", "type": "browser", "steps": []}
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         browser_mod.run_browser_test("run-1", "myapp", "prod",
                                      "http://example.com", test_def)
     )
@@ -227,7 +227,7 @@ def test_runner_passes_ssl_ctx_to_api_test(monkeypatch, tmp_path):
         "tests": [{"name": "ping", "type": "api", "method": "GET", "endpoint": "/ping"}],
     }
     config = {}
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         run_app(app_def, "prod", "test", db, config)
     )
     assert len(api_calls) == 1

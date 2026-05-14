@@ -13,7 +13,7 @@ def mock_page():
 
 
 def run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def test_screenshot_step_saves_file_and_returns_path(mock_page, tmp_path):
