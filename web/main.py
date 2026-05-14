@@ -264,6 +264,25 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
 
     app.add_middleware(_FirstRunMiddleware)
 
+    # ── Optional mTLS verification (workers-v2 feature #5b) ──────────────
+    # Enabled via ``worker.mtls.enabled: true`` + ``client_ca_path``. The
+    # ASGI server (uvicorn) is responsible for the actual TLS handshake;
+    # this middleware verifies that a client certificate was presented for
+    # any ``/api/runner/*`` request, and stashes the subject CN as the
+    # worker identity on request.state so downstream handlers can audit it.
+    mtls_cfg = (_config.get("worker") or {}).get("mtls") or {}
+    if mtls_cfg.get("enabled"):
+        from web.mtls import MTLSEnforcementMiddleware
+        app.add_middleware(
+            MTLSEnforcementMiddleware,
+            require_for_prefix="/api/runner/",
+            client_ca_path=mtls_cfg.get("client_ca_path"),
+        )
+        _log.info(
+            "mTLS: enforcement enabled for /api/runner/* (ca_path=%r)",
+            mtls_cfg.get("client_ca_path"),
+        )
+
     # 403 exception handler — renders 403.html for HTML requests.
     from fastapi.exceptions import HTTPException as _HTTPExc
     from fastapi.responses import JSONResponse
