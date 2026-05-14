@@ -4,6 +4,19 @@
   <a href="/?environment={{ environment }}">← Status</a> / {{ app }}
 </div>
 
+<div class="detail-skeleton" data-loading="true" id="detail-loading">
+  <div class="skeleton-card">
+    <div class="skeleton-line skeleton-line--title"></div>
+    <div class="skeleton-line skeleton-line--meta"></div>
+  </div>
+  <div class="skeleton-card">
+    <div class="skeleton-line skeleton-line--title"></div>
+    <div class="skeleton-line skeleton-line--meta"></div>
+  </div>
+</div>
+
+<div data-loading="false">
+
 {% if selected_run %}
 
 {% if runs %}
@@ -117,7 +130,15 @@
 </p>
 {% endif %}
 
+</div>
+
 <script>
+// Hide skeleton placeholder once the real content has rendered.
+(function () {
+  var sk = document.getElementById('detail-loading');
+  if (sk) sk.setAttribute('data-loading', 'false');
+})();
+
 const APP = {{ app | tojson }};
 const ENV = {{ environment | tojson }};
 

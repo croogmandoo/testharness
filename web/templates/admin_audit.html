@@ -49,7 +49,15 @@
   </tbody>
 </table>
 {% else %}
+{% if filter_user or filter_action %}
 <p class="empty">No audit log entries match the current filter.</p>
+{% else %}
+<div class="empty-state">
+  <div class="empty-state-icon">📜</div>
+  <h3>No audit events yet</h3>
+  <p>Events accrue automatically as admins create users, manage keys, and edit config.</p>
+</div>
+{% endif %}
 {% endif %}
 
 {% endblock %}

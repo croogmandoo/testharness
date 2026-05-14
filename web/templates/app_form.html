@@ -16,6 +16,7 @@
   <div class="field">
     <label class="field-mini">App Name *</label>
     <input id="f-name" type="text" class="search input--max400 mb-0"
+           required minlength="1" data-validate="required"
            value="{{ app_def.app | default('') | e }}"
            {{ 'readonly' if mode == 'edit' else '' }}
            placeholder="my-app">
@@ -24,7 +25,8 @@
 
   <div class="field">
     <label class="field-mini">URL *</label>
-    <input id="f-url" type="text" class="search input--max500 mb-0"
+    <input id="f-url" type="url" class="search input--max500 mb-0"
+           required data-validate="required url"
            value="{{ app_def.url | default('') | e }}"
            placeholder="https://example.com">
     <div id="err-url" class="error-text"></div>

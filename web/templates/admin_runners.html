@@ -85,7 +85,14 @@
     </tbody>
   </table>
   {% else %}
-  <p class="empty">No workers have registered yet.</p>
+  <div class="empty-state">
+    <div class="empty-state-icon">🛰️</div>
+    <h3>No remote workers registered yet</h3>
+    <p>
+      Deploy a worker in a restricted network zone and it will appear here once
+      it polls in with a valid API key.
+    </p>
+  </div>
 
   <div class="onboarding-sample mt-4">
     <strong>Deploy a worker</strong><br><br>
