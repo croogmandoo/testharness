@@ -1,0 +1,103 @@
+# Slim remote-worker image — API / availability checks only (no Playwright,
+# no Chromium). Use this when the worker's apps never include browser tests;
+# image lands around 100-130 MB instead of the ~1.5 GB full Playwright image.
+#
+# Build:
+#   docker build -f worker/Dockerfile.slim -t harness-worker-slim:latest .
+#
+# Run (env contract is identical to the full image):
+#   docker run -d --name harness-worker-slim --restart unless-stopped \
+#     -e HARNESS_URL=https://harness.example.com \
+#     -e HARNESS_API_KEY=hth_... \
+#     -e HARNESS_WORKER_NAME=eu-api-1 \
+#     -e HARNESS_WORKER_TAGS=eu,api \
+#     -e HARNESS_CAPABILITIES=api,availability \
+#     harness-worker-slim:latest
+#
+# Size & layer-choice rationale
+# ─────────────────────────────
+# 1. Multi-stage build. Stage 1 (``build``) uses the full ``python:3.11``
+#    image with build-essential so wheels that need a C toolchain (e.g.
+#    pyarrow, cryptography, bcrypt) compile cleanly. Stage 2 (``runtime``)
+#    uses ``python:3.11-slim`` and copies only the installed site-packages
+#    plus the worker source. No compiler in the final image.
+#
+# 2. Trimmed requirements: this image installs ONLY what the worker actually
+#    imports at runtime — httpx, fastapi (for the harness modules' shared
+#    types), pyyaml, cryptography, itsdangerous, apscheduler, anyio. We
+#    deliberately skip:
+#      - playwright + browser binaries (~1.3 GB)
+#      - pyarrow / azure-* (analytics is central-only)
+#      - reportlab / python-docx (export is central-only)
+#      - Pillow (only browser screenshots need it; this worker doesn't take
+#        them)
+#      - pytest* (test deps don't belong in a runtime image)
+#      - bcrypt + ldap3 (auth is central-only)
+#
+# 3. apt: only ``ca-certificates`` for TLS. No gosu (we don't need to
+#    chown bind mounts — the worker writes only to /app/data which is
+#    pre-created with the right ownership).
+#
+# 4. PYTHONDONTWRITEBYTECODE=1 + PYTHONUNBUFFERED=1 to keep the image
+#    slim and logs flushing in real time.
+#
+# Target final size: ~120 MB. Verify with ``docker images``.
+
+# ─── Stage 1: build wheels ─────────────────────────────────────────────────
+FROM python:3.11 AS build
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Only the runtime deps the worker actually imports. Pinned conservatively.
+RUN pip install --no-cache-dir --prefix=/install \
+        "httpx==0.27.0" \
+        "fastapi>=0.115.0" \
+        "uvicorn==0.29.0" \
+        "pyyaml==6.0.2" \
+        "jinja2>=3.1.6" \
+        "python-dotenv>=1.2.2" \
+        "starlette>=0.47.2" \
+        "anyio==4.3.0" \
+        "cryptography>=42.0.4" \
+        "itsdangerous>=2.1.2" \
+        "python-multipart>=0.0.18" \
+        "apscheduler>=3.10.4,<4"
+
+# ─── Stage 2: minimal runtime ──────────────────────────────────────────────
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/install/bin:${PATH}" \
+    PYTHONPATH="/install/lib/python3.11/site-packages:/app"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root runtime user matching the central harness's uid for parity.
+RUN groupadd --system --gid 10001 harness \
+    && useradd --system --uid 10001 --gid harness \
+               --home-dir /app --no-create-home --shell /usr/sbin/nologin harness
+
+WORKDIR /app
+
+# Copy built site-packages from stage 1.
+COPY --from=build /install /install
+
+# Application code (harness modules used by the worker + worker entry-point).
+COPY --chown=harness:harness harness/ ./harness/
+COPY --chown=harness:harness worker/ ./worker/
+
+# Local writable state — outbox JSONL + any local screenshots the worker
+# might be configured to upload via HARNESS_SCREENSHOT_DIR.
+RUN install -d -o harness -g harness /app/data
+USER harness
+
+# Default capabilities for this slim image — operators can override via the
+# HARNESS_CAPABILITIES env var if they're absolutely sure they don't need
+# browser checks.
+ENV HARNESS_CAPABILITIES="api,availability"
+
+CMD ["python", "-m", "worker.worker"]
