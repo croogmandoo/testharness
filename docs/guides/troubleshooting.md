@@ -31,13 +31,13 @@ This prevents new runs from being triggered because the harness detects an activ
 ## Steps
 
 ### 1. Open a Terminal
-Navigate to the workspace root:
-```powershell
-cd c:\Users\davigc\OneDrive - CATSAACSTA\Documents\testharness
+Navigate to the workspace root (wherever you cloned / deployed the harness):
+```bash
+cd /path/to/testharness
 ```
 
 ### 2. Open SQLite and Connect to the Database
-```powershell
+```bash
 sqlite3 data/harness.db
 ```
 
@@ -174,4 +174,144 @@ WHERE status='running';
 ```
 
 **Use with caution** — only if you're sure you want to reset ALL pending/running tasks.
+
+---
+
+# Remote Worker Troubleshooting
+
+For deployment of remote workers see
+[`remote-workers.md`](remote-workers.md); for the admin dashboard see
+[`admin-runners.md`](admin-runners.md). The two entries below cover the
+diagnostic cases most worth a runbook.
+
+## Worker registered but processing 0 jobs
+
+A worker appears at `/admin/runners` with status `online`, but its
+**In-flight** column sits at `0` while jobs queue elsewhere. Walk this
+checklist in order — the first one that matches is almost always the
+cause.
+
+### 1. Check the version badge
+
+In the worker's **Version** column, look for a red **incompatible**
+badge. That means MAJOR versions differ between the worker and central
+and dispatch is hard-refusing this worker.
+
+Worker log will show, on every heartbeat:
+
+```text
+worker[eu-1] central notice: worker version '1.0.0' is incompatible
+  with central version '2.0.0': MAJOR versions differ. This worker
+  will receive no jobs until upgraded.
+```
+
+**Fix**: upgrade the worker (`docker pull` + recreate, or `apt-get` on
+systemd installs) to a release in the same major as the central.
+
+A **stale** (amber) badge does NOT block dispatch — it's a heads-up
+about minor-version drift, advisory only.
+
+### 2. Check the Status column
+
+`draining` workers receive no new jobs. Two paths get there:
+
+- An admin clicked **Drain**. Click **Resume**.
+- The worker self-reported `health="unhealthy"` on heartbeat and the
+  central auto-drained it. See
+  [Worker keeps draining itself](#worker-keeps-draining-itself) below.
+
+### 3. Check the Capabilities column
+
+The slim worker image hard-codes `api,availability` — it cannot run
+`type: browser` tests. If the queued job is a browser test and the
+only matching worker is slim, dispatch will route past it.
+
+**Fix**: route browser tests to a full-image worker
+(`run_on: <name-of-full-worker>` or a tag those workers share), or
+deploy a full-image worker in the same network zone.
+
+### 4. Check `run_on:` matches a worker
+
+```yaml
+run_on: eu-worker-1            # must equal a worker's HARNESS_WORKER_NAME exactly
+run_on: { tag: media }         # 'media' must appear in some worker's HARNESS_WORKER_TAGS
+```
+
+Typos here strand the job in `queued` state indefinitely. The central
+doesn't validate `run_on:` values against registered workers at config
+load — only at dispatch time, silently.
+
+### 5. Check the API key scope
+
+In `/admin/runners`, the **Key scope** column should show
+`worker:pull worker:results`. If it's missing one of those, the
+worker's poll or results POST will 403 — visible in the central log:
+
+```text
+require_scope: api_key abc12... denied — needs 'worker:pull'
+```
+
+**Fix**: regenerate the API key at `/api-keys` with the correct
+scopes and update `HARNESS_API_KEY` on the worker.
+
+## Worker keeps draining itself
+
+A worker oscillates between `online` and `draining` on
+`/admin/runners` without anyone touching the buttons. This is the
+**volume health auto-drain** kicking in: the worker has self-reported
+its outbox or screenshot directory as unwritable, and the central is
+draining it on the corresponding heartbeat.
+
+Worker log will show, repeatedly:
+
+```text
+worker[eu-1] volume health degraded: outbox parent 'data' not writable: ...
+worker[eu-1] volume health still degraded after recreate: ...
+```
+
+### Fix
+
+The volume health probe writes a real temp file (`os.access(W_OK)` lies
+on NFS/overlayfs, so we don't trust it). Two directories are checked:
+
+- **Outbox parent**: parent of `HARNESS_OUTBOX_PATH` (default `data/`)
+- **Screenshot dir**: `HARNESS_SCREENSHOT_DIR` (default `data/worker_screenshots`)
+
+Fix the one named in the log:
+
+1. **Confirm the path on the host.** For Docker:
+   ```bash
+   docker inspect harness-worker --format \
+     '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'
+   ```
+2. **Check ownership / permissions.** Both the full and slim images
+   run as uid `10001` (`harness`). The mount target must be writable by
+   that uid:
+   ```bash
+   ls -ld /host/path/to/worker-data
+   # Want: drwxr-xr-x harness ... OR mode 777 on a shared NFS share
+   ```
+3. **Fix and watch.** `chown` / `chmod` as needed:
+   ```bash
+   sudo chown -R 10001:10001 /host/path/to/worker-data
+   ```
+   The next heartbeat (within `HARNESS_HEARTBEAT_INTERVAL`, default 30 s)
+   re-probes; on success the worker reports `health="healthy"` and the
+   central restores `runners.status='online'` automatically.
+
+### Why this is the right design
+
+A worker that can't write its outbox can't preserve results across a
+central outage. Letting it keep claiming jobs in that state would lose
+work the next time the network blips. Auto-draining stops new claims
+until the underlying problem is fixed; the worker recovers on its own
+when it is.
+
+### Persistent flapping
+
+If the worker drains/restores every minute or two, the substrate is
+intermittently failing — IOPS exhaustion, full disk (`df -h` on the
+host), NFS soft-mount timeouts, or container overlay corruption. The
+worker config itself is fine; fix the storage.
+
 

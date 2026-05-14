@@ -218,14 +218,18 @@ worker:
   job_timeout_seconds: 600         # stuck-job reaper threshold
   reaper_interval_seconds: 60      # how often the reaper scans
   max_retries: 3                   # requeue this many times before failing
+  version_skew_warning_minors: 2   # minor-version drift before flagging 'stale'
+                                   # (different MAJOR is always 'incompatible'
+                                   # and refused dispatch — not a knob)
   mtls:                            # optional — see remote-workers.md § "mTLS recipe"
     enabled: false
     client_ca_path: /etc/harness/client-ca.pem
 ```
 
 The full worker env-var reference (worker-side `HARNESS_*` variables) lives
-in [`remote-workers.md`](remote-workers.md). The two sections above are the
-only **central-side** v2 knobs.
+in [`remote-workers.md`](remote-workers.md); the column-by-column
+`/admin/runners` reference lives in [`admin-runners.md`](admin-runners.md).
+The section above is the only **central-side** worker config block.
 
 ---
 

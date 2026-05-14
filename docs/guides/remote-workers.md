@@ -326,16 +326,18 @@ central harness — zero behaviour change for existing apps.
 
 ### `/admin/runners`
 
-The admin page lists every registered worker with:
+The admin page lists every registered worker with name, tags, capabilities,
+key scope, version + skew badge, in-flight job count, retries in the last
+24h, status (**online** / **draining** / **offline**), and last-seen
+timestamp. It also surfaces a 24h screenshot-upload summary and a
+re-queue panel for runs the reaper gave up on.
 
-- Name, tags, capabilities, version
-- Status: **online** (heartbeat within 90 s), **draining**, **offline**
-- In-flight job count
-- Last-seen timestamp (UTC)
-- Actions: **Drain** (stop accepting new jobs), **Resume**, **Remove**
+Per-column meanings, every badge state, and the decision tree for the
+manual re-queue button live in [`admin-runners.md`](admin-runners.md) —
+that's the reference; this guide deliberately stops at "the page exists".
 
-All admin actions audit-log under `runner.drain`, `runner.resume`,
-`runner.delete`.
+Admin actions (Drain, Resume, Remove, Re-queue) audit-log under
+`runner.drain`, `runner.resume`, `runner.delete`, `runner.requeue`.
 
 ### Worker logs
 
@@ -368,6 +370,179 @@ In the central harness log (`data/logs/harness.log` or stderr):
   used an old `read`-scope key by mistake)
 - `mtls: rejected POST /api/runner/poll — no client cert presented` —
   mTLS is enabled but the worker isn't presenting a certificate
+
+---
+
+## Version compatibility
+
+Workers report `HARNESS_WORKER_VERSION` on every register and heartbeat;
+the central compares it to `harness.__version__` and decides whether to
+keep dispatching to that worker. Three outcomes, controlled by a single
+config knob:
+
+| Skew | Definition | Dispatch | UI badge |
+|---|---|---|---|
+| **ok** | Same major, minor within `worker.version_skew_warning_minors` (default 2); or worker is newer than central | Jobs flow normally | _(none)_ |
+| **stale** | Same major, minor more than `warning_minors` behind central | Jobs flow normally | amber **stale** |
+| **incompatible** | MAJOR version differs (worker `1.x` vs central `2.x`, etc.) | **Hard refusal** — long-poll returns 204, short-poll returns `{"jobs": []}` | red **incompatible** |
+
+Implementation: `harness/version_skew.py`. Parser is permissive
+(`v1.2.3-rc1` and `1.2` both parse fine); a missing or unparseable version
+is classified `unknown` and treated as compatible-by-default so a rolling
+upgrade can't lock you out.
+
+### Why a worker is registered but processing 0 jobs
+
+If a worker is sitting at `0` in-flight on `/admin/runners` while jobs
+queue elsewhere, walk the dispatch checklist in order:
+
+1. **Version badge.** A red **incompatible** badge means dispatch is
+   refusing this worker. Upgrade the worker (`docker pull` + recreate, or
+   `apt-get` on systemd installs). The notice repeats in the worker log
+   on every heartbeat:
+
+   ```text
+   worker[eu-1] central notice: worker version '1.0.0' is incompatible
+     with central version '2.0.0': MAJOR versions differ. This worker
+     will receive no jobs until upgraded.
+   ```
+
+2. **Status column.** `draining` workers never receive new jobs. Click
+   **Resume** if you drained them by hand, or check for an unhealthy
+   self-report (see [Volume health & auto-drain](#volume-health--auto-drain)).
+
+3. **Capabilities.** A slim worker advertises `api,availability` only.
+   Browser-typed jobs route past it. Check the **Capabilities** column.
+
+4. **Tag / name match.** `run_on: { tag: eu }` requires `eu` to appear in
+   `HARNESS_WORKER_TAGS`. `run_on: eu-worker-1` requires exact name match.
+
+5. **Key scope.** A key missing `worker:pull` will get 403 on poll —
+   visible in the central log as
+   `require_scope: api_key … denied — needs 'worker:pull'`.
+
+The **stale** badge is purely informational — it doesn't block dispatch.
+Plan the upgrade at your convenience.
+
+### Tuning the warning threshold
+
+```yaml
+# config.yaml on the central
+worker:
+  version_skew_warning_minors: 2   # default
+```
+
+Raise this if you do infrequent worker upgrades and don't want the
+amber badge to nag you. Setting it to a very large value effectively
+disables the stale flag (incompatibility detection is unaffected — it's
+fixed at "different major version").
+
+---
+
+## Volume health & auto-drain
+
+Every worker self-probes its on-disk dependencies on each heartbeat
+tick (default every `HARNESS_HEARTBEAT_INTERVAL` = 30 s). The probe
+attempts a real `tempfile.mkstemp` + write + delete in:
+
+- The parent of `HARNESS_OUTBOX_PATH` (defaults to `data/`).
+- `HARNESS_SCREENSHOT_DIR` (defaults to `data/worker_screenshots`).
+
+`os.access(W_OK)` is deliberately not used — it lies on root-squashed
+NFS and overlay filesystems. The temp-write is the authoritative test.
+
+### What happens on failure
+
+1. **Log** at ERROR with the issue list:
+   ```text
+   worker[eu-1] volume health degraded: outbox parent 'data' not writable: ...
+   ```
+2. **Attempt one recreate** via `os.makedirs(exist_ok=True)` on both dirs.
+3. **Re-probe.** If still bad, set the worker's internal `_unhealthy`
+   flag.
+4. **Heartbeat** with `health="unhealthy"` on the next tick.
+5. **Central auto-drains** the worker — `runners.status` flips to
+   `draining`, dispatch refuses new jobs. The change is visible on
+   `/admin/runners` within one heartbeat.
+
+The `submit_results` path also runs the same probe before each POST. A
+failed probe there is logged loudly but **does not block the POST** —
+the outbox is the recovery path, and dropping a result because the disk
+is sad would be exactly the wrong move.
+
+### Recovery is automatic
+
+The next heartbeat tick where the probe comes back clean:
+
+1. Clears the worker's `_unhealthy` flag.
+2. Heartbeats with `health="healthy"`.
+3. Central restores `runners.status='online'` — but **only if** the
+   previous health was `unhealthy`. An admin-initiated drain is
+   preserved across health flips.
+
+You don't have to click Resume after fixing the underlying disk
+problem.
+
+### What to fix
+
+| Symptom in worker log | Fix |
+|---|---|
+| `outbox parent '…' not writable` | `chmod` / `chown` the dir to the worker's runtime UID (10001 in both the full and slim images), or fix the bind-mount in `docker-compose.worker.yml` |
+| `outbox parent '…' is not a directory` | Something put a file at that path (typo / `touch` mistake). Remove it and let the next probe `mkdir` |
+| `screenshots parent '…' not writable` | Same as above for `HARNESS_SCREENSHOT_DIR` |
+| Repeated drain/restore flapping | Filesystem is intermittently failing — IOPS exhaustion, full disk (`df -h`), or NFS soft-mount timeouts. Fix the substrate, not the worker |
+
+See [`troubleshooting.md`](troubleshooting.md#worker-keeps-draining-itself)
+for the diagnostic walkthrough.
+
+---
+
+## Outbox replay & 409 conflicts
+
+When the central is unreachable, the worker buffers completed result
+payloads to `HARNESS_OUTBOX_PATH` (JSONL, one payload per line). On the
+next successful submit, it opportunistically replays one outbox entry —
+not all at once, to keep recovery gentle and avoid stampeding the central.
+
+### When 409 happens
+
+`POST /api/runner/results` returns **409 Conflict** when the job's
+`runner_jobs.state` is not `assigned`. The most common cause:
+
+1. Worker finishes a job and tries to POST results.
+2. Central is unreachable; the worker buffers the payload to its outbox.
+3. The reaper on the central (eventually) considers the job stuck and
+   either re-queues it (another worker picks it up) or marks it failed.
+4. Central comes back. The worker replays the outbox entry — but the
+   job's row is no longer `assigned`. Central returns 409.
+
+This is the **idempotency contract**: a run is identified by its
+`run_id`, and a `runner_job` is a one-shot claim on that run. Re-applying
+results to a job that's already moved on would clobber whatever the
+re-queued execution produced.
+
+### Why it's safe
+
+`outbox_flush_one` treats 4xx (including 409) as **permanent failure**
+and drops the head entry. The result you're replaying is the
+*duplicate* — the central has already routed around the original
+disconnect and has a fresh result (or a clean `failed` row) for that
+run. Continuing to retry the stale payload would just block the rest of
+the outbox queue.
+
+5xx and connection errors are different — those are buffered for the
+next replay attempt.
+
+Operator action: **none**. The log lines tell you what's happening:
+
+```text
+outbox: head entry 409 — dropping (4xx)
+outbox: replayed 1 entry (3 remaining)
+```
+
+If you're seeing a steady stream of 409s on outbox replay, the central
+was unreachable long enough for the reaper to fire — investigate the
+network outage, not the worker.
 
 ---
 
@@ -632,10 +807,13 @@ roadmap:
 
 ## See also
 
+- [`admin-runners.md`](admin-runners.md) — column-by-column reference
+  for the `/admin/runners` admin page
 - [`worker/README.md`](../../worker/README.md) — operator quickref next
   to the worker code
 - [`troubleshooting.md`](troubleshooting.md) — the manual stuck-run
-  fallback when the reaper isn't an option
+  fallback when the reaper isn't an option, plus diagnostics for
+  "registered but 0 jobs" and self-draining workers
 - [`deployment.md`](deployment.md) — `config.yaml` reference, including
   the `logging:` and `worker:` v2 sections
 - `docs/superpowers/plans/2026-05-14-remote-worker.md` — original
