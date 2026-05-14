@@ -55,7 +55,18 @@
           {% for c in r.capabilities %}<span class="tag">{{ c }}</span>{% endfor %}
           {% if not r.capabilities %}<span class="text-muted">—</span>{% endif %}
         </td>
-        <td class="text-xs font-mono text-secondary">{{ r.version or "—" }}</td>
+        {# version-cell — workers-v2-1: skew badges. "stale" (yellow) for
+           same-major workers more than worker.version_skew_warning_minors
+           minors behind; "incompatible" (red) for major-version mismatch
+           — the dispatch path refuses jobs to those. #}
+        <td class="text-xs font-mono text-secondary">
+          {{ r.version or "—" }}
+          {% if r.version_skew == "incompatible" %}
+            <span class="tag" style="background:#7a1f1f;color:#fff;margin-left:4px;" title="MAJOR version differs from central — no jobs will be dispatched">incompatible</span>
+          {% elif r.version_stale %}
+            <span class="tag" style="background:#7a5a1f;color:#fff;margin-left:4px;" title="More than the warning threshold of minor versions behind central">stale</span>
+          {% endif %}
+        </td>
         <td class="text-center font-mono">{{ r.inflight_jobs }}</td>
         <td class="text-xs font-mono text-muted">
           {{ r.last_seen_at[:19].replace('T', ' ') if r.last_seen_at else "never" }}

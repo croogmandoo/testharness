@@ -114,17 +114,42 @@ async def register(client: httpx.AsyncClient, cfg: WorkerConfig) -> dict:
         headers=_headers(cfg),
     )
     resp.raise_for_status()
-    return resp.json()
+    body = resp.json()
+    # workers-v2-1: log any major-version-mismatch notice the central sent
+    # along on registration. The notice repeats on every heartbeat (see
+    # ``heartbeat`` above) so ops keep seeing it.
+    notice = body.get("notice") if isinstance(body, dict) else None
+    if notice:
+        _log.warning("worker[%s] central notice on register: %s", cfg.name, notice)
+    return body
 
 
-async def heartbeat(client: httpx.AsyncClient, cfg: WorkerConfig) -> None:
+async def heartbeat(client: httpx.AsyncClient, cfg: WorkerConfig,
+                     health: Optional[str] = None) -> None:
+    """Send a liveness ping. ``health`` is the worker's self-reported
+    'healthy'|'unhealthy' (workers-v2-1). The central uses this to auto-
+    drain a worker that reports unhealthy and auto-restore one that
+    recovers. The response may carry a ``notice`` string when the central
+    has refused to dispatch jobs (major-version mismatch) — we log it at
+    WARNING so ops see it on every heartbeat until the worker is upgraded.
+    """
+    payload: dict = {"name": cfg.name, "version": cfg.version}
+    if health is not None:
+        payload["health"] = health
     try:
         resp = await client.post(
             f"{cfg.harness_url}/api/runner/heartbeat",
-            json={"name": cfg.name},
+            json=payload,
             headers=_headers(cfg),
         )
         resp.raise_for_status()
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        notice = body.get("notice")
+        if notice:
+            _log.warning("worker[%s] central notice: %s", cfg.name, notice)
     except httpx.HTTPError as e:
         _log.warning("heartbeat failed: %s", e)
 
