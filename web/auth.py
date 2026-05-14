@@ -1,10 +1,26 @@
+import json
+import logging
 from typing import Optional
+
 from fastapi import Depends, HTTPException, Request
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+
+_log = logging.getLogger("harness.auth")
 
 _signing_key: bytes = b""
 _session_hours: int = 8
 _secure_cookie: bool = False
+
+# Known scopes. The wildcard "*" grants all scopes (back-compat for keys
+# created before feature #5 shipped). Endpoints declare their requirement
+# via ``Depends(require_scope("worker:pull"))``.
+KNOWN_SCOPES = frozenset({
+    "*",
+    "worker:pull",      # GET /api/runner/jobs (long-poll) + POST /api/runner/poll
+    "worker:results",   # POST /api/runner/results, /heartbeat, /register
+    "admin",            # admin-only operations (e.g. revoking other users' keys)
+    "read",             # read-only API access (GET /api/...)
+})
 
 
 def set_auth_config(signing_key: bytes, session_hours: int, secure_cookie: bool) -> None:
@@ -85,6 +101,12 @@ async def get_current_user(request: Request) -> dict:
             _not_authed()
         now_ts = datetime.now(timezone.utc).isoformat()
         db.touch_api_key_last_used(matched["id"], now_ts)
+        # Stash matched key on request.state so require_scope() can inspect
+        # the scope list without re-doing the prefix/hash lookup.
+        try:
+            request.state.api_key = matched
+        except Exception:
+            pass
         return user
 
     # --- Session cookie fallback ---
@@ -104,5 +126,62 @@ def require_role(*roles: str):
             if request.url.path.startswith("/api"):
                 raise HTTPException(status_code=403, detail="Insufficient permissions")
             raise HTTPException(status_code=403)
+        return user
+    return _dep
+
+
+def get_api_key_scopes(api_key: Optional[dict]) -> set:
+    """Decode the JSON scope field on an api_keys row. Missing/malformed →
+    default to ``{"*"}`` for backward compatibility (pre-feature-5 keys)."""
+    if not api_key:
+        return {"*"}
+    raw = api_key.get("scope") or '["*"]'
+    if isinstance(raw, list):
+        return set(raw)
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list) and all(isinstance(s, str) for s in parsed):
+            return set(parsed)
+    except (ValueError, TypeError):
+        pass
+    _log.warning(
+        "api_key %s has malformed scope=%r — treating as wildcard",
+        api_key.get("id"), raw,
+    )
+    return {"*"}
+
+
+def scope_grants(scopes: set, required: str) -> bool:
+    """True if the scope set grants ``required``. The wildcard ``*`` grants
+    every scope; exact-match otherwise."""
+    return "*" in scopes or required in scopes
+
+
+def require_scope(*required_scopes: str):
+    """Dependency that enforces a per-endpoint scope check on API-key auth.
+
+    Session-cookie auth bypasses the scope check — admins logged into the
+    UI have full access by definition. Only Bearer-key requests are gated.
+
+    Each required scope is matched against the key's scope list (which is
+    persisted as a JSON array per row). A key with no scopes set, or with
+    legacy '["*"]', satisfies any requirement.
+    """
+    async def _dep(request: Request, user: dict = Depends(get_current_user)):
+        api_key = getattr(request.state, "api_key", None)
+        if api_key is None:
+            # Session-cookie auth — no scope check (would break the admin UI).
+            return user
+        scopes = get_api_key_scopes(api_key)
+        for required in required_scopes:
+            if not scope_grants(scopes, required):
+                _log.info(
+                    "require_scope: api_key %s denied — needs %r, has %r",
+                    api_key.get("id"), required, sorted(scopes),
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"API key lacks required scope: {required}",
+                )
         return user
     return _dep

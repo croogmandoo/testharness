@@ -1,5 +1,6 @@
 """API key management routes."""
 import hashlib
+import json
 import os
 import secrets
 import uuid
@@ -9,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Form, Request, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from web.auth import get_current_user
+from web.auth import KNOWN_SCOPES, get_current_user
 from web.csrf import csrf_token_for, verify_csrf
 
 router = APIRouter()
@@ -24,6 +25,26 @@ _EXPIRY_MAP = {
     "365": 365,
     "never": None,
 }
+
+
+def _parse_scope_input(raw: str) -> list[str]:
+    """Normalise the comma/space-separated scope field from the form. Empty
+    input → wildcard ``["*"]`` (no narrowing). Unknown scopes raise 422 so
+    typos surface immediately."""
+    if not raw or not raw.strip():
+        return ["*"]
+    tokens = [t.strip() for t in raw.replace("\n", ",").split(",")]
+    scopes = [t for t in tokens if t]
+    if not scopes:
+        return ["*"]
+    unknown = [s for s in scopes if s not in KNOWN_SCOPES]
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown scope(s): {', '.join(unknown)}. "
+                   f"Valid: {', '.join(sorted(KNOWN_SCOPES))}",
+        )
+    return sorted(set(scopes))
 
 
 def _ctx(request: Request, current_user: dict, **extra) -> dict:
@@ -74,6 +95,7 @@ async def api_keys_create(
     request: Request,
     name: str = Form(...),
     expiry_days: str = Form("never"),
+    scope: str = Form(""),
     current_user: dict = Depends(get_current_user),
     _csrf=Depends(verify_csrf),
 ):
@@ -85,6 +107,8 @@ async def api_keys_create(
 
     if expiry_days not in _EXPIRY_MAP:
         raise HTTPException(status_code=422, detail=f"Invalid expiry option.")
+
+    scopes = _parse_scope_input(scope)
 
     days = _EXPIRY_MAP.get(expiry_days)
     expires_at: Optional[str] = None
@@ -102,10 +126,11 @@ async def api_keys_create(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "last_used_at": None,
         "is_active": 1,
+        "scope": json.dumps(scopes),
     })
     db.log_audit("api_key.create", user_id=current_user["id"],
                  username=current_user.get("username"),
-                 target=name, details=f"prefix={prefix}")
+                 target=name, details=f"prefix={prefix} scope={scopes}")
     response = RedirectResponse("/api-keys", status_code=303)
     response.set_cookie("flash_new_key", plaintext, httponly=True, max_age=60, samesite="lax")
     return response

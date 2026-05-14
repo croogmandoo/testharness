@@ -37,6 +37,15 @@
         </select>
       </div>
     </div>
+    <div class="mb-4">
+      <label class="label">Scopes <span class="text-secondary text-sm">(comma-separated; blank = all)</span></label>
+      <input class="input" name="scope"
+             placeholder="e.g. worker:pull,worker:results — or leave blank for full access">
+      <p class="text-secondary text-sm mt-1">
+        Valid: <code>worker:pull</code>, <code>worker:results</code>,
+        <code>read</code>, <code>admin</code>, <code>*</code>
+      </p>
+    </div>
     <button type="submit" class="btn btn-primary">Create Key</button>
   </form>
 </div>

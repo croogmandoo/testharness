@@ -5,18 +5,24 @@ type. CSRF doesn't apply (Bearer-only, /api/* exempt).
 
 See ``docs/superpowers/plans/2026-05-14-remote-worker.md`` for the design.
 """
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from typing import Optional
 
-from web.auth import get_current_user
+from web.auth import get_current_user, require_scope
 
 router = APIRouter(prefix="/api/runner")
-_log = logging.getLogger(__name__)
+_log = logging.getLogger("harness.runner_api")
+
+# Hard cap on how long the server will hold a long-poll connection open.
+# Longer than this and intermediate proxies / cloud LBs start killing the
+# connection silently.
+_MAX_LONG_POLL_WAIT_SECONDS = 60
 
 
 # ── Schemas ─────────────────────────────────────────────────────────────────
@@ -59,11 +65,20 @@ class RunnerTestResult(BaseModel):
     screenshot: Optional[str] = None
 
 
+class RunnerScreenshot(BaseModel):
+    step_name: str
+    content_base64: str
+    mime_type: str = "image/png"
+
+
 class RunnerResultsRequest(BaseModel):
     job_id: str
     run_status: str = "complete"   # "complete" | "error"
     error: Optional[str] = None
     results: list[RunnerTestResult]
+    # Optional artifact uploads — base64-encoded image bytes keyed by step
+    # name. Each entry is capped at MAX_SCREENSHOT_BYTES on the server.
+    screenshots: list[RunnerScreenshot] = []
 
 
 class RunnerHeartbeatRequest(BaseModel):
@@ -76,7 +91,7 @@ class RunnerHeartbeatRequest(BaseModel):
 async def runner_register(
     req: RunnerRegisterRequest,
     request: Request,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("worker:results")),
 ):
     """Worker announces itself on startup. Idempotent: re-registering with
     the same name updates tags/capabilities/version and resets last_seen_at.
@@ -115,7 +130,7 @@ async def runner_register(
 @router.post("/poll")
 async def runner_poll(
     req: RunnerPollRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("worker:pull")),
 ):
     """Worker asks for next jobs. Returns 0..capacity job descriptors,
     immediately (short-poll v1). Updates the worker's last_seen_at."""
@@ -153,9 +168,14 @@ async def runner_poll(
 @router.post("/results")
 async def runner_results(
     req: RunnerResultsRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("worker:results")),
 ):
-    """Worker submits completed test results for a job it owns."""
+    """Worker submits completed test results for a job it owns.
+
+    Optional ``screenshots`` entries are base64-decoded and written under
+    ``data/screenshots/{run_id}/{step_name}.{ext}``. Any individual screenshot
+    larger than ``MAX_SCREENSHOT_BYTES`` (5 MiB) is rejected with 413.
+    """
     from web.main import get_db, get_config
     from harness.worker_dispatch import ingest_runner_results
     db = get_db()
@@ -167,9 +187,25 @@ async def runner_results(
             status_code=409,
             detail=f"job {req.job_id} is in state {job['state']!r}, expected 'assigned'",
         )
-    # The worker that claimed it must be the one submitting (sanity check)
-    # We don't enforce hard caller-name binding in v1 — admins reassign by
-    # forcing state changes in the DB if needed.
+
+    # Pre-flight: size-check every base64 screenshot before doing any work.
+    # We compute the *decoded* size from the base64 length so a malicious
+    # worker can't OOM us by sending a huge encoded blob.
+    for s in req.screenshots:
+        decoded_size = (len(s.content_base64) * 3) // 4
+        if decoded_size > MAX_SCREENSHOT_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"screenshot for step {s.step_name!r} is {decoded_size} bytes; "
+                    f"max is {MAX_SCREENSHOT_BYTES}"
+                ),
+            )
+
+    # Save screenshots to disk, keyed by run_id / step_name. Update
+    # ``test_results.screenshot_path`` so the dashboard's image links work.
+    saved_paths = _save_screenshots(job["run_id"], req.screenshots)
+
     try:
         summary = await ingest_runner_results(
             db,
@@ -178,16 +214,80 @@ async def runner_results(
             run_status=req.run_status,
             test_results=[r.model_dump() for r in req.results],
             error=req.error,
+            screenshot_paths=saved_paths,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"ok": True, **summary}
+    return {"ok": True, "screenshots_saved": len(saved_paths), **summary}
+
+
+MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024  # 5 MiB, mirrors worker-side limit
+
+# Map MIME types to safe file extensions. Anything not on this list is
+# stored as ``.bin`` rather than letting the worker dictate the file
+# suffix — defence in depth against arbitrary-extension uploads.
+_MIME_EXT = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+}
+
+
+def _save_screenshots(run_id: str, screenshots: list) -> dict:
+    """Decode and persist screenshots under ``data/screenshots/<run_id>/``.
+    Returns ``{step_name: relative_path}`` for every successfully saved
+    file. Anything that fails to decode is logged and skipped — bad data
+    from one screenshot shouldn't drop an entire results payload.
+    """
+    import base64
+    import os
+    import re
+
+    if not screenshots:
+        return {}
+
+    # Guard against directory-traversal in run_id. UUIDs are safe but never
+    # trust input — sanitise hard.
+    safe_run = re.sub(r"[^A-Za-z0-9._-]", "_", run_id)[:100]
+    out_dir = os.path.join("data", "screenshots", safe_run)
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except OSError as e:
+        _log.error("screenshots: cannot create %s: %s", out_dir, e)
+        return {}
+
+    saved: dict = {}
+    for s in screenshots:
+        ext = _MIME_EXT.get(s.mime_type, "bin")
+        safe_step = re.sub(r"[^A-Za-z0-9._-]", "_", s.step_name)[:120] or "step"
+        path = os.path.join(out_dir, f"{safe_step}.{ext}")
+        try:
+            data = base64.b64decode(s.content_base64, validate=True)
+        except Exception as e:  # pragma: no cover — malformed b64 is rare
+            _log.warning("screenshots: decode failed for %s: %s", s.step_name, e)
+            continue
+        if len(data) > MAX_SCREENSHOT_BYTES:
+            _log.warning(
+                "screenshots: decoded size %d exceeds cap; skipping %s",
+                len(data), s.step_name,
+            )
+            continue
+        try:
+            with open(path, "wb") as f:
+                f.write(data)
+        except OSError as e:
+            _log.error("screenshots: write %s failed: %s", path, e)
+            continue
+        # Store the URL path the dashboard's <img src> uses.
+        saved[s.step_name] = f"/screenshots/{safe_run}/{safe_step}.{ext}"
+    return saved
 
 
 @router.post("/heartbeat")
 async def runner_heartbeat(
     req: RunnerHeartbeatRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("worker:results")),
 ):
     """Liveness ping. Workers call this periodically (~30s) between polls
     so the /admin/runners status display stays accurate even if the worker
@@ -198,6 +298,92 @@ async def runner_heartbeat(
         raise HTTPException(status_code=404, detail=f"runner {req.name!r} not registered")
     db.touch_runner_heartbeat(req.name, datetime.now(timezone.utc).isoformat())
     return {"ok": True, "server_time": datetime.now(timezone.utc).isoformat()}
+
+
+# ── Long-poll job retrieval (feature #4) ────────────────────────────────────
+#
+# GET /api/runner/jobs?wait=30&name=eu-worker-1&capacity=4
+#
+# Blocks up to ``wait`` seconds waiting for a queued job that matches this
+# worker. The block ends as soon as harness.worker_dispatch.notify_job_queued()
+# is called by the dispatcher (when ``queue_remote_run`` lands a new job, or
+# when the reaper requeues a stuck one).
+#
+# If no job is delivered within the timeout, returns 204 No Content with a
+# ``Retry-After`` header so the worker can fall back to fixed-interval polling.
+
+@router.get("/jobs")
+async def runner_jobs_long_poll(
+    request: Request,
+    response: Response,
+    name: str,
+    wait: int = 0,
+    capacity: int = 1,
+    current_user: dict = Depends(require_scope("worker:pull")),
+):
+    """Long-poll alternative to POST /poll. Matches the same dispatch semantics
+    but blocks until a job is available (or ``wait`` seconds elapse)."""
+    from web.main import get_db
+    from harness.worker_dispatch import get_job_queued_event
+
+    db = get_db()
+    runner = db.get_runner_by_name(name)
+    if runner is None:
+        raise HTTPException(status_code=404, detail=f"runner {name!r} not registered")
+
+    # Clamp wait into [0, 60] — beyond that, intermediate proxies kill it.
+    wait = max(0, min(int(wait), _MAX_LONG_POLL_WAIT_SECONDS))
+    cap = max(1, min(int(capacity), 16))
+
+    db.touch_runner_heartbeat(name, datetime.now(timezone.utc).isoformat())
+
+    if runner.get("status") == "draining":
+        response.headers["Retry-After"] = "30"
+        response.status_code = 204
+        return Response(status_code=204, headers={"Retry-After": "30"})
+
+    deadline = asyncio.get_event_loop().time() + wait
+    event = get_job_queued_event()
+
+    while True:
+        claimed = db.claim_runner_jobs(
+            worker_name=name,
+            worker_tags=runner.get("tags") or [],
+            capacity=cap,
+        )
+        if claimed:
+            jobs = []
+            for j in claimed:
+                try:
+                    app_def = json.loads(j["app_def_json"])
+                except Exception:
+                    app_def = {}
+                jobs.append({
+                    "job_id": j["id"],
+                    "run_id": j["run_id"],
+                    "environment": j["environment"],
+                    "app_def": app_def,
+                })
+            return {"jobs": jobs}
+
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            return Response(
+                status_code=204,
+                headers={"Retry-After": str(max(1, wait // 2 if wait else 30))},
+            )
+        # Wait on the queued-job event; on wake, re-attempt the claim. Spurious
+        # wake-ups are fine — the next claim attempt simply returns nothing
+        # and we loop back here.
+        try:
+            await asyncio.wait_for(event.wait(), timeout=remaining)
+        except asyncio.TimeoutError:
+            return Response(
+                status_code=204,
+                headers={"Retry-After": str(max(1, wait // 2 if wait else 30))},
+            )
+        # Defensive: clear so the next iteration blocks again.
+        event.clear()
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

@@ -46,6 +46,20 @@ build from `worker/Dockerfile`:
 docker build -f worker/Dockerfile -t my-harness-worker:local .
 ```
 
+#### Ultra-slim image (api / availability only)
+
+Workers whose apps never include browser tests can use the slim variant —
+a multi-stage build that drops Playwright + Chromium entirely. The final
+image lands around 120 MB instead of ~1.5 GB:
+
+```bash
+docker build -f worker/Dockerfile.slim -t my-harness-worker-slim:local .
+```
+
+The slim image hard-codes `HARNESS_CAPABILITIES=api,availability` so the
+central won't dispatch browser-typed jobs to it. Override with `-e` if
+you know better.
+
 ### Native Linux (Ubuntu 22.04 / 24.04, systemd)
 
 For hosts that can't run Docker. The installer creates a system user,

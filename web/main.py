@@ -129,6 +129,16 @@ def _start_scheduler() -> None:
                 _log.exception("scheduler: retention prune failed")
         add_retention_job(sched, retention_days, _prune_cb)
 
+    # Worker stuck-job reaper — every ``worker.reaper_interval_seconds`` (60s
+    # default) the reaper scans runner_jobs in state='assigned' that have
+    # exceeded ``worker.job_timeout_seconds`` and either re-queues them or
+    # marks them failed after ``worker.max_retries`` exceeded.
+    try:
+        from harness.worker_dispatch import add_reaper_job
+        add_reaper_job(sched, _db, config=_config)
+    except Exception:
+        _log.exception("scheduler: failed to wire stuck-job reaper")
+
     # Hourly stale-run check.  Defaults are sane; opt-out via
     # `alerts.stale_check_enabled: false`.
     stale_enabled = ((_config.get("alerts") or {})
@@ -259,6 +269,25 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
             return await call_next(request)
 
     app.add_middleware(_FirstRunMiddleware)
+
+    # ── Optional mTLS verification (workers-v2 feature #5b) ──────────────
+    # Enabled via ``worker.mtls.enabled: true`` + ``client_ca_path``. The
+    # ASGI server (uvicorn) is responsible for the actual TLS handshake;
+    # this middleware verifies that a client certificate was presented for
+    # any ``/api/runner/*`` request, and stashes the subject CN as the
+    # worker identity on request.state so downstream handlers can audit it.
+    mtls_cfg = (_config.get("worker") or {}).get("mtls") or {}
+    if mtls_cfg.get("enabled"):
+        from web.mtls import MTLSEnforcementMiddleware
+        app.add_middleware(
+            MTLSEnforcementMiddleware,
+            require_for_prefix="/api/runner/",
+            client_ca_path=mtls_cfg.get("client_ca_path"),
+        )
+        _log.info(
+            "mTLS: enforcement enabled for /api/runner/* (ca_path=%r)",
+            mtls_cfg.get("client_ca_path"),
+        )
 
     # 403 exception handler — renders 403.html for HTML requests.
     from fastapi.exceptions import HTTPException as _HTTPExc
