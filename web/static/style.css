@@ -1325,3 +1325,206 @@ input.input--invalid,
   outline: none;
   box-shadow: 0 0 0 3px var(--fail-dim);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   === Tier 3 UX ===
+   Keyboard help overlay, Cmd+K command palette, and mobile rules for
+   the app detail page. All new rules live under this header so future
+   merges land cleanly.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Keyboard help overlay (triggered by ?) ──────────────────────────────── */
+.kbd-help[hidden] { display: none; }
+.kbd-help {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgba(0, 0, 0, .55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+.kbd-help-panel {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: var(--space-5);
+  max-width: 480px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.kbd-help-title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: var(--space-3);
+}
+.kbd-help-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+.kbd-help-list dt { color: var(--text-2); display: flex; gap: 4px; align-items: center; }
+.kbd-help-list dd { margin: 0; color: var(--text); }
+.kbd-help kbd {
+  display: inline-block;
+  min-width: 1.5em;
+  padding: 1px 6px;
+  border: 1px solid var(--border-2);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: var(--bg-2);
+  color: var(--text);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: .85em;
+  line-height: 1.2;
+  text-align: center;
+}
+.kbd-help-hint {
+  margin-top: var(--space-4);
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  text-align: right;
+}
+
+/* ── Command palette (Cmd+K / Ctrl+K) ────────────────────────────────────── */
+.cmdk-modal[hidden] { display: none; }
+.cmdk-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+.cmdk-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, .55);
+}
+.cmdk-panel {
+  position: relative;
+  z-index: 1;
+  width: min(560px, calc(100% - 2 * var(--space-4)));
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+}
+.cmdk-input {
+  display: block;
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+  color: var(--text);
+  font-size: var(--text-base, 14px);
+  outline: none;
+  box-sizing: border-box;
+}
+.cmdk-input::placeholder { color: var(--text-3); }
+.cmdk-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-1) 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.cmdk-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  color: var(--text);
+  user-select: none;
+}
+.cmdk-result.active {
+  background: var(--bg-2);
+  color: var(--amber, var(--text));
+}
+.cmdk-result-label { flex: 1; }
+.cmdk-result-hint {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+.cmdk-empty {
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+/* ── Mobile: app detail page (≤640px) ────────────────────────────────────── */
+@media (max-width: 640px) {
+  /* Stack the run-meta strip vertically so cards don't overflow */
+  .run-meta {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: var(--space-2);
+  }
+  .run-meta .ml-auto,
+  .run-meta .btn-group {
+    margin-left: 0 !important;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .run-meta .btn-group .btn { flex: 1 1 auto; }
+
+  /* Run history strip wraps cleanly */
+  .run-strip { flex-wrap: wrap; }
+  .run-chip { flex: 0 0 auto; }
+
+  /* Test cards: tighter padding + header wraps */
+  .test-card { padding: var(--space-3); }
+  .test-card-header {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .test-card-header .test-name { flex: 1 1 100%; }
+  .test-card-header .test-status,
+  .test-card-header .test-duration { font-size: var(--text-sm); }
+
+  /* Step log scrolls horizontally instead of overflowing */
+  .step-log {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .step {
+    flex-wrap: wrap;
+  }
+
+  /* Screenshots scale to viewport */
+  .screenshot { max-width: 100%; height: auto; }
+
+  /* Breadcrumb sits flush with nav */
+  .breadcrumb { padding: var(--space-2); }
+
+  /* Sticky action bar — Re-run/PDF/DOCX remain reachable on small screens */
+  .run-meta .btn-group {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-1);
+    padding: var(--space-2) 0;
+    border-top: 1px solid var(--border);
+    z-index: 10;
+  }
+
+  /* Cmd+K palette: drop down nearer the top on small screens */
+  .cmdk-modal { padding-top: 6vh; }
+  .cmdk-panel { width: calc(100% - 2 * var(--space-3)); }
+
+  /* Keyboard help: shrink padding */
+  .kbd-help-panel { padding: var(--space-4); }
+}
