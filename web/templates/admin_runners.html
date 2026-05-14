@@ -7,6 +7,25 @@
   <h1>Remote Workers</h1>
 </div>
 
+{% if screenshot_stats %}
+<div class="card">
+  <div class="card-title">Last 24h artifacts</div>
+  <p class="text-muted text-sm mb-2">
+    Screenshots uploaded by remote workers in the last 24 hours.
+  </p>
+  <div class="stat-row">
+    <div class="stat">
+      <div class="stat-label">Screenshots</div>
+      <div class="stat-value font-mono">{{ screenshot_stats.count }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Total bytes</div>
+      <div class="stat-value font-mono">{{ screenshot_stats.total_bytes }}</div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <div class="card">
   <div class="card-title">Registered Workers</div>
   <p class="text-muted text-sm mb-4">
@@ -25,8 +44,10 @@
         <th>Status</th>
         <th>Tags</th>
         <th>Capabilities</th>
+        <th>Key scope</th>
         <th>Version</th>
         <th>In-flight</th>
+        <th title="Total runner_jobs.retry_count for jobs assigned to this worker in the last 24h">Retries</th>
         <th>Last seen (UTC)</th>
         <th></th>
       </tr>
@@ -55,8 +76,17 @@
           {% for c in r.capabilities %}<span class="tag">{{ c }}</span>{% endfor %}
           {% if not r.capabilities %}<span class="text-muted">—</span>{% endif %}
         </td>
+        <td class="text-sm font-mono">
+          {% if r.key_scopes is none %}
+            <span class="text-muted">—</span>
+          {% else %}
+            {% for s in r.key_scopes %}<span class="tag">{{ s }}</span>{% endfor %}
+            {% if not r.key_scopes %}<span class="text-muted">—</span>{% endif %}
+          {% endif %}
+        </td>
         <td class="text-xs font-mono text-secondary">{{ r.version or "—" }}</td>
         <td class="text-center font-mono">{{ r.inflight_jobs }}</td>
+        <td class="text-center font-mono">{{ r.retries_24h }}</td>
         <td class="text-xs font-mono text-muted">
           {{ r.last_seen_at[:19].replace('T', ' ') if r.last_seen_at else "never" }}
         </td>
@@ -111,6 +141,56 @@
   </div>
   {% endif %}
 </div>
+
+{% if failed_runs %}
+<div class="card">
+  <div class="card-title">Failed runs (reaper-exhausted)</div>
+  <p class="text-muted text-sm mb-4">
+    These runs hit the reaper's retry budget and were given up on. Re-queueing
+    flips the job back to <code>queued</code> so the next polling worker can claim
+    it; investigate the worker's network or capacity first if you expect repeat
+    failures.
+  </p>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>When (UTC)</th>
+        <th>App</th>
+        <th>Env</th>
+        <th>Last worker</th>
+        <th>Retries</th>
+        <th>Last error</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in failed_runs %}
+      <tr>
+        <td class="text-xs font-mono text-muted">
+          {{ f.completed_at[:19].replace('T', ' ') if f.completed_at else "—" }}
+        </td>
+        <td class="font-mono">{{ f.app_name }}</td>
+        <td class="text-sm font-mono">{{ f.environment }}</td>
+        <td class="text-xs font-mono text-secondary">{{ f.worker_name or "—" }}</td>
+        <td class="text-center font-mono">{{ f.retry_count }}</td>
+        <td class="text-xs text-fail" style="max-width: 32rem; overflow-wrap: anywhere;">
+          {{ f.last_error or "—" }}
+        </td>
+        <td class="text-right text-nowrap">
+          <form method="post"
+                action="/admin/runners/jobs/{{ f.job_id }}/requeue"
+                class="inline-block"
+                onsubmit="return confirm('Re-queue this run? Investigate worker health first if you expect it to keep failing.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-sm">Re-queue manually</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 
 <div class="card">
   <div class="card-title">How dispatch works</div>
