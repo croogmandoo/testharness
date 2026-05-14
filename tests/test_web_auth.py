@@ -117,3 +117,32 @@ def test_successful_login_resets_counter(client, db):
     row = db.get_user_by_username("alice")
     assert row["failed_login_count"] == 0
     assert row["locked_until"] is None
+
+
+def test_unauthenticated_html_route_redirects_with_location_header(client, db):
+    """Regression: HTTPException(307, headers={"Location": ...}) raised by
+    get_current_user must produce a 307 *with the Location header intact*.
+
+    The custom exception handler in web/main.py used to call JSONResponse
+    without forwarding exc.headers, which stripped Location and made browsers
+    render {"detail":"Temporary Redirect"} verbatim instead of following the
+    redirect to /auth/login.
+    """
+    _make_local_user(db)  # ensure first-run middleware doesn't intercept
+    resp = client.get("/")
+    assert resp.status_code == 307, (
+        f"expected 307 redirect for unauthenticated browser, got {resp.status_code}: {resp.text!r}"
+    )
+    assert resp.headers.get("location") == "/auth/login", (
+        "Location header missing — exception handler is stripping exc.headers; "
+        f"got headers={dict(resp.headers)!r}"
+    )
+
+
+def test_unauthenticated_api_route_returns_401_not_redirect(client, db):
+    """API routes should 401 with JSON, not 307 (that path doesn't set Location
+    and we want to keep it that way for non-browser clients)."""
+    _make_local_user(db)
+    resp = client.get("/api/apps")
+    assert resp.status_code == 401
+    assert "location" not in {k.lower() for k in resp.headers}

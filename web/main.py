@@ -305,7 +305,19 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
                     "environment": None,
                     "current_user": None,
                 }, status_code=403)
-        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+        # Propagate exc.headers so redirect responses raised from dependencies
+        # (notably web/auth.py:72 — HTTPException(307, headers={"Location":...}))
+        # actually carry their Location header. Without this, browsers see a 307
+        # with no destination and render the JSON body verbatim.
+        # Propagate exc.headers so redirect responses raised from dependencies
+        # (notably web/auth.py:72 — HTTPException(307, headers={"Location":...}))
+        # actually carry their Location header. Without this, browsers see a 307
+        # with no destination and render the JSON body verbatim.
+        return JSONResponse(
+            {"detail": exc.detail},
+            status_code=exc.status_code,
+            headers=dict(exc.headers) if exc.headers else None,
+        )
 
     @app.get("/health")
     async def health_check():
