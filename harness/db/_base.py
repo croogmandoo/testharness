@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from harness.models import Run, TestResult, AppState
 
+from ._audit import AuditMixin
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     id           TEXT PRIMARY KEY,
@@ -139,7 +141,7 @@ CREATE INDEX IF NOT EXISTS idx_runner_jobs_run_id
     ON runner_jobs(run_id);
 """
 
-class Database:
+class Database(AuditMixin):
     def __init__(self, path: str = "data/harness.db"):
         self.path = path
 
@@ -311,46 +313,6 @@ class Database:
             )
             runs_deleted = runs.rowcount
         return {"runs_deleted": runs_deleted, "results_deleted": results_deleted}
-
-    # ── Audit log ──────────────────────────────────────────────────────────
-
-    def log_audit(self, action: str, *,
-                  user_id: Optional[str] = None,
-                  username: Optional[str] = None,
-                  target: Optional[str] = None,
-                  details: Optional[str] = None) -> str:
-        """Append an audit event.  Always best-effort: SQL errors are swallowed
-        so that audit-log failures never block the action being audited."""
-        entry_id = str(uuid.uuid4())
-        ts = datetime.now(timezone.utc).isoformat()
-        try:
-            with self._connect() as conn:
-                conn.execute(
-                    "INSERT INTO audit_log (id, timestamp, user_id, username, "
-                    "action, target, details) VALUES (?,?,?,?,?,?,?)",
-                    (entry_id, ts, user_id, username, action, target, details),
-                )
-        except Exception:  # pragma: no cover — see comment above
-            pass
-        return entry_id
-
-    def list_audit_log(self, limit: int = 200,
-                       user_id: Optional[str] = None,
-                       action: Optional[str] = None) -> list:
-        clauses, args = [], []
-        if user_id:
-            clauses.append("user_id=?"); args.append(user_id)
-        if action:
-            clauses.append("action=?"); args.append(action)
-        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-        args.append(int(limit))
-        with self._connect() as conn:
-            rows = conn.execute(
-                f"SELECT * FROM audit_log {where} "
-                "ORDER BY timestamp DESC LIMIT ?",
-                args,
-            ).fetchall()
-        return [dict(r) for r in rows]
 
     def get_app_run_history(self, app: str, environment: str,
                             limit: int = 7) -> list:
