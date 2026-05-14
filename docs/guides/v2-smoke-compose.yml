@@ -1,0 +1,68 @@
+# Smoke-test compose fixture for remote workers v2.
+#
+# Spins up a central + a single slim worker on a private network. Ports are
+# prefixed 1955x so this stack can run alongside a developer's normal harness
+# (which uses 9552 by default).
+#
+# Usage (from repo root):
+#
+#   # Build images once:
+#   docker build -t harness-central:smoke .
+#   docker build -f worker/Dockerfile.slim -t harness-worker-slim:smoke .
+#
+#   # Bring up central only, complete first-run wizard, mint a worker API key:
+#   docker compose -f docs/guides/v2-smoke-compose.yml up -d central
+#   open http://localhost:19552/setup   # create admin, then mint key at /api-keys
+#
+#   # Set WORKER_KEY=hth_... in the shell, then start the worker:
+#   WORKER_KEY=hth_xxx docker compose -f docs/guides/v2-smoke-compose.yml up -d worker
+#
+#   # Tear down (also removes named volumes):
+#   docker compose -f docs/guides/v2-smoke-compose.yml down -v
+#
+# The central image does NOT require ADMIN_PASSWORD / SECRET_KEY env vars —
+# it bootstraps via the /setup wizard on first boot. Workers authenticate
+# via an API key minted from the central's /api-keys page.
+
+services:
+  central:
+    image: harness-central:smoke
+    container_name: smoke-central
+    ports:
+      - "19552:9552"
+    volumes:
+      - smoke-data:/app/data
+      - smoke-apps:/app/apps
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error",
+             "http://127.0.0.1:9552/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    image: harness-worker-slim:smoke
+    container_name: smoke-worker
+    depends_on:
+      central:
+        condition: service_healthy
+    environment:
+      - HARNESS_URL=http://central:9552
+      - HARNESS_API_KEY=${WORKER_KEY:-NOT_SET}
+      - HARNESS_WORKER_NAME=smoke-w1
+      - HARNESS_WORKER_TAGS=smoke,api
+      - HARNESS_VERIFY_TLS=false
+      - HARNESS_LONG_POLL_WAIT=10
+      - HARNESS_POLL_INTERVAL=5
+      - HARNESS_OUTBOX_MAX=50
+      - HARNESS_HEARTBEAT_INTERVAL=15
+    volumes:
+      - smoke-worker:/app/data
+    restart: unless-stopped
+
+volumes:
+  smoke-data: {}
+  smoke-apps: {}
+  smoke-worker: {}
