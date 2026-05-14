@@ -8,6 +8,7 @@
   <a href="/users/new" class="btn btn-primary">+ New User</a>
 </div>
 
+{% if users %}
 <table class="table">
   <thead>
     <tr>
@@ -42,9 +43,17 @@
         {% endif %}
       </td>
     </tr>
-    {% else %}
-    <tr><td colspan="7" class="empty">No users found.</td></tr>
     {% endfor %}
   </tbody>
 </table>
+{% else %}
+<div class="empty-state">
+  <div class="empty-state-icon">👥</div>
+  <h3>No users yet</h3>
+  <p>Add a teammate so they can run checks and view results.</p>
+  {% if current_user.role == "admin" %}
+  <a href="/users/new" class="btn btn-primary">+ Add user</a>
+  {% endif %}
+</div>
+{% endif %}
 {% endblock %}

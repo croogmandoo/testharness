@@ -16,7 +16,9 @@
     {% if mode == "create" %}
     <div class="field">
       <label class="label">Username</label>
-      <input class="input" name="username" required autofocus value="{{ user.username or '' }}">
+      <input class="input" name="username" required minlength="2"
+             data-validate="required minlength"
+             autofocus value="{{ user.username or '' }}">
     </div>
     {% endif %}
 
@@ -27,7 +29,9 @@
 
     <div class="field">
       <label class="label">Email</label>
-      <input class="input" name="email" type="email" value="{{ user.email or '' }}">
+      <input class="input" name="email" type="email"
+             data-validate="email"
+             value="{{ user.email or '' }}">
     </div>
 
     <div class="field">
@@ -58,7 +62,8 @@
       <label class="label">
         {% if mode == "create" %}Password{% else %}New password <span class="text-muted font-normal">(leave blank to keep)</span>{% endif %}
       </label>
-      <input class="input" name="password" type="password" {% if mode == "create" %}required{% endif %}>
+      <input class="input" name="password" type="password"
+             {% if mode == "create" %}required minlength="8" data-validate="required minlength"{% endif %}>
     </div>
 
     <div class="form-actions">

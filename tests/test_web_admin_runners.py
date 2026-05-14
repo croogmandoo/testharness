@@ -61,7 +61,10 @@ def test_admin_runners_empty_state(db, tmp_path):
     c = _make_client(db, admin, tmp_path)
     r = c.get("/admin/runners")
     assert r.status_code == 200
-    assert b"No workers have registered yet" in r.content
+    # Tier 2 polish: the runners empty state moved from a flat <p class="empty">
+    # to an .empty-state card with friendlier copy + iconography.
+    assert b"No remote workers registered yet" in r.content
+    assert b'class="empty-state"' in r.content
 
 
 def test_admin_runners_lists_registered(db, tmp_path):

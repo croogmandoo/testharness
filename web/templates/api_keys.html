@@ -82,7 +82,13 @@
     </tbody>
   </table>
   {% else %}
-  <p class="empty">No API keys yet.</p>
+  <div class="empty-state">
+    <div class="empty-state-icon">🔑</div>
+    <h3>No API keys yet</h3>
+    <p>Create a key to call the harness API from CI pipelines or scripts.</p>
+    <a href="#create-key" class="btn-primary"
+       onclick="document.querySelector('form [name=name]').focus(); return false;">Create key</a>
+  </div>
   {% endif %}
 </div>
 

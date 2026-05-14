@@ -1218,3 +1218,110 @@ select.input, select.search {
 .swatch--slate      { background: #3b82f6; color: #3b82f6; }
 .swatch--forest     { background: #10b981; color: #10b981; }
 .swatch--monochrome { background: #a1a1aa; color: #a1a1aa; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   === Tier 2 polish ===
+   Empty-state cards, skeleton loaders, inline field-error validation.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Empty state ───────────────────────────────────────────────────────── */
+.empty-state {
+  text-align: center;
+  padding: var(--space-10) var(--space-6);
+  background: var(--bg-1);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  max-width: 520px;
+  margin: var(--space-6) auto;
+  color: var(--text-2);
+}
+.empty-state-icon {
+  font-size: 40px;
+  line-height: 1;
+  margin-bottom: var(--space-3);
+  opacity: .9;
+}
+.empty-state h3 {
+  font-size: var(--text-md);
+  margin: 0 0 var(--space-2);
+  color: var(--text);
+}
+.empty-state p {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.empty-state .btn-primary,
+.empty-state a.btn-primary {
+  display: inline-block;
+  background: var(--amber);
+  color: #fff;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.empty-state .btn-primary:hover { background: var(--amber-hi); }
+
+/* ── Skeleton loaders ──────────────────────────────────────────────────── */
+.dashboard-skeleton,
+.detail-skeleton {
+  display: none;
+  gap: var(--space-3);
+  flex-direction: column;
+  margin-bottom: var(--space-4);
+}
+[data-loading="true"].dashboard-skeleton,
+[data-loading="true"].detail-skeleton { display: flex; }
+[data-loading="false"].dashboard-skeleton,
+[data-loading="false"].detail-skeleton { display: none; }
+
+.skeleton-card {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.skeleton-line {
+  height: 12px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--bg-2) 0%,
+    var(--bg-3) 50%,
+    var(--bg-2) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+.skeleton-line--title { width: 40%; height: 16px; }
+.skeleton-line--meta  { width: 70%; }
+
+@keyframes skeleton-pulse {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Field-level validation ────────────────────────────────────────────── */
+.field-error {
+  display: block;
+  color: var(--fail);
+  font-size: var(--text-xs);
+  margin-top: var(--space-1);
+  line-height: 1.4;
+}
+.input--invalid,
+input.input--invalid,
+.input.input--invalid {
+  border-color: var(--fail);
+  box-shadow: 0 0 0 1px var(--fail-dim);
+}
+.input--invalid:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--fail-dim);
+}

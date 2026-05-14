@@ -11,6 +11,7 @@
       document.documentElement.setAttribute('data-theme', t);
     })();
   </script>
+  <script src="/static/harness.js" defer></script>
 </head>
 <body>
 <div class="auth-wrap">
@@ -24,11 +25,13 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="field">
         <label class="label">Username</label>
-        <input class="input" name="username" required autofocus autocomplete="username">
+        <input class="input" name="username" required data-validate="required"
+               autofocus autocomplete="username">
       </div>
       <div class="field mb-6">
         <label class="label">Password</label>
-        <input class="input" name="password" type="password" required autocomplete="current-password">
+        <input class="input" name="password" type="password" required
+               data-validate="required" autocomplete="current-password">
       </div>
       <button type="submit" class="btn btn-primary w-full">
         Sign in

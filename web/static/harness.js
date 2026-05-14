@@ -98,6 +98,72 @@
     }
   }
 
+  // ── Inline field validation ────────────────────────────────────────────
+  // Any <input data-validate="..."> gets blur-time validity checks. A
+  // <small class="field-error"> message is inserted after the input and
+  // cleared on the next valid blur. The data-validate tokens (required,
+  // minlength, email, url, pattern) just gate which custom-friendly text
+  // we use; the browser's native ValidityState is the source of truth.
+  function friendlyMessage(input) {
+    var v = input.validity;
+    var tokens = (input.dataset.validate || "").split(/\s+/).filter(Boolean);
+    var has = function (t) { return tokens.indexOf(t) !== -1; };
+    if (v.valueMissing && has("required")) return "This field is required.";
+    if (v.typeMismatch && has("email"))    return "Enter a valid email address.";
+    if (v.typeMismatch && has("url"))      return "Enter a valid URL (https://…).";
+    if (v.tooShort && has("minlength")) {
+      return "Must be at least " + input.minLength + " characters.";
+    }
+    if (v.patternMismatch && has("pattern")) {
+      return input.title || "Value doesn't match the required format.";
+    }
+    // Fall back to the browser-provided string when no friendly mapping fits.
+    return input.validationMessage || "Invalid value.";
+  }
+
+  function clearFieldError(input) {
+    var sib = input.nextElementSibling;
+    if (sib && sib.classList && sib.classList.contains("field-error")) {
+      sib.remove();
+    }
+    input.classList.remove("input--invalid");
+    input.removeAttribute("aria-invalid");
+  }
+
+  function setFieldError(input, message) {
+    clearFieldError(input);
+    var msg = document.createElement("small");
+    msg.className = "field-error";
+    msg.textContent = message;
+    input.classList.add("input--invalid");
+    input.setAttribute("aria-invalid", "true");
+    input.parentNode.insertBefore(msg, input.nextSibling);
+  }
+
+  function validateField(input) {
+    if (input.disabled || input.readOnly) return;
+    if (input.checkValidity()) {
+      clearFieldError(input);
+    } else {
+      setFieldError(input, friendlyMessage(input));
+    }
+  }
+
+  function wireValidators(root) {
+    var scope = root || document;
+    scope.querySelectorAll("[data-validate]").forEach(function (el) {
+      if (el._validatorWired) return;
+      el._validatorWired = true;
+      el.addEventListener("blur", function () { validateField(el); });
+      el.addEventListener("input", function () {
+        // Clear stale errors as the user types a fix — re-validate on next blur.
+        if (el.classList.contains("input--invalid") && el.checkValidity()) {
+          clearFieldError(el);
+        }
+      });
+    });
+  }
+
   // ── Boot ────────────────────────────────────────────────────────────────
   function init() {
     // Restore palette + theme from localStorage. The theme is also restored
@@ -115,6 +181,9 @@
       });
     });
     syncSwatches();
+
+    // Wire blur validators for any [data-validate] inputs on the page.
+    wireValidators(document);
   }
 
   if (document.readyState === "loading") {
@@ -141,5 +210,7 @@
     setButtonLoading: setButtonLoading,
     applyPalette: applyPalette,
     applyTheme: applyTheme,
+    wireValidators: wireValidators,
+    validateField: validateField,
   };
 })();
