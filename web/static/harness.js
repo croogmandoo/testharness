@@ -101,23 +101,53 @@
   // ── Inline field validation ────────────────────────────────────────────
   // Any <input data-validate="..."> gets blur-time validity checks. A
   // <small class="field-error"> message is inserted after the input and
-  // cleared on the next valid blur. The data-validate tokens (required,
-  // minlength, email, url, pattern) just gate which custom-friendly text
-  // we use; the browser's native ValidityState is the source of truth.
+  // cleared on the next valid blur. The browser's native ValidityState is
+  // the source of truth; we map each failing constraint to a human-friendly
+  // string via the FRIENDLY table below. Stock browser messages like
+  // "Please fill out this field" never reach the user.
+  //
+  // Priority is determined by the order of CONSTRAINT_ORDER — valueMissing
+  // beats typeMismatch beats tooShort etc., so an empty email shows
+  // "This field is required." instead of "Enter a valid email address."
+  var FRIENDLY = {
+    valueMissing: function () { return "This field is required."; },
+    typeMismatch: function (input) {
+      if (input.type === "email") return "Enter a valid email address.";
+      if (input.type === "url")   return "Enter a valid URL like https://example.com.";
+      return input.validationMessage;
+    },
+    tooShort: function (input) {
+      return "Must be at least " + input.minLength + " characters.";
+    },
+    tooLong: function (input) {
+      return "Must be at most " + input.maxLength + " characters.";
+    },
+    rangeUnderflow: function (input) { return "Must be " + input.min + " or higher."; },
+    rangeOverflow:  function (input) { return "Must be " + input.max + " or lower."; },
+    patternMismatch: function (input) {
+      return input.dataset.error || "Doesn't match the expected format.";
+    },
+    stepMismatch: function () { return "Pick a valid step value."; },
+    badInput:     function () { return "Enter a valid value."; },
+    customError:  function (input) { return input.validationMessage; },
+  };
+
+  var CONSTRAINT_ORDER = [
+    "valueMissing", "typeMismatch", "tooShort", "tooLong",
+    "rangeUnderflow", "rangeOverflow", "patternMismatch",
+    "stepMismatch", "badInput", "customError",
+  ];
+
   function friendlyMessage(input) {
     var v = input.validity;
-    var tokens = (input.dataset.validate || "").split(/\s+/).filter(Boolean);
-    var has = function (t) { return tokens.indexOf(t) !== -1; };
-    if (v.valueMissing && has("required")) return "This field is required.";
-    if (v.typeMismatch && has("email"))    return "Enter a valid email address.";
-    if (v.typeMismatch && has("url"))      return "Enter a valid URL (https://…).";
-    if (v.tooShort && has("minlength")) {
-      return "Must be at least " + input.minLength + " characters.";
+    for (var i = 0; i < CONSTRAINT_ORDER.length; i++) {
+      var key = CONSTRAINT_ORDER[i];
+      if (v[key] && FRIENDLY[key]) {
+        return FRIENDLY[key](input);
+      }
     }
-    if (v.patternMismatch && has("pattern")) {
-      return input.title || "Value doesn't match the required format.";
-    }
-    // Fall back to the browser-provided string when no friendly mapping fits.
+    // Defensive fallback — should not be reached for any standard
+    // ValidityState, but guards us against future browser additions.
     return input.validationMessage || "Invalid value.";
   }
 
