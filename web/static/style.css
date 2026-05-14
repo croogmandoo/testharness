@@ -351,17 +351,19 @@ select.input, select.search {
 
 /* Opt-in horizontal scroll for wide tables (e.g. /admin/runners with 10
    columns). Keeps the table from breaking out of its parent .card while
-   preserving every column's content. */
+   preserving every column's content.
+   Note: .table sets width:100% — we override that here so the table can
+   grow to its intrinsic width and the wrapper scrolls. */
 .table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  /* Counter the card's inner padding so the scrollable strip spans the
-     full card width — the table's own border + radius give the visual
-     boundary. */
-  margin: 0 calc(-1 * var(--space-6));
-  padding: 0 var(--space-6);
+  max-width: 100%;
 }
-.table-scroll > .table { min-width: max-content; }
+.table-scroll > .table {
+  width: auto;
+  min-width: 100%;       /* fill the wrapper when content is narrow */
+  display: table;        /* defensive — some browsers were demoting it */
+}
 .table th {
   text-align: left;
   padding: var(--space-3) var(--space-4);
@@ -474,6 +476,15 @@ select.input, select.search {
   border-radius: var(--radius);
   padding: var(--space-5) var(--space-6);
   margin-bottom: var(--space-4);
+  /* Safety net: prevent any intrinsically-wide child (wide tables, long
+     <pre>, etc.) from blowing the card out beyond its column. Cards that
+     genuinely need to render visible overflow (dropdowns, popovers)
+     should override this on a per-card basis.
+     overflow-x:auto gives a horizontal scrollbar at the card level when
+     a child is too wide AND that child didn't already wrap itself in
+     .table-scroll — preferable to silently clipping content. */
+  min-width: 0;
+  overflow-x: auto;
 }
 .card-title {
   font-size: var(--text-sm);
