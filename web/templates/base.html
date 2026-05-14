@@ -22,6 +22,8 @@
   <title>Testing Harness</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/harness.js" defer></script>
+  <script src="/static/keymap.js" defer></script>
+  <script src="/static/cmdk.js" defer></script>
 </head>
 <body>
   <nav class="nav">
@@ -81,5 +83,7 @@
     {% block content %}{% endblock %}
   </main>
   <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="false"></div>
+  <div id="cmdk-mount"></div>
+  <div id="kbd-help-mount"></div>
 </body>
 </html>
