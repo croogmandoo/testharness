@@ -73,7 +73,9 @@ async def dispatch_alerts(alerts: list, alerts_config: dict) -> None:
         if email_cfg:
             subject = f"[Harness] {app} — {test_name} {'FAILED' if alert_type == AlertType.FAIL else 'RESOLVED'}"
             try:
-                await asyncio.get_event_loop().run_in_executor(None, _send_email, email_cfg, subject, text)
+                # Run blocking smtplib off the event loop via asyncio.to_thread
+                # (the older executor-fetch pattern was removed in Python 3.14).
+                await asyncio.to_thread(_send_email, email_cfg, subject, text)
             except Exception as e:
                 logger.error("Email failed: %s", e)
 

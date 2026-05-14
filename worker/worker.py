@@ -770,7 +770,9 @@ async def amain() -> int:
             format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         )
     cfg = WorkerConfig()
-    _install_signal_handlers(asyncio.get_event_loop())
+    # amain() is invoked under asyncio.run() so we're guaranteed a running loop;
+    # asyncio.get_event_loop() was removed in Python 3.14.
+    _install_signal_handlers(asyncio.get_running_loop())
 
     _log.info(
         "worker[%s] starting — central=%s tags=%s capacity=%d",

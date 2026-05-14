@@ -141,3 +141,59 @@ async def test_dispatch_run_webhook_no_op_when_no_url():
     # Should not raise
     await dispatch_run_webhook("r1", "App", "prod", "complete",
                                "api", "2026-04-17T00:00:00Z", [], {})
+
+
+@pytest.mark.asyncio
+async def test_email_dispatch_uses_to_thread_not_get_event_loop():
+    """Regression test for Python 3.14 compatibility.
+
+    asyncio.get_event_loop() was removed in 3.14 — the email path must use
+    asyncio.to_thread() so smtplib (a blocking call) runs off the event loop
+    without reaching for a deprecated API.
+    """
+    from harness.alerts import dispatch_alerts
+    from harness.types import AlertType
+    sent = []
+
+    def fake_send_email(cfg, subject, body):
+        sent.append({"cfg": cfg, "subject": subject, "body": body})
+
+    alerts = [(AlertType.FAIL, "myapp", "production", "login", "Timeout")]
+    cfg = {
+        "email": {
+            "from": "harness@example.com",
+            "to": ["ops@example.com"],
+            "smtp_host": "smtp.example.com",
+            "username": "u",
+            "password": "p",
+        }
+    }
+
+    with patch("harness.alerts._send_email", side_effect=fake_send_email):
+        await dispatch_alerts(alerts, cfg)
+
+    assert len(sent) == 1, "email path should fire exactly once"
+    assert sent[0]["subject"].startswith("[Harness] myapp")
+    assert "FAILED" in sent[0]["subject"]
+    assert "Timeout" in sent[0]["body"]
+
+
+def test_alerts_module_has_no_get_event_loop_call():
+    """Guard against re-introducing asyncio.get_event_loop() (Python 3.14 break).
+
+    Uses AST so explanatory comments mentioning the name don't false-positive.
+    """
+    import ast
+    import inspect
+    from harness import alerts
+
+    tree = ast.parse(inspect.getsource(alerts))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            # Match both `get_event_loop(...)` and `asyncio.get_event_loop(...)`
+            name = getattr(func, "attr", None) or getattr(func, "id", None)
+            assert name != "get_event_loop", (
+                "asyncio.get_event_loop() was removed in Python 3.14; "
+                "use asyncio.to_thread() or asyncio.get_running_loop() instead."
+            )

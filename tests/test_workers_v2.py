@@ -1351,3 +1351,23 @@ def test_is_worker_unhealthy_default_false(tmp_path):
     import worker.worker as w
     w._set_unhealthy(False)  # reset between tests (module global)
     assert w.is_worker_unhealthy() is False
+
+
+def test_worker_module_has_no_get_event_loop_call():
+    """Guard against re-introducing asyncio.get_event_loop() (Python 3.14 break).
+
+    Uses AST so explanatory comments mentioning the name don't false-positive.
+    """
+    import ast
+    import inspect
+    import worker.worker as w
+
+    tree = ast.parse(inspect.getsource(w))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = getattr(func, "attr", None) or getattr(func, "id", None)
+            assert name != "get_event_loop", (
+                "asyncio.get_event_loop() was removed in Python 3.14; "
+                "use asyncio.get_running_loop() inside async funcs."
+            )
