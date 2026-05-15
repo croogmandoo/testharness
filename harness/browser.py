@@ -137,10 +137,15 @@ async def run_browser_test(run_id: str, app: str, environment: str,
         os.environ["SSL_CERT_FILE"] = BUNDLE_PATH
     elif os.environ.get("SSL_CERT_FILE") == BUNDLE_PATH:
         os.environ.pop("SSL_CERT_FILE", None)
-    # Resolved via module-level ``__getattr__`` (see top of file) so that the
-    # slim worker image -- which doesn't install playwright -- can still
-    # ``import harness.browser`` to reach ``run_availability_test`` above.
-    async with async_playwright() as pw:  # noqa: F821 -- PEP-562 lazy attr
+    # PEP-562 ``__getattr__`` only fires for attribute access on the module
+    # (``browser_mod.async_playwright``), not bare-name lookup inside the
+    # module itself -- which would raise ``NameError`` on the full image. So
+    # resolve via ``globals()`` first (tests' ``monkeypatch.setattr`` writes
+    # the fake there) and fall back to importing playwright on demand.
+    ap = globals().get("async_playwright")
+    if ap is None:
+        from playwright.async_api import async_playwright as ap
+    async with ap() as pw:
         browser = await pw.chromium.launch(headless=headless)
         page = await browser.new_page()
         page.set_default_timeout(timeout_ms)

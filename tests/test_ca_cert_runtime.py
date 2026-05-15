@@ -242,6 +242,66 @@ def test_run_browser_test_no_ssl_cert_file_when_no_bundle(monkeypatch, tmp_path)
     assert "SSL_CERT_FILE" not in env_copy
 
 
+def test_run_browser_test_resolves_async_playwright_without_module_global(monkeypatch):
+    """Regression: run_browser_test must not reference ``async_playwright`` as
+    a bare name expecting PEP-562 module ``__getattr__`` to resolve it.
+
+    Module ``__getattr__`` fires only for attribute access on the module from
+    *outside* (``browser_mod.async_playwright``), not for bare-name lookup
+    inside the module's own code -- so a bare ``async_playwright()`` call
+    would raise ``NameError`` at runtime on the full image and the runner
+    would surface it as ``Internal error: NameError: name 'async_playwright'
+    is not defined``. The other browser tests in this file all do
+    ``monkeypatch.setattr(browser_mod, "async_playwright", ...)`` which writes
+    into ``globals()`` and accidentally masks the bug. This test patches the
+    underlying ``playwright.async_api.async_playwright`` symbol instead, so
+    the function must resolve the name through the production code path
+    (local lazy import). If the bare-name regression returns, this test
+    fails with ``NameError``.
+    """
+    import asyncio
+    import sys
+    import types
+    from harness import browser as browser_mod
+
+    # Force a clean resolution path: drop any cached binding (set either by a
+    # prior test's monkeypatch or by the PEP-562 __getattr__ caching itself
+    # into globals on first attribute access).
+    monkeypatch.delattr(browser_mod, "async_playwright", raising=False)
+
+    class FakePage:
+        def set_default_timeout(self, t): pass
+        async def screenshot(self, path=None): pass
+
+    class FakeBrowser:
+        async def new_page(self): return FakePage()
+        async def close(self): pass
+
+    class FakeChromium:
+        async def launch(self, **kw): return FakeBrowser()
+
+    class FakePW:
+        chromium = FakeChromium()
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+
+    fake_pkg = types.ModuleType("playwright")
+    fake_async_api = types.ModuleType("playwright.async_api")
+    fake_async_api.async_playwright = lambda: FakePW()
+    fake_pkg.async_api = fake_async_api
+    monkeypatch.setitem(sys.modules, "playwright", fake_pkg)
+    monkeypatch.setitem(sys.modules, "playwright.async_api", fake_async_api)
+
+    test_def = {"name": "visit", "type": "browser", "steps": []}
+    result = asyncio.run(
+        browser_mod.run_browser_test("run-1", "myapp", "prod",
+                                     "http://example.com", test_def)
+    )
+    # Empty step list + no failures => pass. The point of the assertion is
+    # to prove the call returned at all (no NameError).
+    assert result.status == "pass"
+
+
 def test_runner_passes_ssl_ctx_to_api_test(monkeypatch, tmp_path):
     """run_app builds an SSL context and passes it to run_api_test."""
     import asyncio
