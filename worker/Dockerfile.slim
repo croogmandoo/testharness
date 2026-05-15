@@ -1,6 +1,6 @@
 # Slim remote-worker image — API / availability checks only (no Playwright,
 # no Chromium). Use this when the worker's apps never include browser tests;
-# image lands around 100-130 MB instead of the ~1.5 GB full Playwright image.
+# image lands around 200 MB instead of the ~1.5 GB full Playwright image.
 #
 # Build:
 #   docker build -f worker/Dockerfile.slim -t harness-worker-slim:latest .
@@ -18,19 +18,22 @@
 # ─────────────────────────────
 # 1. Multi-stage build. Stage 1 (``build``) uses the full ``python:3.11``
 #    image with build-essential so wheels that need a C toolchain (e.g.
-#    pyarrow, cryptography, bcrypt) compile cleanly. Stage 2 (``runtime``)
-#    uses ``python:3.11-slim`` and copies only the installed site-packages
-#    plus the worker source. No compiler in the final image.
+#    cryptography) compile cleanly. Stage 2 (``runtime``) uses
+#    ``python:3.11-slim`` and copies only the installed site-packages plus
+#    the worker source. No compiler in the final image.
 #
 # 2. Trimmed requirements: this image installs ONLY what the worker actually
-#    imports at runtime — httpx, fastapi (for the harness modules' shared
-#    types), pyyaml, cryptography, itsdangerous, apscheduler, anyio. We
-#    deliberately skip:
-#      - playwright + browser binaries (~1.3 GB)
+#    imports at runtime — httpx, pyyaml, apscheduler, cryptography. Earlier
+#    versions over-installed fastapi/jinja2/uvicorn/starlette/pydantic/
+#    python-dotenv/python-multipart/itsdangerous which the worker code path
+#    never touches (verified by grep across worker/ and harness/). Removing
+#    those saved ~25 MB.  We deliberately also skip:
+#      - playwright + browser binaries (~1.3 GB) — lazy-loaded only by the
+#        full image
 #      - pyarrow / azure-* (analytics is central-only)
 #      - reportlab / python-docx (export is central-only)
 #      - Pillow (only browser screenshots need it; this worker doesn't take
-#        them)
+#        them — and run_browser_test is lazy-imported now per fcc95c0)
 #      - pytest* (test deps don't belong in a runtime image)
 #      - bcrypt + ldap3 (auth is central-only)
 #
@@ -38,30 +41,28 @@
 #    chown bind mounts — the worker writes only to /app/data which is
 #    pre-created with the right ownership).
 #
-# 4. PYTHONDONTWRITEBYTECODE=1 + PYTHONUNBUFFERED=1 to keep the image
-#    slim and logs flushing in real time.
+# 4. PYTHONDONTWRITEBYTECODE=1 in BOTH stages and --no-compile on pip
+#    install so we don't ship ~10 MB of .pyc files that the runtime would
+#    regenerate on first import anyway.
 #
-# Target final size: ~120 MB. Verify with ``docker images``.
+# Target final size: <= 220 MB. Verify with ``docker images``.
 
 # ─── Stage 1: build wheels ─────────────────────────────────────────────────
 FROM python:3.11 AS build
 
 ENV PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Only the runtime deps the worker actually imports. Pinned conservatively.
-RUN pip install --no-cache-dir --prefix=/install \
+# (Verified 2026-05-14: grep -r "import X" worker/ harness/ confirms none
+# of the previously-bundled web-framework deps are reachable from the
+# worker entrypoint.)
+RUN pip install --no-cache-dir --no-compile --prefix=/install \
         "httpx==0.27.0" \
-        "fastapi>=0.115.0" \
-        "uvicorn==0.29.0" \
-        "pyyaml==6.0.2" \
-        "jinja2>=3.1.6" \
-        "python-dotenv>=1.2.2" \
-        "starlette>=0.47.2" \
         "anyio==4.3.0" \
+        "pyyaml==6.0.2" \
         "cryptography>=42.0.4" \
-        "itsdangerous>=2.1.2" \
-        "python-multipart>=0.0.18" \
         "apscheduler>=3.10.4,<4"
 
 # ─── Stage 2: minimal runtime ──────────────────────────────────────────────

@@ -868,6 +868,61 @@ def test_slim_dockerfile_uses_slim_runtime():
     assert "python:3.11-slim" in text
 
 
+def test_harness_browser_imports_without_playwright():
+    """Regression: the slim worker image deliberately omits playwright but
+    worker.execute_job does ``from harness.browser import run_availability_test,
+    run_browser_test``. If ``harness/browser.py`` ever re-introduces a
+    top-level ``from playwright...`` import, that line would raise
+    ``ModuleNotFoundError`` at runtime on the slim image and silently break
+    every job. Simulate the missing dep here with a meta-path blocker.
+    """
+    import importlib
+    import sys
+
+    class _PlaywrightBlocker:
+        def find_spec(self, name, path=None, target=None):
+            if name == "playwright" or name.startswith("playwright."):
+                raise ModuleNotFoundError(f"simulated missing dep: {name}")
+            return None
+
+    # Snapshot + clean playwright before installing the blocker so we observe
+    # a true ``import would fail`` environment.
+    cached = {
+        k: sys.modules.pop(k)
+        for k in [k for k in sys.modules if k == "playwright" or k.startswith("playwright.")]
+    }
+    cached_browser = sys.modules.pop("harness.browser", None)
+    blocker = _PlaywrightBlocker()
+    sys.meta_path.insert(0, blocker)
+    try:
+        # The two names the worker pulls from this module on every job.
+        mod = importlib.import_module("harness.browser")
+        assert hasattr(mod, "run_availability_test")
+        assert hasattr(mod, "run_browser_test")
+        # Confirm playwright really stayed off the import chain.
+        assert "playwright" not in sys.modules, (
+            "harness.browser eagerly imported playwright -- slim image will crash"
+        )
+        # And that attempting to use the lazy attribute raises cleanly when
+        # the dep is absent (matches what would happen on slim if someone
+        # accidentally configured HARNESS_CAPABILITIES to include 'browser').
+        try:
+            _ = mod.async_playwright
+        except ModuleNotFoundError:
+            pass
+        else:  # pragma: no cover -- defence in depth
+            raise AssertionError("expected lazy async_playwright to raise without dep")
+    finally:
+        sys.meta_path.remove(blocker)
+        sys.modules.pop("harness.browser", None)
+        sys.modules.update(cached)
+        if cached_browser is not None:
+            sys.modules["harness.browser"] = cached_browser
+        else:
+            # Re-import so subsequent tests in this process get the real module.
+            importlib.import_module("harness.browser")
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # workers-v2-1 Feature A: Version skew detection + major-version refusal
 # ══════════════════════════════════════════════════════════════════════════

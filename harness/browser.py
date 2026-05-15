@@ -1,14 +1,37 @@
+from __future__ import annotations
+
 import os
 import ssl
 import time
 from datetime import datetime, timezone
-from typing import Optional
-from playwright.async_api import async_playwright, Page
+from typing import TYPE_CHECKING, Optional
+
+# Playwright is a heavy (~1.3 GB with browsers) optional dependency: the slim
+# worker image (worker/Dockerfile.slim) deliberately omits it. ``Page`` is only
+# used as a type annotation here, and ``async_playwright`` is exposed as a
+# lazy module attribute (PEP 562 ``__getattr__``) so that
+# ``from harness.browser import run_availability_test`` succeeds on the slim
+# image -- where the worker is configured for ``api,availability`` capabilities
+# and never calls the browser-test path. Tests can still monkey-patch
+# ``browser_mod.async_playwright`` because attribute-setting fills the module
+# dict and shadows the ``__getattr__`` fallback (which is exactly what
+# ``monkeypatch.setattr`` does).
+if TYPE_CHECKING:
+    from playwright.async_api import Page
+
 from harness.models import TestResult, StepResult
 from harness.loader import slugify_test_name
 from harness.ssl_context import BUNDLE_PATH
 
-async def execute_step(page: Page, step: dict, base_url: str,
+
+def __getattr__(name: str):  # PEP 562
+    if name == "async_playwright":
+        from playwright.async_api import async_playwright as _ap
+        globals()["async_playwright"] = _ap  # cache for subsequent lookups
+        return _ap
+    raise AttributeError(f"module 'harness.browser' has no attribute {name!r}")
+
+async def execute_step(page: "Page", step: dict, base_url: str,
                        screenshot_path: Optional[str] = None) -> StepResult:
     start = time.monotonic()
     def _elapsed() -> int:
@@ -114,7 +137,10 @@ async def run_browser_test(run_id: str, app: str, environment: str,
         os.environ["SSL_CERT_FILE"] = BUNDLE_PATH
     elif os.environ.get("SSL_CERT_FILE") == BUNDLE_PATH:
         os.environ.pop("SSL_CERT_FILE", None)
-    async with async_playwright() as pw:
+    # Resolved via module-level ``__getattr__`` (see top of file) so that the
+    # slim worker image -- which doesn't install playwright -- can still
+    # ``import harness.browser`` to reach ``run_availability_test`` above.
+    async with async_playwright() as pw:  # noqa: F821 -- PEP-562 lazy attr
         browser = await pw.chromium.launch(headless=headless)
         page = await browser.new_page()
         page.set_default_timeout(timeout_ms)
