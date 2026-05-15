@@ -302,6 +302,171 @@ def test_run_browser_test_resolves_async_playwright_without_module_global(monkey
     assert result.status == "pass"
 
 
+def _make_self_signed_pem(tmp_path, common_name="harness-test-ca"):
+    """Generate a self-signed cert and return (pem_bytes, expected_spki_b64).
+
+    Computes the expected SPKI hash independently (raw cryptography +
+    hashlib) so the assertion doesn't tautologically mirror the production
+    implementation.
+    """
+    import base64
+    import datetime
+    import hashlib
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, common_name),
+    ])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=1))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    pem = cert.public_bytes(serialization.Encoding.PEM)
+    spki_der = cert.public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    expected_b64 = base64.b64encode(hashlib.sha256(spki_der).digest()).decode("ascii")
+    return pem, expected_b64
+
+
+def test_chromium_spki_args_hashes_match_sha256_b64_of_spki_der(tmp_path):
+    """chromium_spki_args emits --ignore-certificate-errors-spki-list with
+    base64(sha256(SubjectPublicKeyInfo-DER)) for each cert in the bundle,
+    which is what Chromium expects.
+    """
+    from harness.ssl_context import chromium_spki_args
+
+    pem_a, expected_a = _make_self_signed_pem(tmp_path, "ca-a")
+    pem_b, expected_b = _make_self_signed_pem(tmp_path, "ca-b")
+    bundle = tmp_path / "ca-bundle.pem"
+    bundle.write_bytes(pem_a + b"\n" + pem_b)
+
+    args = chromium_spki_args(str(bundle))
+    assert len(args) == 1
+    flag, _, hashes_csv = args[0].partition("=")
+    assert flag == "--ignore-certificate-errors-spki-list"
+    emitted = hashes_csv.split(",")
+    assert emitted == [expected_a, expected_b], (
+        "SPKI hashes must be ordered as in the bundle and match independent "
+        "base64(sha256(SPKI-DER)) computation"
+    )
+
+
+def test_chromium_spki_args_returns_empty_when_bundle_missing(tmp_path):
+    from harness.ssl_context import chromium_spki_args
+    assert chromium_spki_args(str(tmp_path / "does-not-exist.pem")) == []
+
+
+def test_chromium_spki_args_returns_empty_when_bundle_blank(tmp_path):
+    from harness.ssl_context import chromium_spki_args
+    bundle = tmp_path / "ca-bundle.pem"
+    bundle.write_text("   \n\n")
+    assert chromium_spki_args(str(bundle)) == []
+
+
+def test_chromium_spki_args_returns_empty_when_bundle_garbage(tmp_path):
+    from harness.ssl_context import chromium_spki_args
+    bundle = tmp_path / "ca-bundle.pem"
+    bundle.write_text("-----BEGIN CERTIFICATE-----\nnot real base64\n-----END CERTIFICATE-----\n")
+    # Best-effort: a malformed bundle must not crash the browser launch path.
+    assert chromium_spki_args(str(bundle)) == []
+
+
+def test_run_browser_test_passes_spki_args_to_chromium_launch(monkeypatch, tmp_path):
+    """run_browser_test forwards chromium_spki_args(BUNDLE_PATH) into
+    pw.chromium.launch(args=...). This is what makes the admin-uploaded CA
+    actually trusted by Chromium at runtime (SSL_CERT_FILE is OpenSSL-only).
+    """
+    import asyncio
+    from harness import browser as browser_mod
+
+    pem, expected = _make_self_signed_pem(tmp_path, "wire-up-ca")
+    bundle = tmp_path / "ca-bundle.pem"
+    bundle.write_bytes(pem)
+    monkeypatch.setattr(browser_mod, "BUNDLE_PATH", str(bundle))
+
+    captured = {}
+
+    class FakePage:
+        def set_default_timeout(self, t): pass
+        async def screenshot(self, path=None): pass
+
+    class FakeBrowser:
+        async def new_page(self): return FakePage()
+        async def close(self): pass
+
+    class FakeChromium:
+        async def launch(self, **kw):
+            captured.update(kw)
+            return FakeBrowser()
+
+    class FakePW:
+        chromium = FakeChromium()
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+
+    monkeypatch.setattr(browser_mod, "async_playwright", lambda: FakePW())
+
+    test_def = {"name": "visit", "type": "browser", "steps": []}
+    asyncio.run(
+        browser_mod.run_browser_test("run-1", "myapp", "prod",
+                                     "http://example.com", test_def)
+    )
+    args = captured.get("args")
+    assert args == [f"--ignore-certificate-errors-spki-list={expected}"]
+
+
+def test_run_browser_test_passes_empty_args_when_no_bundle(monkeypatch, tmp_path):
+    """No bundle => no SPKI flag => normal Chromium trust (no surprise
+    silent flag injection). Asserts launch_args is an empty list, not None.
+    """
+    import asyncio
+    from harness import browser as browser_mod
+
+    monkeypatch.setattr(browser_mod, "BUNDLE_PATH", str(tmp_path / "no-bundle.pem"))
+
+    captured = {}
+
+    class FakePage:
+        def set_default_timeout(self, t): pass
+        async def screenshot(self, path=None): pass
+
+    class FakeBrowser:
+        async def new_page(self): return FakePage()
+        async def close(self): pass
+
+    class FakeChromium:
+        async def launch(self, **kw):
+            captured.update(kw)
+            return FakeBrowser()
+
+    class FakePW:
+        chromium = FakeChromium()
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+
+    monkeypatch.setattr(browser_mod, "async_playwright", lambda: FakePW())
+
+    test_def = {"name": "visit", "type": "browser", "steps": []}
+    asyncio.run(
+        browser_mod.run_browser_test("run-1", "myapp", "prod",
+                                     "http://example.com", test_def)
+    )
+    assert captured.get("args") == []
+
+
 def test_runner_passes_ssl_ctx_to_api_test(monkeypatch, tmp_path):
     """run_app builds an SSL context and passes it to run_api_test."""
     import asyncio

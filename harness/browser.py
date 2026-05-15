@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 from harness.models import TestResult, StepResult
 from harness.loader import slugify_test_name
-from harness.ssl_context import BUNDLE_PATH
+from harness.ssl_context import BUNDLE_PATH, chromium_spki_args
 
 
 def __getattr__(name: str):  # PEP 562
@@ -130,13 +130,20 @@ async def run_browser_test(run_id: str, app: str, environment: str,
                         test_name=test_def["name"])
     step_log = []
     start = time.monotonic()
-    # SSL_CERT_FILE is process-global; once set, Playwright will keep
-    # using it. If the bundle was removed (admin deleted the last cert),
-    # we must unset the env var so we don't point at a vanished file.
+    # ``SSL_CERT_FILE`` is OpenSSL-only -- Chromium ignores it and uses NSS
+    # on Linux. We still maintain the env var here so any in-process httpx
+    # call that runs alongside the browser job uses the bundle; Chromium
+    # trust is handled separately via ``chromium_spki_args`` below. If the
+    # bundle was removed (admin deleted the last cert), unset the env var
+    # so we don't point at a vanished file.
     if os.path.exists(BUNDLE_PATH):
         os.environ["SSL_CERT_FILE"] = BUNDLE_PATH
     elif os.environ.get("SSL_CERT_FILE") == BUNDLE_PATH:
         os.environ.pop("SSL_CERT_FILE", None)
+    # Trust the admin-uploaded CAs in Chromium by pinning their SPKI hashes
+    # via ``--ignore-certificate-errors-spki-list``. Empty list when the
+    # bundle is absent -- normal launch, normal trust.
+    launch_args = chromium_spki_args(BUNDLE_PATH)
     # PEP-562 ``__getattr__`` only fires for attribute access on the module
     # (``browser_mod.async_playwright``), not bare-name lookup inside the
     # module itself -- which would raise ``NameError`` on the full image. So
@@ -146,7 +153,7 @@ async def run_browser_test(run_id: str, app: str, environment: str,
     if ap is None:
         from playwright.async_api import async_playwright as ap
     async with ap() as pw:
-        browser = await pw.chromium.launch(headless=headless)
+        browser = await pw.chromium.launch(headless=headless, args=launch_args)
         page = await browser.new_page()
         page.set_default_timeout(timeout_ms)
         steps = test_def.get("steps", [])
