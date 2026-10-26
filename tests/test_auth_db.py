@@ -119,6 +119,15 @@ def test_upsert_ldap_user_excludes_password_hash(db):
     assert "password_hash" not in user
 
 
+def test_upsert_ldap_user_refuses_non_ldap_row(db):
+    db.insert_user(_user())  # local "alice"
+    assert db.upsert_ldap_user("alice", "Imposter", None, "read_only") is None
+    row = db.get_user_by_username("alice")
+    assert row["auth_provider"] == "local"
+    assert row["display_name"] == "Alice"
+    assert row["role"] == "admin"
+
+
 # ── Brute-force protection ────────────────────────────────────────────────────
 
 def test_increment_failed_login_increments_count(db):

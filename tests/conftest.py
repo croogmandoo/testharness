@@ -27,6 +27,18 @@ DEFAULT_CONFIG = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiters():
+    """Login/setup throttles are process-global and every TestClient shares
+    the same client IP — start each test with empty windows."""
+    from web.ratelimit import login_limiter, setup_limiter
+    login_limiter.reset()
+    setup_limiter.reset()
+    yield
+    login_limiter.reset()
+    setup_limiter.reset()
+
+
 @pytest.fixture
 def db(tmp_path):
     """Fresh SQLite DB per test in tmp_path."""

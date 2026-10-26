@@ -1,33 +1,71 @@
+import re
 from typing import Optional
 from ldap3 import Server, Connection, ALL, SUBTREE
+from ldap3.utils.conv import escape_filter_chars
+
+_LDAP_USERNAME_MAX_LEN = 256
+
+
+_dummy_hash: Optional[bytes] = None
+
+
+def _get_dummy_hash() -> bytes:
+    """A throwaway bcrypt hash (default cost) used to spend the same time on
+    unknown/ineligible users as on real ones, so response timing does not
+    reveal which usernames exist."""
+    global _dummy_hash
+    if _dummy_hash is None:
+        import bcrypt as _bcrypt
+        _dummy_hash = _bcrypt.hashpw(b"harness-dummy-password", _bcrypt.gensalt())
+    return _dummy_hash
 
 
 def verify_local_password(username: str, password: str, db) -> Optional[dict]:
     import bcrypt as _bcrypt
-    user = db.get_user_by_username(username)
-    if user is None:
-        return None
-    if user.get("auth_provider") != "local":
-        return None
-    if not user.get("is_active"):
-        return None
-    if not user.get("password_hash"):
-        return None
-    # Check account lockout
     from datetime import datetime, timezone
-    locked_until = user.get("locked_until")
-    if locked_until:
-        if datetime.fromisoformat(locked_until) > datetime.now(timezone.utc):
-            return None  # Still locked
-        # Lock expired — let the password check proceed (reset happens on success)
     pw_bytes = password.encode("utf-8")
+    user = db.get_user_by_username(username)
+    eligible = (
+        user is not None
+        and user.get("auth_provider") == "local"
+        and bool(user.get("is_active"))
+        and bool(user.get("password_hash"))
+    )
+    if not eligible:
+        _bcrypt.checkpw(pw_bytes, _get_dummy_hash())
+        return None
     hash_bytes = user["password_hash"].encode("utf-8") if isinstance(user["password_hash"], str) else user["password_hash"]
-    if not _bcrypt.checkpw(pw_bytes, hash_bytes):
+    ok = _bcrypt.checkpw(pw_bytes, hash_bytes)
+    # Check account lockout (after the hash so a locked account costs the same)
+    locked_until = user.get("locked_until")
+    if locked_until and datetime.fromisoformat(locked_until) > datetime.now(timezone.utc):
+        return None  # Still locked
+    # An expired lock lets the password check stand (reset happens on success)
+    if not ok:
         return None
     return user
 
 
+def _is_safe_ldap_username(username: str) -> bool:
+    """Reject usernames that could change the bind identity or that no
+    directory account would legitimately carry. ``@`` and ``\\`` would let
+    the caller pick a different UPN/domain for the bind; control characters
+    (including NUL) have no business in a login name."""
+    if not username or len(username) > _LDAP_USERNAME_MAX_LEN:
+        return False
+    if "@" in username or "\\" in username:
+        return False
+    return not any(ord(ch) < 32 or ord(ch) == 127 for ch in username)
+
+
 def ldap_authenticate(username: str, password: str, ldap_cfg: dict) -> Optional[dict]:
+    # An empty password turns a simple bind into an unauthenticated bind,
+    # which many directories accept — never let that count as a login.
+    if not password or not password.strip():
+        return None
+    if not _is_safe_ldap_username(username):
+        return None
+
     dc_parts = [
         p.split("=")[1]
         for p in ldap_cfg["base_dn"].split(",")
@@ -43,15 +81,21 @@ def ldap_authenticate(username: str, password: str, ldap_cfg: dict) -> Optional[
         if not conn.bind():
             return None
         group_attr = ldap_cfg.get("group_attribute", "memberOf")
+        name_attr = _username_attribute(ldap_cfg)
+        attributes = ["displayName", "mail", group_attr]
+        if name_attr:
+            attributes.append(name_attr)
         conn.search(
             search_base=ldap_cfg["base_dn"],
-            search_filter=ldap_cfg["user_search_filter"].format(username=username),
+            search_filter=ldap_cfg["user_search_filter"].format(
+                username=escape_filter_chars(username)),
             search_scope=SUBTREE,
-            attributes=["displayName", "mail", group_attr],
+            attributes=attributes,
         )
         if not conn.entries:
             return None
         entry = conn.entries[0]
+        username = _canonical_username(entry, name_attr, username)
         display_name = _safe_attr(entry, "displayName") or username
         email = _safe_attr(entry, "mail")
         groups = _safe_list_attr(entry, group_attr)
@@ -68,6 +112,34 @@ def ldap_authenticate(username: str, password: str, ldap_cfg: dict) -> Optional[
             conn.unbind()
         except Exception:
             pass
+
+
+_FILTER_ATTR_RE = re.compile(r"\(\s*([A-Za-z][A-Za-z0-9-]*)\s*=\s*\{username\}\s*\)")
+
+
+def _username_attribute(ldap_cfg: dict) -> Optional[str]:
+    """The directory attribute holding the login name: ``username_attribute``
+    if configured, else the attribute ``user_search_filter`` matches
+    ``{username}`` against (e.g. ``sAMAccountName`` or ``uid``)."""
+    configured = ldap_cfg.get("username_attribute")
+    if configured:
+        return configured
+    m = _FILTER_ATTR_RE.search(ldap_cfg.get("user_search_filter", ""))
+    return m.group(1) if m else None
+
+
+def _canonical_username(entry, name_attr: Optional[str], typed: str) -> str:
+    """Lower-cased account name as the directory spells it, falling back to
+    what the user typed. Directories match names case-insensitively, so
+    "BOB" and "bob" must resolve to the same local row."""
+    if name_attr:
+        try:
+            val = getattr(entry, name_attr).value
+        except Exception:
+            val = None
+        if isinstance(val, str) and _is_safe_ldap_username(val):
+            return val.lower()
+    return typed.lower()
 
 
 def _safe_attr(entry, attr: str) -> Optional[str]:
