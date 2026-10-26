@@ -229,3 +229,112 @@ def test_session_version_migration_idempotent_on_old_db(tmp_path):
     db.bump_session_version("u1")
     db.init_schema()
     assert db.get_user_by_id("u1")["session_version"] == 1
+
+
+# ── Role whitelist and password policy ────────────────────────────────────────
+
+def _create(client, **overrides):
+    data = {"username": "carol", "display_name": "", "email": "",
+            "role": "read_only", "password": "LongEnough1"}
+    data.update(overrides)
+    return client.post("/users/new", data=data)
+
+
+def test_create_user_rejects_unknown_role(admin_client, db):
+    resp = _create(admin_client, role="superuser")
+    assert resp.status_code == 422
+    assert db.get_user_by_username("carol") is None
+
+
+def test_create_user_rejects_short_password(admin_client, db):
+    resp = _create(admin_client, password="short")
+    assert resp.status_code == 422
+    assert "at least 8 characters" in resp.text
+    assert db.get_user_by_username("carol") is None
+
+
+@pytest.mark.parametrize("role", ["admin", "runner", "reporting", "read_only"])
+def test_create_user_accepts_known_roles(admin_client, db, role):
+    assert _create(admin_client, role=role).status_code == 303
+    assert db.get_user_by_username("carol")["role"] == role
+
+
+def test_edit_user_rejects_unknown_role(admin_client, db):
+    bob = _insert_user(db, "bob")
+    resp = _edit(admin_client, bob, role="root")
+    assert resp.status_code == 422
+    after = db.get_user_by_id(bob["id"])
+    assert after["role"] == "read_only"
+    assert after["session_version"] == 0
+
+
+def test_edit_user_rejects_short_password(admin_client, db):
+    bob = _insert_user(db, "bob")
+    resp = _edit(admin_client, bob, password="short")
+    assert resp.status_code == 422
+    assert db.get_user_by_id(bob["id"])["password_hash"] == bob["password_hash"]
+
+
+def _app_with_min_length(db, apps_dir, n):
+    from web.csrf import verify_csrf
+    from web.main import create_app
+    cfg = {
+        "default_environment": "production",
+        "environments": {"production": {"label": "Production"}},
+        "auth": {"session_hours": 8, "secure_cookie": False, "min_password_length": n},
+    }
+    app = create_app(db=db, config=cfg, apps_dir=str(apps_dir))
+    app.dependency_overrides[verify_csrf] = lambda: None
+    return app
+
+
+def test_min_password_length_is_configurable(db, apps_dir):
+    app = _app_with_min_length(db, apps_dir, 12)
+    admin = _insert_user(db, "root", role="admin")
+    c = TestClient(app, follow_redirects=False)
+    c.cookies.set("session", _cookie_for(admin["id"]))
+    assert _create(c, password="elevenchars").status_code == 422
+    assert _create(c, password="twelve-chars").status_code == 303
+    assert 'minlength="12"' in c.get("/users/new").text
+
+
+def test_setup_enforces_configured_min_length(db, apps_dir):
+    from web.routes.auth import get_setup_token
+    app = _app_with_min_length(db, apps_dir, 12)
+    c = TestClient(app, follow_redirects=False)
+    assert 'minlength="12"' in c.get("/setup").text
+    data = {"username": "admin", "password": "elevenchars", "confirm": "elevenchars",
+            "display_name": "", "setup_token": get_setup_token()}
+    resp = c.post("/setup", data=data)
+    assert resp.status_code == 422
+    assert "at least 12 characters" in resp.text
+    assert db.count_users() == 0
+    data.update(password="twelve-chars", confirm="twelve-chars")
+    resp = c.post("/setup", data=data)
+    assert resp.status_code == 303
+    assert "Max-Age=" in resp.headers["set-cookie"]
+    assert _whoami(app, resp.cookies["session"]) == 200
+
+
+def test_unchecked_active_box_deactivates(admin_client, db):
+    """The edit form sends a hidden is_active=0 before the checkbox; with the
+    box unchecked only the 0 arrives and the account is deactivated."""
+    bob = _insert_user(db, "bob")
+    cookie = _cookie_for(bob["id"])
+    resp = admin_client.post(f"/users/{bob['id']}/edit", data={
+        "display_name": "Bob", "email": "", "role": "read_only",
+        "is_active": "0", "password": "",
+    })
+    assert resp.status_code == 303
+    assert db.get_user_by_id(bob["id"])["is_active"] == 0
+    assert _whoami(admin_client.app, cookie) == 401
+
+
+def test_checked_active_box_wins_over_hidden_zero(admin_client, db):
+    bob = _insert_user(db, "bob")
+    resp = admin_client.post(f"/users/{bob['id']}/edit", data={
+        "display_name": "Bob", "email": "", "role": "read_only",
+        "is_active": ["0", "1"], "password": "",
+    })
+    assert resp.status_code == 303
+    assert db.get_user_by_id(bob["id"])["is_active"] == 1

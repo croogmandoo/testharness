@@ -23,6 +23,27 @@ KNOWN_SCOPES = frozenset({
 })
 
 
+# Roles a user row may carry. Anything else is rejected at the edge
+# (users.py) rather than silently matching no ``require_role`` check.
+VALID_ROLES = ("admin", "runner", "reporting", "read_only")
+
+DEFAULT_MIN_PASSWORD_LENGTH = 8
+
+
+def min_password_length() -> int:
+    """``auth.min_password_length`` from config (default 8, never below 1)."""
+    from web.main import get_config
+    raw = (get_config().get("auth") or {}).get(
+        "min_password_length", DEFAULT_MIN_PASSWORD_LENGTH
+    )
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        _log.warning("auth.min_password_length=%r is not an integer; using %d",
+                     raw, DEFAULT_MIN_PASSWORD_LENGTH)
+        return DEFAULT_MIN_PASSWORD_LENGTH
+
+
 def set_auth_config(signing_key: bytes, session_hours: int, secure_cookie: bool) -> None:
     global _signing_key, _session_hours, _secure_cookie
     _signing_key = signing_key

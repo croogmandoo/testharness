@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from web.auth import min_password_length
 from web.csrf import csrf_token_for, verify_csrf
 from web.templating import make_templates
 
@@ -27,6 +28,7 @@ def _nav_ctx(request: Request) -> dict:
         "environment": None,
         "current_user": None,
         "csrf_token": csrf_token_for(request),
+        "min_password_length": min_password_length(),
     }
 
 
@@ -80,9 +82,9 @@ async def setup_post(
     setup_token: str = Form(""),
     _csrf=Depends(verify_csrf),
 ):
-    from web.main import get_db, get_config
+    from web.main import get_db
     import bcrypt as _bcrypt
-    from web.auth import issue_session_cookie
+    from web.auth import issue_session_cookie, min_password_length
     from web.ratelimit import setup_limiter, client_ip
     db = get_db()
     if db.count_users() > 0:
@@ -111,11 +113,11 @@ async def setup_post(
         ctx["error"] = "Passwords do not match."
         return templates.TemplateResponse(request, "setup.html", ctx, status_code=422)
 
-    if len(password) < 8:
-        ctx["error"] = "Password must be at least 8 characters."
+    min_len = min_password_length()
+    if len(password) < min_len:
+        ctx["error"] = f"Password must be at least {min_len} characters."
         return templates.TemplateResponse(request, "setup.html", ctx, status_code=422)
 
-    config = get_config()
     user_id = str(uuid.uuid4())
     password_hash = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
     db.insert_user({

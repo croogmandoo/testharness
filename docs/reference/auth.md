@@ -128,6 +128,12 @@ For API paths (`/api/*`), unauthenticated requests receive HTTP 401. For browser
 
 Secrets deletion (`POST /secrets/{name}/delete`) is restricted to `admin` only; creation and listing allow `admin` or `runner`.
 
+`POST /users/new` and `POST /users/{id}/edit` accept only these four role names (`web.auth.VALID_ROLES`); anything else returns 422 and changes nothing.
+
+### Password policy
+
+Local passwords must be at least `auth.min_password_length` characters (default 8). The limit applies to `POST /setup`, `POST /users/new` and to a new password set through `POST /users/{id}/edit`; a shorter password returns 422. The forms carry a matching `minlength` attribute. Existing passwords are not re-checked.
+
 ---
 
 ## Auth Flow
@@ -179,6 +185,7 @@ Relevant keys in `config.yaml`:
 |---|---|---|
 | `auth.session_hours` | `8` | Session cookie lifetime in hours |
 | `auth.secure_cookie` | `false` | Set `Secure` flag on session cookie (enable for HTTPS deployments) |
+| `auth.min_password_length` | `8` | Minimum length for local passwords (setup, user create, password reset) |
 | `auth.github.client_id` | — | GitHub OAuth app client id (enables the GitHub button) |
 | `auth.github.client_secret` | — | GitHub OAuth app client secret |
 | `auth.github.default_role` | `read_only` | Role given to newly created GitHub users |
