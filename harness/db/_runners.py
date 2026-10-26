@@ -4,58 +4,84 @@ Methods call ``self._connect()`` — mix into a class that provides it
 (see ``harness.db._base.Database``).
 """
 import json
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
+
+# Sentinel for upsert_runner's ``expected_api_key_id``: "don't check the
+# binding" (None is a meaningful expected value — an unbound row).
+_ANY = object()
+
+
+class RunnerBindConflict(Exception):
+    """Raised by ``upsert_runner`` when the row's bound key changed between
+    the caller's binding check and the write (or a concurrent register
+    inserted the same name first)."""
 
 
 class RunnersMixin:
     def upsert_runner(self, *, name: str, tags: list, capabilities: list,
                        version: Optional[str] = None,
                        api_key_id: Optional[str] = None,
-                       version_stale: Optional[int] = None) -> dict:
+                       version_stale: Optional[int] = None,
+                       expected_api_key_id=_ANY) -> dict:
         """Insert or update a runner row. Sets first_seen_at on insert,
         last_seen_at on every call, and marks status='online'.
 
         ``version_stale`` (0|1) is written when supplied — callers compute it
         from ``harness.version_skew.is_version_stale``. None preserves the
         existing value on update / defaults to 0 on insert.
+
+        ``expected_api_key_id`` makes the write conditional on the binding
+        the caller checked: the UPDATE only applies while the row is unbound
+        or still bound to that key, and an INSERT that loses a race on the
+        UNIQUE name fails. Either way ``RunnerBindConflict`` is raised, so a
+        check-then-upsert stays safe across processes.
         """
         now = datetime.now(timezone.utc).isoformat()
         tags_json = json.dumps(sorted(set(tags or [])))
         caps_json = json.dumps(sorted(set(capabilities or [])))
         existing = self.get_runner_by_name(name)
         vs = int(bool(version_stale)) if version_stale is not None else 0
+        checked = expected_api_key_id is not _ANY
         with self._connect() as conn:
             if existing is None:
                 rid = str(uuid.uuid4())
-                conn.execute(
-                    "INSERT INTO runners (id, name, tags, capabilities, version, "
-                    "api_key_id, first_seen_at, last_seen_at, status, version_stale) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (rid, name, tags_json, caps_json, version,
-                     api_key_id, now, now, "online", vs),
-                )
+                try:
+                    conn.execute(
+                        "INSERT INTO runners (id, name, tags, capabilities, version, "
+                        "api_key_id, first_seen_at, last_seen_at, status, version_stale) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        (rid, name, tags_json, caps_json, version,
+                         api_key_id, now, now, "online", vs),
+                    )
+                except sqlite3.IntegrityError:
+                    if not checked:
+                        raise
+                    raise RunnerBindConflict(name)
             else:
                 # Only overwrite version_stale when caller supplied a value;
                 # otherwise leave whatever was last set.
-                if version_stale is None:
-                    conn.execute(
-                        "UPDATE runners SET tags=?, capabilities=?, version=?, "
-                        "api_key_id=COALESCE(?, api_key_id), last_seen_at=?, "
-                        "status=CASE WHEN status='draining' THEN 'draining' ELSE 'online' END "
-                        "WHERE name=?",
-                        (tags_json, caps_json, version, api_key_id, now, name),
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE runners SET tags=?, capabilities=?, version=?, "
-                        "api_key_id=COALESCE(?, api_key_id), last_seen_at=?, "
-                        "version_stale=?, "
-                        "status=CASE WHEN status='draining' THEN 'draining' ELSE 'online' END "
-                        "WHERE name=?",
-                        (tags_json, caps_json, version, api_key_id, now, vs, name),
-                    )
+                sets = ("tags=?, capabilities=?, version=?, "
+                        "api_key_id=COALESCE(?, api_key_id), last_seen_at=?, ")
+                args = [tags_json, caps_json, version, api_key_id, now]
+                if version_stale is not None:
+                    sets += "version_stale=?, "
+                    args.append(vs)
+                where = "WHERE name=?"
+                args.append(name)
+                if checked:
+                    where += " AND (api_key_id IS NULL OR api_key_id IS ?)"
+                    args.append(expected_api_key_id)
+                cur = conn.execute(
+                    "UPDATE runners SET " + sets +
+                    "status=CASE WHEN status='draining' THEN 'draining' ELSE 'online' END "
+                    + where,
+                    args,
+                )
+                if checked and cur.rowcount == 0:
+                    raise RunnerBindConflict(name)
         return self.get_runner_by_name(name)
 
     def set_runner_version_stale(self, name: str, stale: bool) -> None:
@@ -101,6 +127,28 @@ class RunnersMixin:
             result.append(r)
         return result
 
+    def check_runner_binding(self, name: str, api_key_id: str) -> str:
+        """Compare a runner's bound API key with ``api_key_id``.
+
+        Returns ``"ok"`` when the runner is bound to that key, ``"unbound"``
+        when the row is missing or has no key (``api_key_id IS NULL``), and
+        ``"conflict"`` when it's bound to a different key. Callers decide
+        what each outcome means for their endpoint — see web/routes/runner.py.
+        """
+        runner = self.get_runner_by_name(name)
+        bound = (runner or {}).get("api_key_id")
+        if not bound:
+            return "unbound"
+        return "ok" if bound == api_key_id else "conflict"
+
+    def get_runner_bound_key(self, name: str) -> Optional[dict]:
+        """Return the api_keys row the runner is bound to, or None when the
+        runner is missing, unbound, or its key row has been deleted."""
+        runner = self.get_runner_by_name(name)
+        if not runner or not runner.get("api_key_id"):
+            return None
+        return self.get_api_key_by_id(runner["api_key_id"])
+
     def touch_runner_heartbeat(self, name: str, timestamp: str) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -117,6 +165,17 @@ class RunnersMixin:
                 "UPDATE runners SET status=? WHERE name=?", (status, name),
             )
 
-    def delete_runner(self, name: str) -> None:
+    def delete_runner(self, name: str) -> int:
+        """Delete a runner row and, in the same transaction, put its
+        'assigned' jobs back to 'queued'. Otherwise whoever re-registers the
+        name would own those jobs on /results. Returns the number requeued.
+        retry_count is left alone — the job didn't fail."""
         with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE runner_jobs "
+                "SET state='queued', assigned_to=NULL, assigned_at=NULL "
+                "WHERE assigned_to=? AND state='assigned'",
+                (name,),
+            )
             conn.execute("DELETE FROM runners WHERE name=?", (name,))
+            return cur.rowcount

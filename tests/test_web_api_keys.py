@@ -157,6 +157,48 @@ def test_revoke_own_key(client):
     assert keys_after[0]["is_active"] == 0
 
 
+def _created_scopes(name):
+    import json
+    from web.main import get_db
+    keys = [k for k in get_db().list_api_keys_for_user("user1") if k["name"] == name]
+    return json.loads(keys[0]["scope"])
+
+
+def test_blank_scope_defaults_to_read(client):
+    resp = client.post(
+        "/api-keys",
+        data={"name": "Default", "expiry_days": "never"},
+        cookies=_session_cookie(),
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert _created_scopes("Default") == ["read"]
+
+
+def test_runner_role_can_grant_worker_scopes(client):
+    resp = client.post(
+        "/api-keys",
+        data={"name": "Worker", "expiry_days": "never",
+              "scope": "worker:pull,worker:results"},
+        cookies=_session_cookie(),
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert _created_scopes("Worker") == ["worker:pull", "worker:results"]
+
+
+def test_runner_role_cannot_grant_admin_scope(client):
+    resp = client.post(
+        "/api-keys",
+        data={"name": "Admin", "expiry_days": "never", "scope": "admin"},
+        cookies=_session_cookie(),
+        follow_redirects=False,
+    )
+    assert resp.status_code == 403
+    from web.main import get_db
+    assert get_db().list_api_keys_for_user("user1") == []
+
+
 def test_nav_link_visible_for_authenticated_user(client):
     resp = client.get("/api-keys", cookies=_session_cookie())
     assert b'href="/api-keys"' in resp.content
