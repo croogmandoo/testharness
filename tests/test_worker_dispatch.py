@@ -97,10 +97,17 @@ def test_queue_remote_run_with_tag_dispatch(db):
     assert job["target_tag"] == "media"
 
 
-def test_queue_remote_run_resolves_secrets_into_app_def(db, monkeypatch):
+class _FakeSecrets:
+    def __init__(self, values):
+        self._values = values
+
+    def get_all_decrypted(self):
+        return dict(self._values)
+
+
+def test_queue_remote_run_resolves_secrets_into_app_def(db):
     """The app_def_json stored on the job must contain resolved values, not
     $VAR placeholders — the worker doesn't have the secrets store."""
-    monkeypatch.setenv("AUTH_TOKEN", "deadbeef-secret")
     app_def = {
         "app": "MyApp", "url": "https://x",
         "environments": {"production": "https://x"},
@@ -112,7 +119,10 @@ def test_queue_remote_run_resolves_secrets_into_app_def(db, monkeypatch):
             "headers": {"Authorization": "Bearer $AUTH_TOKEN"},
         }],
     }
-    run_id = queue_remote_run(db, app_def, "production", "api")
+    run_id = queue_remote_run(
+        db, app_def, "production", "api",
+        secrets_store=_FakeSecrets({"AUTH_TOKEN": "deadbeef-secret"}),
+    )
     with db._connect() as conn:
         job = dict(conn.execute(
             "SELECT * FROM runner_jobs WHERE run_id=?", (run_id,)
@@ -121,6 +131,38 @@ def test_queue_remote_run_resolves_secrets_into_app_def(db, monkeypatch):
     # The header value should now contain the resolved secret
     header = payload["tests"][0]["headers"]["Authorization"]
     assert header == "Bearer deadbeef-secret"
+
+
+def _env_app_def():
+    return {
+        "app": "EnvApp", "url": "https://x",
+        "run_on": "eu-worker-1",
+        "tests": [{"name": "t", "type": "api", "endpoint": "/",
+                   "headers": {"X-Key": "$HARNESS_APP_TOKEN"}}],
+    }
+
+
+def test_queue_remote_run_rejects_unallowlisted_env_var(db, monkeypatch):
+    from harness.config import ConfigError
+    monkeypatch.setenv("HARNESS_APP_TOKEN", "env-secret")
+    with pytest.raises(ConfigError, match="apps_env_allowlist"):
+        queue_remote_run(db, _env_app_def(), "production", "api")
+    with db._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM runner_jobs").fetchone()[0] == 0
+
+
+def test_queue_remote_run_resolves_allowlisted_env_var(db, monkeypatch):
+    monkeypatch.setenv("HARNESS_APP_TOKEN", "env-secret")
+    run_id = queue_remote_run(
+        db, _env_app_def(), "production", "api",
+        config={"apps_env_allowlist": ["HARNESS_APP_*"]},
+    )
+    with db._connect() as conn:
+        job = dict(conn.execute(
+            "SELECT * FROM runner_jobs WHERE run_id=?", (run_id,)
+        ).fetchone())
+    payload = json.loads(job["app_def_json"])
+    assert payload["tests"][0]["headers"]["X-Key"] == "env-secret"
 
 
 # ── claim_runner_jobs ───────────────────────────────────────────────────────

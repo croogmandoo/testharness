@@ -45,8 +45,9 @@ def reload_apps() -> None:
     if not os.path.isdir(_apps_dir):
         _apps = []
         return
+    from harness.config import app_environ
     extra = _secrets_store.get_all_decrypted() if _secrets_store is not None else None
-    _apps = load_apps(_apps_dir, extra_vars=extra)
+    _apps = load_apps(_apps_dir, extra_vars=extra, environ=app_environ(_config))
 
 
 def reload_config_and_apps() -> str:
@@ -106,7 +107,7 @@ def _start_scheduler() -> None:
             if should_dispatch_remotely(app_def):
                 queue_remote_run(
                     _db, app_def, environment, "schedule",
-                    secrets_store=_secrets_store,
+                    secrets_store=_secrets_store, config=_config,
                 )
                 return
         except Exception:
@@ -229,8 +230,10 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     from web.auth import set_auth_config
     _secrets_store = SecretsStore(_db)
 
+    from harness.config import app_environ
     _apps = (
-        load_apps(apps_dir, extra_vars=_secrets_store.get_all_decrypted())
+        load_apps(apps_dir, extra_vars=_secrets_store.get_all_decrypted(),
+                  environ=app_environ(_config))
         if os.path.isdir(apps_dir)
         else []
     )

@@ -1,7 +1,11 @@
+import fnmatch
+import logging
 import os
 import re
 import yaml
-from typing import Any
+from typing import Any, Mapping
+
+_log = logging.getLogger(__name__)
 
 
 class ConfigError(Exception):
@@ -19,28 +23,107 @@ _ENV_REF = re.compile(r"^\$[A-Za-z_][A-Za-z0-9_]*(#[A-Za-z0-9_-]+)?$")
 _INLINE_REF = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*(?:#[A-Za-z0-9_-]+)?)")
 
 
-def _resolve_var(name: str, strict: bool, extra: dict):
+_ENV_HINT = (
+    " (for app YAML: add it as a secret, or list it in `apps_env_allowlist` "
+    "in config.yaml)"
+)
+
+
+def _resolve_var(name: str, strict: bool, extra: dict, environ: Mapping):
     """Resolve a single $VAR or $VAR#env name. Returns None if missing
-    (when strict=False); raises ConfigError when strict=True."""
+    (when strict=False); raises ConfigError when strict=True.
+
+    Lookup order is ``extra`` then ``environ`` (``os.environ`` for
+    config.yaml; the allowlisted subset from :func:`app_environ` for app
+    YAML)."""
+    hint = "" if environ is os.environ else _ENV_HINT
     if "#" in name:
         base_var, _ = name.split("#", 1)
-        val = extra.get(name) or os.environ.get(name)
+        val = extra.get(name) or environ.get(name)
         if val is not None:
             return val
-        val = extra.get(base_var) or os.environ.get(base_var)
+        val = extra.get(base_var) or environ.get(base_var)
         if val is None:
             if strict:
                 raise ConfigError(
                     f"Environment variable '{base_var}' (or '{name}') is not set"
+                    f"{hint}"
                 )
             return None
         return val
-    val = extra.get(name) or os.environ.get(name)
+    val = extra.get(name) or environ.get(name)
     if val is None:
         if strict:
-            raise ConfigError(f"Environment variable '{name}' is not set")
+            raise ConfigError(f"Environment variable '{name}' is not set{hint}")
         return None
     return val
+
+
+_wildcard_warned = False
+_sensitive_warned: set = set()
+
+# Names that look like credentials. Allowlisting them for app YAML is almost
+# always a mistake (e.g. `HARNESS_*` also matches the worker's HARNESS_API_KEY).
+_SENSITIVE_NAME = re.compile(r"KEY|SECRET|PASSWORD|PASSWD|TOKEN", re.IGNORECASE)
+
+
+def _is_wildcard_only(pattern: str) -> bool:
+    """True for patterns made only of glob wildcards (``*``, ``?*``, ``**``)
+    that contain a ``*`` — they match (practically) every variable name."""
+    return "*" in pattern and not pattern.strip("*?")
+
+
+def app_environ(config: dict | None) -> dict:
+    """Return the subset of ``os.environ`` that app YAML may reference.
+
+    App definitions are editable by non-admin roles, so letting them resolve
+    arbitrary process env (``$HARNESS_API_KEY``, ``$AWS_SECRET_ACCESS_KEY``,
+    ...) would leak server secrets. Only names matching the top-level
+    ``apps_env_allowlist`` (exact names or ``fnmatch`` globs such as
+    ``MYAPP_*``) are exposed. The default (absent/empty) is ``{}`` —
+    app YAML then resolves from the secrets store only. A wildcard-only
+    pattern such as ``"*"`` restores the legacy behaviour (every env var).
+
+    Warnings (once each, names only — never values) are logged for
+    wildcard-only patterns and for allowlisted names that look like
+    credentials (``*KEY*``, ``*SECRET*``, ``*PASSWORD*``, ``*TOKEN*``).
+    """
+    global _wildcard_warned
+    patterns = (config or {}).get("apps_env_allowlist") or []
+    if isinstance(patterns, str):
+        patterns = [patterns]
+    patterns = [p for p in patterns if isinstance(p, str) and p]
+    if not patterns:
+        return {}
+    wild = [p for p in patterns if _is_wildcard_only(p)]
+    if wild:
+        if not _wildcard_warned:
+            _log.warning(
+                "apps_env_allowlist contains %s: app YAML can resolve ANY "
+                "process environment variable (including server secrets). "
+                "Prefer the secrets store or an explicit allowlist.",
+                ", ".join(repr(p) for p in wild),
+            )
+            _wildcard_warned = True
+        visible = dict(os.environ)
+    else:
+        visible = {
+            k: v for k, v in os.environ.items()
+            if any(fnmatch.fnmatchcase(k, p) for p in patterns)
+        }
+    sensitive = sorted(
+        k for k in visible
+        if _SENSITIVE_NAME.search(k) and k not in _sensitive_warned
+    )
+    if sensitive:
+        _sensitive_warned.update(sensitive)
+        _log.warning(
+            "apps_env_allowlist exposes credential-like environment variables "
+            "to app YAML: %s. Narrow the allowlist (avoid broad prefixes such "
+            "as HARNESS_*) or move app credentials into the secrets store.",
+            ", ".join(sensitive),
+        )
+    return visible
 
 
 def _validate_config(cfg: dict) -> None:
@@ -57,6 +140,15 @@ def _validate_config(cfg: dict) -> None:
             )
         if key in cfg and cfg[key] is None:
             cfg[key] = {}
+    if "apps_env_allowlist" in cfg:
+        allow = cfg["apps_env_allowlist"]
+        if allow is None:
+            cfg["apps_env_allowlist"] = []
+        elif not isinstance(allow, list) or not all(isinstance(a, str) for a in allow):
+            raise ConfigError(
+                "config.yaml: 'apps_env_allowlist' must be a list of variable "
+                "names or glob patterns"
+            )
     if "browser" in cfg and isinstance(cfg["browser"], dict):
         b = cfg["browser"]
         if "timeout_ms" in b and not isinstance(b["timeout_ms"], int):
@@ -102,12 +194,22 @@ def _validate_config(cfg: dict) -> None:
                 )
 
 
-def resolve_env_vars(obj: Any, strict: bool = True, extra_vars: dict = None) -> Any:
+def resolve_env_vars(obj: Any, strict: bool = True, extra_vars: dict = None,
+                     environ: Mapping | None = None) -> Any:
+    """Substitute ``$VAR`` references in ``obj`` (recursively).
+
+    Values come from ``extra_vars`` first, then ``environ``. ``environ=None``
+    means ``os.environ`` (used for config.yaml). App YAML callers must pass
+    ``environ=app_environ(config)`` (or ``{}``) so app definitions cannot
+    read arbitrary process env.
+    """
     _extra = extra_vars or {}
+    _environ = os.environ if environ is None else environ
     if isinstance(obj, dict):
-        return {k: resolve_env_vars(v, strict, extra_vars) for k, v in obj.items()}
+        return {k: resolve_env_vars(v, strict, extra_vars, _environ)
+                for k, v in obj.items()}
     if isinstance(obj, list):
-        return [resolve_env_vars(v, strict, extra_vars) for v in obj]
+        return [resolve_env_vars(v, strict, extra_vars, _environ) for v in obj]
     if not isinstance(obj, str) or "$" not in obj:
         return obj
     # `$X.token` vs `$.token`: only strings starting with `$` followed by an
@@ -118,11 +220,11 @@ def resolve_env_vars(obj: Any, strict: bool = True, extra_vars: dict = None) -> 
     # This lets `extract:` paths (`$.token`) coexist with `$VAR` substitution.
     # Whole-string `$VAR` ref — preserve value type (could be a non-string).
     if _ENV_REF.match(obj):
-        val = _resolve_var(obj[1:], strict, _extra)
+        val = _resolve_var(obj[1:], strict, _extra, _environ)
         return val if val is not None else obj
     # Inline `... $VAR ...` substitution — coerce values to str.
     def _sub(match: "re.Match[str]") -> str:
-        val = _resolve_var(match.group(1), strict, _extra)
+        val = _resolve_var(match.group(1), strict, _extra, _environ)
         # Non-strict + missing -> leave the literal `$NAME` in place.
         return str(val) if val is not None else match.group(0)
     return _INLINE_REF.sub(_sub, obj)

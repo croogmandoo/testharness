@@ -52,6 +52,19 @@ browser:
   headless: true
   timeout_ms: 30000
 
+# Process environment variables that app YAML ($VAR references) may read.
+# Default (absent/empty): none — app YAML resolves from the secrets store only.
+# Entries are exact names or fnmatch globs. ["*"] restores the legacy
+# "any env var" behaviour and logs a warning (exposes server secrets to anyone
+# who can edit apps). config.yaml itself always resolves from the full env.
+# Keep entries narrow: a broad prefix such as HARNESS_* also matches
+# HARNESS_API_KEY and other server credentials. Allowlisted names that look
+# like credentials (*KEY*, *SECRET*, *PASSWORD*, *TOKEN*) are logged as a
+# warning at startup.
+# apps_env_allowlist:
+#   - MYAPP_BASE_URL
+#   - "MYAPP_*"
+
 # Analytics export — daily Parquet snapshot to local FS or Azure Blob/ADLS Gen2.
 # See docs/guides/analytics.md for the full BI/DIO team integration guide.
 # analytics:

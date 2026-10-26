@@ -376,3 +376,51 @@ def test_detail_page_renders_sparkline_svg(db, tmp_path):
     assert r.status_code == 200
     assert b"sparkline" in r.content
     assert b"<polyline" in r.content
+
+
+# --- URL safety (javascript: hrefs) ---
+
+def test_post_api_apps_rejects_javascript_url_with_422(client, apps_dir):
+    app_def = {"app": "evil", "url": "javascript:alert(document.cookie)"}
+    resp = client.post("/api/apps", json={"app_def": app_def})
+    assert resp.status_code == 422
+    assert not (apps_dir / "evil.yaml").exists()
+
+
+def test_post_api_apps_rejects_bad_environment_url_with_422(client, apps_dir):
+    app_def = {"app": "evil", "url": "https://ok.example",
+               "environments": {"production": " javascript:alert(1)"}}
+    resp = client.post("/api/apps", json={"app_def": app_def})
+    assert resp.status_code == 422
+
+
+def test_put_api_apps_rejects_javascript_url_with_422(client_with_app):
+    client, apps_dir = client_with_app
+    updated = {"app": "my-api", "url": "javascript:alert(1)"}
+    resp = client.put("/api/apps/my-api", json={"app_def": updated})
+    assert resp.status_code == 422
+    assert "javascript" not in (apps_dir / "my-api.yaml").read_text()
+
+
+def test_apps_page_neutralises_javascript_url_from_disk(db, apps_dir):
+    (apps_dir / "evil.yaml").write_text(yaml.dump({
+        "app": "evil", "url": "javascript:alert(document.cookie)", "tests": [],
+    }))
+    config = {
+        "default_environment": "production",
+        "environments": {"production": {"label": "Production"}},
+    }
+    app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    from web.auth import get_current_user
+    _admin = db.get_user_by_username("_test_admin")
+    app.dependency_overrides[get_current_user] = lambda: _admin
+    resp = TestClient(app).get("/apps")
+    assert resp.status_code == 200
+    assert 'href="javascript:' not in resp.text
+    assert 'href="#" target="_blank" rel="noopener noreferrer"' in resp.text
+
+
+def test_apps_page_keeps_https_url(client_with_app):
+    client, _ = client_with_app
+    resp = client.get("/apps")
+    assert 'href="https://example.com" target="_blank" rel="noopener noreferrer"' in resp.text

@@ -202,9 +202,21 @@ browser:
   screenshot_diff_threshold: 0.05            # visual regression threshold
 ```
 
-`$VAR` references resolve from `.env` and `os.environ`.  `$VAR#staging`
-lets you provide environment-specific values; the resolver also accepts
-**inline** substitution (`"Bearer $AUTH_TOKEN"`).
+`$VAR` references in `config.yaml` resolve from `.env` and `os.environ`.
+`$VAR#staging` lets you provide environment-specific values; the resolver also
+accepts **inline** substitution (`"Bearer $AUTH_TOKEN"`).
+
+`$VAR` references in **app YAML** resolve from the encrypted secrets store,
+and from process env only for names listed in `apps_env_allowlist`
+(exact names or globs, e.g. `["MYAPP_*"]`). See
+[docs/guides/writing-tests.md](docs/guides/writing-tests.md#5-environment-variables).
+
+> **Upgrade note:** app YAML no longer reads arbitrary process environment
+> variables. If your apps used `$VAR`s from `.env`/the environment, either move
+> them into the secrets store (`/secrets`) or list them in
+> `apps_env_allowlist` in `config.yaml`. The harness logs a warning at startup
+> for each affected variable; `apps_env_allowlist: ["*"]` restores the old
+> behaviour (not recommended).
 
 ---
 

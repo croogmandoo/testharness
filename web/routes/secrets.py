@@ -24,8 +24,12 @@ def _ctx(request: Request, current_user: dict, **extra) -> dict:
 
 
 def _env_vars() -> list:
-    """Return [(name, is_set)] for $VAR references found in app YAML files."""
+    """Return [(name, is_set)] for $VAR references found in app YAML files.
+
+    ``is_set`` is True only when the name is visible to app YAML through
+    ``apps_env_allowlist`` — other process env is not resolvable."""
     import re
+    from harness.config import app_environ
     from web.main import get_config
     config = get_config()
     apps_dir = config.get("apps_dir", "apps")
@@ -39,7 +43,8 @@ def _env_vars() -> list:
                     refs.update(re.findall(r'\$([A-Z_][A-Z0-9_]*)', f.read()))
             except OSError:
                 pass
-    return sorted((name, name in os.environ) for name in refs)
+    visible = app_environ(config)
+    return sorted((name, name in visible) for name in refs)
 
 
 @router.get("/secrets", response_class=HTMLResponse)
