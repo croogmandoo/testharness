@@ -44,3 +44,11 @@ jobs:
           # blocked by pytest-asyncio requiring pytest<9. Re-evaluate when
           # pytest-asyncio drops that constraint.
           pip-audit -r requirements.txt --ignore-vuln CVE-2025-71176
+
+      - name: Audit requirements.lock
+        run: |
+          # The lock is what CI and the Docker images actually install, so it
+          # must be audited too — requirements.txt alone resolves to the
+          # latest releases and misses stale pins in the lock.
+          # CVE-2025-71176 ignored for the same reason as above.
+          pip-audit -r requirements.lock --ignore-vuln CVE-2025-71176
