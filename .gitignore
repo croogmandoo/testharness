@@ -8,3 +8,5 @@ __pycache__/
 graphify-out/cache/
 harness-task-*.xml
 .worktrees/
+.claude/settings.local.json
+.obsidian/
