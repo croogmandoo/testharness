@@ -32,30 +32,67 @@ alerts:
     password: "$SMTP_PASSWORD"
   webhook:
     url: "$GENERIC_WEBHOOK_URL"
+    format: "pagerduty"            # "pagerduty" | "opsgenie" | omit for standard JSON
+    routing_key: "$PD_ROUTING_KEY" # used with format: "pagerduty"
+    secret: "$WEBHOOK_SECRET"      # optional HMAC-SHA256 signature in X-Harness-Signature
+    headers:
+      Authorization: "Bearer $TOKEN"
 ```
 
-### Generic webhook payload
+Multiple webhooks can also be configured as a list:
+```yaml
+alerts:
+  webhook:
+    - url: "https://events.pagerduty.com/v2/enqueue"
+      format: "pagerduty"
+      routing_key: "$PD_KEY"
+    - url: "https://api.opsgenie.com/v2/alerts"
+      format: "opsgenie"
+      headers:
+        Authorization: "GenieKey $OPSGENIE_KEY"
+```
 
-The generic webhook receives a JSON POST per completed run:
+### Generic & Custom Webhook Payloads
+
+By default, the webhook receives a structured JSON POST for completed runs and incident state transitions:
 
 ```json
 {
+  "event": "run_complete",
   "run_id": "01HZ...",
   "app": "My API",
   "environment": "production",
   "status": "complete",
   "triggered_by": "schedule",
   "finished_at": "2026-05-07T18:42:00+00:00",
-  "results": [
-    { "test_name": "Health check", "status": "pass", "duration_ms": 142 },
-    { "test_name": "Login flow",   "status": "fail",
-      "error_msg": "Expected status 200, got 503" }
+  "tests": [
+    { "name": "Health check", "status": "pass", "duration_ms": 142 },
+    { "name": "Login flow",   "status": "fail", "duration_ms": 1200 }
   ]
 }
 ```
 
-Use this for PagerDuty, ntfy.sh, custom Slack apps, or anything that
-accepts a JSON POST.
+#### Custom Jinja2 Payload Templates
+You can customize the outgoing webhook JSON structure to match any internal event schema using `template`:
+
+```yaml
+alerts:
+  webhook:
+    url: "https://events.internal.corp/synthetics"
+    headers:
+      X-Service-Name: "testharness"
+    template: |
+      {
+        "event_type": "SYNTHETIC_ALERT",
+        "service": "{{ app }}",
+        "env": "{{ environment }}",
+        "status": "{{ status }}",
+        "run_id": "{{ run_id }}"
+      }
+```
+
+#### Incident Alert Webhook Dispatch
+Incident alerts (`FAIL`, `RESOLVE`, `STALE`) also automatically dispatch to configured `alerts.webhook` endpoints with state metadata (`alert_type`, `app`, `environment`, `test_name`, `error_msg`, `text`).
 
 ---
 

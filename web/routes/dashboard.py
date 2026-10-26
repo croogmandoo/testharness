@@ -16,8 +16,22 @@ async def dashboard(request: Request, environment: str = None,
     from web.main import get_db, get_config, get_apps
     db = get_db()
     config = get_config()
-    env = environment or config.get("default_environment", "production")
     envs = config.get("environments", {})
+
+    set_cookie = False
+    if environment:
+        env = environment
+        set_cookie = True
+    else:
+        cached_env = request.cookies.get("selected_environment")
+        if cached_env and (not envs or cached_env in envs):
+            env = cached_env
+        else:
+            env = config.get("default_environment", "production")
+
+    if envs and env not in envs:
+        env = config.get("default_environment") or list(envs.keys())[0]
+
     summary = db.get_app_summary(env)
 
     # Ensure every configured app appears, even if it has never been run
@@ -48,7 +62,7 @@ async def dashboard(request: Request, environment: str = None,
     # sorted alphabetically for stable rendering.
     all_tags = sorted({t for row in summary for t in row["tags"]})
 
-    return templates.TemplateResponse(request, "dashboard.html", {
+    resp = templates.TemplateResponse(request, "dashboard.html", {
         "summary": summary,
         "all_tags": all_tags,
         "environment": env,
@@ -56,6 +70,15 @@ async def dashboard(request: Request, environment: str = None,
         "current_user": current_user,
         "csrf_token": csrf_token_for(request),
     })
+    if set_cookie:
+        resp.set_cookie(
+            key="selected_environment",
+            value=env,
+            max_age=30 * 86400,
+            samesite="lax",
+            httponly=False,
+        )
+    return resp
 
 
 @router.get("/app/{app}/{environment}", response_class=HTMLResponse)
@@ -105,7 +128,7 @@ async def app_detail(request: Request, app: str, environment: str, run_id: str =
                 if t["name"] not in completed_names
             ]
 
-    return templates.TemplateResponse(request, "detail.html", {
+    resp = templates.TemplateResponse(request, "detail.html", {
         "app": app,
         "environment": environment,
         "environments": config.get("environments", {}),
@@ -119,3 +142,11 @@ async def app_detail(request: Request, app: str, environment: str, run_id: str =
         "current_user": current_user,
         "csrf_token": csrf_token_for(request),
     })
+    resp.set_cookie(
+        key="selected_environment",
+        value=environment,
+        max_age=30 * 86400,
+        samesite="lax",
+        httponly=False,
+    )
+    return resp

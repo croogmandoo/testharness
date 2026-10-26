@@ -1,8 +1,10 @@
 import asyncio
+import json
 import logging
 import httpx
 import smtplib
 from email.message import EmailMessage
+from typing import Union
 from harness.types import AlertType
 
 logger = logging.getLogger("harness.alerts")
@@ -46,6 +48,82 @@ def _send_email(smtp_config: dict, subject: str, body: str) -> None:
         s.login(smtp_config["username"], smtp_config["password"])
         s.send_message(msg)
 
+
+def _render_webhook_payload(data: dict, webhook_config: dict) -> Union[dict, list, str]:
+    """Format webhook payload using template, format preset, or standard default."""
+    fmt = (webhook_config.get("format") or "").lower()
+    custom_template = webhook_config.get("template")
+
+    if custom_template:
+        from jinja2 import Template
+        rendered = Template(custom_template).render(**data)
+        try:
+            return json.loads(rendered)
+        except Exception:
+            return rendered
+
+    if fmt == "pagerduty":
+        routing_key = webhook_config.get("routing_key") or webhook_config.get("integration_key") or ""
+        is_fail = (
+            data.get("status") in ("fail", "error")
+            or data.get("alert_type") in ("fail", "fail_alert")
+            or (hasattr(AlertType, "FAIL") and data.get("alert_type") == AlertType.FAIL.value)
+        )
+        return {
+            "routing_key": routing_key,
+            "event_action": "trigger" if is_fail else "resolve",
+            "dedup_key": f"{data.get('app')}-{data.get('environment')}-{data.get('test_name', 'run')}",
+            "payload": {
+                "summary": data.get("text") or f"[{data.get('status', 'ALERT')}] {data.get('app')} ({data.get('environment')})",
+                "source": "testharness",
+                "severity": "critical" if is_fail else "info",
+                "custom_details": data,
+            },
+        }
+
+    if fmt == "opsgenie":
+        is_fail = (
+            data.get("status") in ("fail", "error")
+            or data.get("alert_type") in ("fail", "fail_alert")
+            or (hasattr(AlertType, "FAIL") and data.get("alert_type") == AlertType.FAIL.value)
+        )
+        return {
+            "message": data.get("text") or f"{data.get('app')} ({data.get('environment')}) - {data.get('status')}",
+            "alias": f"{data.get('app')}-{data.get('environment')}-{data.get('test_name', 'run')}",
+            "description": json.dumps(data, indent=2),
+            "priority": "P2" if is_fail else "P4",
+            "details": {
+                "app": str(data.get("app")),
+                "environment": str(data.get("environment")),
+                "event": str(data.get("event")),
+            },
+        }
+
+    return data
+
+
+async def _send_custom_webhook(url: str, payload_data: dict, webhook_config: dict) -> None:
+    payload = _render_webhook_payload(payload_data, webhook_config)
+    headers = dict(webhook_config.get("headers") or {})
+    secret = webhook_config.get("secret")
+    if secret:
+        import hmac, hashlib
+        if isinstance(payload, (dict, list)):
+            body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+        else:
+            body = str(payload).encode()
+        sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        headers["X-Harness-Signature"] = f"sha256={sig}"
+
+    timeout = float(webhook_config.get("timeout", 10))
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        if isinstance(payload, (dict, list)):
+            await client.post(url, json=payload, headers=headers)
+        else:
+            headers.setdefault("Content-Type", "application/json")
+            await client.post(url, content=payload, headers=headers)
+
+
 async def dispatch_alerts(alerts: list, alerts_config: dict) -> None:
     if not alerts_config:
         return
@@ -79,16 +157,36 @@ async def dispatch_alerts(alerts: list, alerts_config: dict) -> None:
             except Exception as e:
                 logger.error("Email failed: %s", e)
 
+        webhook_cfgs = alerts_config.get("webhook") or []
+        if isinstance(webhook_cfgs, dict):
+            webhook_cfgs = [webhook_cfgs]
+        for wh in webhook_cfgs:
+            wh_url = wh.get("url") or wh.get("webhook_url")
+            if wh_url:
+                try:
+                    alert_data = {
+                        "event": "alert",
+                        "alert_type": alert_type.value if hasattr(alert_type, "value") else str(alert_type),
+                        "app": app,
+                        "environment": environment,
+                        "test_name": test_name,
+                        "error_msg": error_msg,
+                        "text": text,
+                    }
+                    await _send_custom_webhook(wh_url, alert_data, wh)
+                except Exception as e:
+                    logger.error("Incident webhook error: %s", e)
+
 
 async def dispatch_run_webhook(
     run_id: str, app: str, environment: str, status: str,
     triggered_by: str, finished_at: str, results: list,
     webhook_config: dict,
 ) -> None:
-    url = webhook_config.get("url")
+    url = webhook_config.get("url") or webhook_config.get("webhook_url")
     if not url:
         return
-    payload = {
+    data = {
         "event": "run_complete",
         "run_id": run_id,
         "app": app,
@@ -105,15 +203,7 @@ async def dispatch_run_webhook(
             for r in results
         ],
     }
-    headers = {}
-    secret = webhook_config.get("secret")
-    if secret:
-        import hmac, hashlib, json as _json
-        body = _json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
-        sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-        headers["X-Harness-Signature"] = f"sha256={sig}"
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(url, json=payload, headers=headers)
+        await _send_custom_webhook(url, data, webhook_config)
     except Exception as e:
         logger.error("Outbound webhook error: %s", e)

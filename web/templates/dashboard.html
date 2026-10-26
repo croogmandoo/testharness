@@ -1,7 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-header">
-  <h1>Status</h1>
+  <div class="flex items-center gap-3">
+    <h1>Status</h1>
+    {% if environments and environments|length > 1 %}
+    <div class="env-chips" role="group" aria-label="Select environment">
+      {% for env_key, env_cfg in environments.items() %}
+      {% set label = env_cfg.label if env_cfg is mapping and env_cfg.label else env_key %}
+      <a href="/?environment={{ env_key }}"
+         class="env-chip {% if env_key == environment %}env-chip--active{% endif %}">
+        {{ label }}
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
   <div class="flex gap-2 items-center">
     <input type="text" class="search mb-0 dashboard-filter"
            placeholder="filter…" oninput="filterTiles(this.value)">
