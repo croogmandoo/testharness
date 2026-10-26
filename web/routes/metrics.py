@@ -142,6 +142,22 @@ def _build_metrics(db) -> str:
         "counter", run_samples,
     )
 
+    try:
+        runner_rows = conn.execute("SELECT name, last_seen_at FROM runners").fetchall()
+        runner_samples = []
+        for r in runner_rows:
+            ts = _iso_to_unix(r["last_seen_at"])
+            if ts is not None:
+                runner_samples.append(({"runner": r["name"]}, ts))
+        if runner_samples:
+            lines += _emit(
+                "harness_runner_last_seen_timestamp_seconds",
+                "Unix timestamp of each runner's last heartbeat",
+                "gauge", runner_samples,
+            )
+    except Exception:
+        pass
+
     return "\n".join(lines) + "\n"
 
 

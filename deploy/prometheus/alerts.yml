@@ -1,0 +1,47 @@
+groups:
+  - name: testharness_alerts
+    rules:
+      - alert: HarnessTestFailing
+        expr: harness_test_status == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Synthetic test {{ $labels.test }} failed on {{ $labels.app }} ({{ $labels.environment }})"
+          description: "Synthetic test {{ $labels.test }} for app {{ $labels.app }} in environment {{ $labels.environment }} has been failing for more than 10 minutes."
+
+      - alert: HarnessHighFailureRate
+        expr: (sum by (app, environment) (harness_test_status == 0) / count by (app, environment) (harness_test_status)) > 0.25
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High synthetic test failure rate on {{ $labels.app }} ({{ $labels.environment }})"
+          description: "More than 25% of synthetic tests for {{ $labels.app }} in {{ $labels.environment }} are currently failing."
+
+      - alert: HarnessAppStale
+        expr: (time() - harness_app_last_run_timestamp_seconds) > 86400
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Synthetic monitor stale for {{ $labels.app }} ({{ $labels.environment }})"
+          description: "App {{ $labels.app }} in {{ $labels.environment }} has not executed a successful test run in over 24 hours."
+
+      - alert: HarnessSlowTestExecution
+        expr: harness_test_last_duration_seconds > 15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow synthetic test duration on {{ $labels.app }} / {{ $labels.test }}"
+          description: "Test {{ $labels.test }} on {{ $labels.app }} ({{ $labels.environment }}) took {{ $value }}s to execute (SLO threshold > 15s)."
+
+      - alert: HarnessRunnerHeartbeatMissing
+        expr: (time() - harness_runner_last_seen_timestamp_seconds) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Remote worker runner {{ $labels.runner }} heartbeat lost"
+          description: "Runner {{ $labels.runner }} has not checked in for more than 5 minutes."

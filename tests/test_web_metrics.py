@@ -133,3 +133,12 @@ def test_metrics_skipped_by_first_run_middleware(tmp_path):
     with TestClient(app) as c:
         r = c.get("/metrics")
     assert r.status_code == 200
+
+
+def test_metrics_emits_runner_heartbeats(db):
+    """When remote runners are registered, their heartbeat timestamp is emitted."""
+    db.upsert_runner(name="remote-worker-1", tags=[], capabilities=[], version="1.0.0")
+    with _client(db) as c:
+        body = c.get("/metrics").text
+    assert "harness_runner_last_seen_timestamp_seconds" in body
+    assert 'runner="remote-worker-1"' in body

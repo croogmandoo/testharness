@@ -71,7 +71,10 @@ testharness/
 │   ├── routes/                   # Route handlers (dashboard, API, auth, apps, runner, admin, proxy)
 │   ├── static/                   # Dark-themed CSS (Inter / JetBrains Mono) & client scripts
 │   └── templates/                # Jinja2 HTML templates for dashboard, run logs, and status pages
-├── tests/                        # Pytest suite (867+ passing unit & integration tests)
+├── tests/                        # Pytest suite (868+ passing unit & integration tests)
+├── deploy/                       # Production observability & alerting assets
+│   ├── prometheus/alerts.yml     # Prometheus alerting rules (failure rates, stalls, staleness)
+│   └── grafana/dashboard.json    # Complete Grafana operations dashboard model
 ├── apps/                         # App definition YAMLs (target applications and synthetic steps)
 ├── data/                         # Local database files, secrets key & screenshots (gitignored)
 ├── config.yaml                   # Global scheduling, alerting channels & environment definitions

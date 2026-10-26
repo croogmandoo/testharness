@@ -39,7 +39,7 @@ This document establishes the architecture, code quality, security, and testing 
 
 ## 3. Testing & Verification Standards
 
-- **Zero Regressions**: All 860+ tests (currently 867 tests) in `tests/` must pass prior to any commit or handoff.
+- **Zero Regressions**: All 860+ tests (currently 868 tests) in `tests/` must pass prior to any commit or handoff.
   ```bash
   .venv/bin/pytest
   ```
