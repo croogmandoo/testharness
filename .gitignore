@@ -10,3 +10,4 @@ harness-task-*.xml
 .worktrees/
 .claude/settings.local.json
 .obsidian/
+.claude/worktrees/
