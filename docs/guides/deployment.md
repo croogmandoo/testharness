@@ -200,6 +200,7 @@ Production deployments should never expose the raw FastAPI port 9552 directly to
 - [ ] **Protect Secrets Encryption Key**: Confirm `data/secret.key` is present, has non-zero length, and has strict `0600` POSIX file permissions (`chmod 0600 data/secret.key`).
 - [ ] **Configure Proxy Client IP Forwarding**: Set `FORWARDED_ALLOW_IPS` (in `.env` or compose `environment:`) to your proxy's IP address, subnet, or `*` (if within an isolated private container network). This ensures the in-process rate limiters on `/auth/login` and `/setup` accurately throttle attackers by real client IP rather than choking the entire reverse proxy.
 - [ ] **Run Container Unprivileged**: By default the container entrypoint normalises bind-mount ownership and `gosu`-drops privileges to UID `10001` (`harness`). Never run the container root process directly in production.
+- [ ] **Verify Inbound & Outbound Proxy Detection**: Visit the **`/admin/proxy`** settings screen (or use the Command Palette `Ctrl+K` -> `Proxy Settings`) to verify your real client IP, proxy headers, and effective scheme (`HTTPS`), or test outbound egress through a corporate forward proxy.
 - [ ] **Gating Public Status Page**: If test names and uptime summaries should remain internal, disable the status page in `config.yaml`:
   ```yaml
   status_page:

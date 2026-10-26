@@ -36,6 +36,7 @@
     { label: "Runners",       url: "/admin/runners", hint: "Admin" },
     { label: "CA Certs",      url: "/admin/ca-certs",hint: "Admin" },
     { label: "LDAP Settings", url: "/admin/ldap",    hint: "Admin" },
+    { label: "Proxy Settings",url: "/admin/proxy",   hint: "Admin" },
     { label: "Secrets",       url: "/secrets",       hint: "Manage" },
     { label: "Settings",      url: "/admin/config",  hint: "Admin" },
   ];

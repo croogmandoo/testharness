@@ -39,7 +39,8 @@ def _extract_path(obj: Any, path: str) -> Optional[Any]:
 
 async def run_api_test(run_id: str, app: str, environment: str,
                        base_url: str, test_def: dict,
-                       ssl_ctx: Optional[ssl.SSLContext] = None) -> TestResult:
+                       ssl_ctx: Optional[ssl.SSLContext] = None,
+                       proxy: Optional[str] = None) -> TestResult:
     result = TestResult(run_id=run_id, app=app, environment=environment,
                         test_name=test_def["name"])
     start = time.monotonic()
@@ -54,7 +55,15 @@ async def run_api_test(run_id: str, app: str, environment: str,
         json_body = test_def.get("json")
 
         timeout_s = test_def.get("timeout_ms", 30000) / 1000
-        async with httpx.AsyncClient(timeout=timeout_s, verify=ssl_ctx or True) as client:
+        client_kwargs = {"timeout": timeout_s, "verify": ssl_ctx or True}
+        if proxy is not None:
+            client_kwargs["proxy"] = proxy
+        else:
+            from harness.proxy import get_httpx_proxy_url
+            p_url = get_httpx_proxy_url()
+            if p_url:
+                client_kwargs["proxy"] = p_url
+        async with httpx.AsyncClient(**client_kwargs) as client:
             request_kwargs: dict = {"headers": headers}
             if json_body is not None:
                 request_kwargs["json"] = json_body

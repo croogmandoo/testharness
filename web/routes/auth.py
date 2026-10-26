@@ -136,7 +136,7 @@ async def setup_post(
     db.update_user_last_login(user_id, datetime.now(timezone.utc).isoformat())
 
     response = RedirectResponse("/", status_code=303)
-    issue_session_cookie(response, db.get_user_by_id(user_id))
+    issue_session_cookie(response, db.get_user_by_id(user_id), request=request)
     return response
 
 
@@ -220,7 +220,7 @@ async def login_post(
     db.update_user_last_login(user["id"], datetime.now(timezone.utc).isoformat())
 
     response = RedirectResponse("/", status_code=303)
-    issue_session_cookie(response, user)
+    issue_session_cookie(response, user, request=request)
     return response
 
 
@@ -457,6 +457,6 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
             db.insert_user(user)
 
     response = RedirectResponse("/", status_code=302)
-    issue_session_cookie(response, user)
+    issue_session_cookie(response, user, request=request)
     response.delete_cookie("oauth_state")
     return response

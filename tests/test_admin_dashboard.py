@@ -147,11 +147,11 @@ def test_admin_config_redacts_sensitive_keys(db, tmp_path):
 
 def test_admin_config_redaction_handles_short_strings(db, tmp_path):
     admin = _seed_user(db, "admin")
-    config = {"alerts": {"webhook": {"secret": "xx"}}}
+    config = {"alerts": {"webhook": {"secret": "sh0rt"}}}
     c = _client(db, admin, tmp_path, config=config)
     r = c.get("/admin/config")
     body = r.text
-    assert "xx" not in body
+    assert "sh0rt" not in body
     assert "****" in body
 
 

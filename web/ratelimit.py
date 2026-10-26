@@ -91,5 +91,8 @@ setup_limiter = SlidingWindowLimiter(max_events=10, window_seconds=300)
 
 
 def client_ip(request) -> str:
+    proxy_info = getattr(getattr(request, "state", None), "proxy", None)
+    if isinstance(proxy_info, dict) and proxy_info.get("effective_client_ip"):
+        return proxy_info["effective_client_ip"]
     client = getattr(request, "client", None)
     return (client.host if client else None) or "unknown"

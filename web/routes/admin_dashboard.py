@@ -129,6 +129,20 @@ def _gather_card_stats(db, config: dict) -> dict:
     # Analytics export
     stats["analytics_enabled"] = bool((config.get("analytics") or {}).get("enabled"))
 
+    # Proxy / Gateway
+    proxy_cfg = config.get("proxy", {})
+    stats["proxy_configured"] = bool(
+        proxy_cfg.get("behind_reverse_proxy")
+        or proxy_cfg.get("trusted_proxies")
+        or os.environ.get("FORWARDED_ALLOW_IPS")
+        or os.environ.get("TESTHARNESS_TRUSTED_PROXIES")
+    )
+    stats["proxy_outbound"] = bool(
+        proxy_cfg.get("outbound", {}).get("enabled")
+        or os.environ.get("HTTPS_PROXY")
+        or os.environ.get("HTTP_PROXY")
+    )
+
     return stats
 
 

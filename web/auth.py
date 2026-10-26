@@ -113,17 +113,23 @@ def _load_claims(token: str) -> Optional[Tuple[str, int]]:
     return load_session_claims(token, _signing_key, _session_hours)
 
 
-def issue_session_cookie(response: Response, user: dict) -> Response:
+def issue_session_cookie(response: Response, user: dict, request: Optional[Request] = None) -> Response:
     """Set the ``session`` cookie for ``user`` on ``response``.
 
     The single place session cookies are minted (setup, password/LDAP login
     and GitHub OAuth): the token carries the user's current
     ``session_version`` and the cookie is HttpOnly, SameSite=Lax, Secure
-    per ``auth.secure_cookie`` and expires with the token."""
+    per ``auth.secure_cookie`` (or auto-detected HTTPS via request scheme)."""
+    is_secure = _secure_cookie
+    if not is_secure and request is not None:
+        if getattr(request, "url", None) and request.url.scheme == "https":
+            is_secure = True
+        elif getattr(getattr(request, "state", None), "proxy", {}).get("effective_scheme") == "https":
+            is_secure = True
     token = _make_token(user["id"], int(user.get("session_version") or 0))
     response.set_cookie(
         "session", token,
-        httponly=True, samesite="lax", secure=_secure_cookie,
+        httponly=True, samesite="lax", secure=is_secure,
         max_age=int(_session_hours * 3600),
     )
     return response

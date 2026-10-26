@@ -200,5 +200,5 @@ async def users_update(
         # with a fresh cookie; their other sessions are still revoked.
         refreshed = db.get_user_by_id(user_id)
         if refreshed and refreshed.get("is_active"):
-            issue_session_cookie(response, refreshed)
+            issue_session_cookie(response, refreshed, request=request)
     return response

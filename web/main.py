@@ -292,6 +292,40 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
             mtls_cfg.get("client_ca_path"),
         )
 
+    # ── Reverse proxy & forwarded headers middleware ─────────────────────
+    # Normalizes client IP, scheme, host, and subpath prefix from trusted
+    # reverse proxies (Caddy, Traefik, Nginx, ALB, Cloudflare). Added last
+    # so it executes FIRST in ASGI middleware stack.
+    proxy_cfg = _config.get("proxy", {})
+    trusted_proxies = proxy_cfg.get("trusted_proxies")
+    if trusted_proxies is None:
+        env_ips = os.environ.get("FORWARDED_ALLOW_IPS") or os.environ.get("TESTHARNESS_TRUSTED_PROXIES")
+        if env_ips:
+            trusted_proxies = env_ips
+        elif proxy_cfg.get("behind_reverse_proxy"):
+            from web.proxy_middleware import DEFAULT_PRIVATE_NETWORKS
+            trusted_proxies = DEFAULT_PRIVATE_NETWORKS
+        else:
+            trusted_proxies = ["127.0.0.1", "::1"]
+
+    url_prefix = (
+        proxy_cfg.get("url_prefix")
+        or os.environ.get("TESTHARNESS_ROOT_PATH")
+        or os.environ.get("URL_PREFIX")
+        or ""
+    )
+
+    from web.proxy_middleware import ReverseProxyMiddleware
+    app.add_middleware(
+        ReverseProxyMiddleware,
+        trusted_proxies=trusted_proxies,
+        trust_all=proxy_cfg.get("trust_all", False) or trusted_proxies in ("*", ["*"]),
+        trust_proto=proxy_cfg.get("trust_proto", True),
+        trust_host=proxy_cfg.get("trust_host", True),
+        trust_prefix=proxy_cfg.get("trust_prefix", True),
+        default_root_path=url_prefix,
+    )
+
     # 403 exception handler — renders 403.html for HTML requests.
     from fastapi.exceptions import HTTPException as _HTTPExc
     from fastapi.responses import JSONResponse
@@ -370,6 +404,9 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     from web.routes.admin_dashboard import router as admin_dashboard_router
     app.include_router(admin_dashboard_router)
 
+    from web.routes.admin_proxy import router as admin_proxy_router
+    app.include_router(admin_proxy_router)
+
     screenshots_dir = "data/screenshots"
     os.makedirs(screenshots_dir, exist_ok=True)
     app.mount("/screenshots", StaticFiles(directory=screenshots_dir), name="screenshots")
@@ -441,7 +478,11 @@ def main():
 
     config = load_config("config.yaml")
     app = create_app(config=config)
-    forwarded_ips = os.environ.get("FORWARDED_ALLOW_IPS", "127.0.0.1")
+    proxy_cfg = config.get("proxy", {})
+    forwarded_ips = os.environ.get(
+        "FORWARDED_ALLOW_IPS",
+        "*" if proxy_cfg.get("behind_reverse_proxy") else "127.0.0.1",
+    )
     uvicorn.run(
         app,
         host="0.0.0.0",

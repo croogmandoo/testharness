@@ -1,9 +1,9 @@
 # Web Testing Harness Session Handoff & Operational Runbook
 
-**Generated:** 2026-10-26T17:15:00-04:00  
+**Generated:** 2026-10-26T17:25:00-04:00  
 **Branch:** `master` (synchronized with `origin/master`)  
 **Workspace:** `/home/craig/orca/workspaces/testharness/main`  
-**Test Suite:** **808 / 808 tests passing** (100% green, ~37s)
+**Test Suite:** **828 / 828 tests passing** (100% green, ~40s)
 
 ---
 
@@ -16,31 +16,32 @@
   - Authentication DB: `data/auth.db`
 - **Secrets Key**: `data/secret.key` (Fernet 32-byte key, enforced `0600` permissions)
 - **Primary Dependencies**: FastAPI, Uvicorn, Playwright, SQLite3, Jinja2, Pytest, Pillow, ReportLab, Cryptography, APScheduler
-- **GitHub Task Tracking**: All initial milestone issues (#8, #9, #10, #11, #12) closed and verified.
+- **GitHub Task Tracking**: Initial milestones (#8, #9, #10, #11, #12) and Web Proxy milestones (#14, #15, #16) closed and verified.
 
 ---
 
 ## 2. Recent Work & Hardening Accomplishments
 
-1. **Production Hardening & Reverse Proxy Configurations (Issue #9 - CLOSED)**:
-   - Added production checklist and complete reverse proxy deployment configs (Caddy, Traefik v3, Nginx) in [docs/guides/deployment.md](file:///home/craig/orca/workspaces/testharness/main/docs/guides/deployment.md).
-   - Configured Uvicorn `proxy_headers=True` and `FORWARDED_ALLOW_IPS` environment variable handling in [web/main.py](file:///home/craig/orca/workspaces/testharness/main/web/main.py) for accurate rate limiting and client IP tracking behind proxies.
-   - Added production cookie security test verification in [tests/test_sec_sessions.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_sec_sessions.py).
-2. **OpenAPI Schema & API Contract Completeness (Issue #10 - CLOSED)**:
-   - Added structured Pydantic response models (`RunResponse`, `AppMutationResponse`, `AppArchiveResponse`, `VarsResponse`, `RunnerPollResponse`, `RunnerResultsResponse`) in [web/routes/api.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/api.py) and [web/routes/runner.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/runner.py).
-   - Expanded [tests/test_web_openapi.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_web_openapi.py) to assert all 47 paths, verify required models exist, and validate that 100% of `$ref` targets resolve without dangling references.
-3. **Continuous Integration & Dependency Audit Validation (Issue #11 - CLOSED)**:
-   - Verified automated GitHub Actions workflows (`CI`, `Docker`, `Security`).
-   - Ran `pip-audit` across `requirements.txt` and `requirements.lock`, and verified Gitleaks secret scanning passed clean.
-   - Full test suite verified green in GitHub Actions Ubuntu runner (Python 3.11).
-4. **Remote Worker End-to-End Container Smoke Test (Issue #12 - CLOSED)**:
-   - Built slim worker image `harness-worker-slim:smoke` (lightweight runtime, Playwright-free).
-   - Deployed multi-container test stack via [docs/guides/v2-smoke-compose.yml](file:///home/craig/orca/workspaces/testharness/main/docs/guides/v2-smoke-compose.yml) on ports `19552:9552`.
-   - Seeded admin user and generated scoped worker API key (`worker:pull`, `worker:results`).
-   - Successfully verified live worker registration, heartbeat, long-poll job delivery, test execution against `httpbin.org/status/200`, and result submission back to central.
-   - Confirmed run status marked `complete` in database and cleanly destroyed test containers.
-5. **Test Suite Expansion**:
-   - Reached **808 passing unit and integration tests** (100% green, 0 failures, 0 regressions).
+1. **Reverse Proxy ASGI Middleware (Issue #14 - CLOSED)**:
+   - Added [web/proxy_middleware.py](file:///home/craig/orca/workspaces/testharness/main/web/proxy_middleware.py) parsing `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`, and `X-Forwarded-Prefix`.
+   - Validates client IP against trusted CIDR ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `127.0.0.1/32`, or `*`).
+   - Automatically enables `Secure;` cookie attributes on incoming requests terminated with HTTPS.
+   - Normalizes `request.scope["root_path"]` for subpath deployments.
+   - Comprehensive unit tests in [tests/test_proxy_middleware.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_proxy_middleware.py).
+2. **Outbound Corporate Forward Proxy Support (Issue #15 - CLOSED)**:
+   - Added [harness/proxy.py](file:///home/craig/orca/workspaces/testharness/main/harness/proxy.py) resolving forward proxy settings from `config.yaml` (`proxy.outbound`) or standard environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`).
+   - Propagated proxy settings to Playwright Chromium launch arguments in [harness/browser.py](file:///home/craig/orca/workspaces/testharness/main/harness/browser.py).
+   - Routed HTTP and API tests through configured egress proxies with credential parsing in [harness/api.py](file:///home/craig/orca/workspaces/testharness/main/harness/api.py).
+   - Unit tests in [tests/test_harness_proxy.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_harness_proxy.py).
+3. **Admin Web Proxy Settings & Diagnostic Screen (Issue #16 - CLOSED)**:
+   - Created `/admin/proxy` dashboard in [web/routes/admin_proxy.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/admin_proxy.py) and [web/templates/admin_proxy.html](file:///home/craig/orca/workspaces/testharness/main/web/templates/admin_proxy.html).
+   - Live inbound request diagnostics (client IP, connecting hop IP, effective scheme, headers, trusted status).
+   - Interactive outbound probe endpoint (`POST /admin/proxy/test`) to test egress connectivity.
+   - Dynamic reverse proxy configuration templates (Caddy, Traefik, Nginx, Apache) tailored to detected server host.
+   - Added "Proxy & Gateway" card to `/admin` dashboard and command palette (`Ctrl+K`).
+   - Route and permission tests in [tests/test_web_admin_proxy.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_web_admin_proxy.py).
+4. **Test Suite Expansion**:
+   - Reached **828 passing unit and integration tests** (100% green, 0 failures, 0 regressions).
 
 ---
 

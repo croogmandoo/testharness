@@ -13,8 +13,26 @@ default_environment: production
 
 auth:
   session_hours: 8
-  secure_cookie: false   # set true for HTTPS deployments
+  secure_cookie: false   # set true for HTTPS deployments (or auto-detected behind trusted proxy)
   # ldap:
+
+# Reverse & Outbound Web Proxy Settings (see /admin/proxy for live diagnostics)
+# proxy:
+#   behind_reverse_proxy: true       # trust X-Forwarded-* headers from trusted_proxies
+#   trusted_proxies:                 # list of IPs or CIDR blocks, or "*"
+#     - "127.0.0.1"
+#     - "::1"
+#     - "10.0.0.0/8"
+#     - "172.16.0.0/12"
+#     - "192.168.0.0/16"
+#   trust_proto: true                # adopt X-Forwarded-Proto for HTTPS and secure cookies
+#   trust_host: true                 # adopt X-Forwarded-Host
+#   url_prefix: ""                   # optional subpath (e.g. "/testharness" or from X-Forwarded-Prefix)
+#   outbound:
+#     enabled: false
+#     http_proxy: ""                 # e.g. "http://proxy.corp.net:8080"
+#     https_proxy: ""
+#     no_proxy: "localhost,127.0.0.1"
   #   enabled: false
   #   server: ldap://dc.company.com
   #   port: 389

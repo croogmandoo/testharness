@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="breadcrumb">
+  <a href="/admin">Admin</a> / Web Proxy &amp; Gateway
+</div>
+<div class="page-header">
+  <h1>Web Proxy &amp; Gateway</h1>
+  <span class="text-muted text-sm">Reverse proxy header detection and outbound corporate forward proxy settings</span>
+</div>
+
+<div class="space-y-6">
+
+  <!-- Live Inbound Request Diagnostics -->
+  <div class="card">
+    <div class="flex items-center justify-between mb-4">
+      <div class="card-title m-0">Live Inbound Request Diagnostics</div>
+      <div>
+        {% if proxy_state.is_trusted and proxy_state.x_forwarded_for %}
+          <span class="badge badge--pass">✓ Trusted Reverse Proxy Active</span>
+        {% elif proxy_state.x_forwarded_for and not proxy_state.is_trusted %}
+          <span class="badge badge--warn">⚠ Untrusted Proxy (Headers Ignored)</span>
+        {% elif proxy_state.is_trusted %}
+          <span class="badge badge--pass">Direct Trusted Connection</span>
+        {% else %}
+          <span class="badge badge--neutral">Direct Connection</span>
+        {% endif %}
+      </div>
+    </div>
+    <p class="text-muted text-sm mb-4">
+      How Testharness currently resolves your connection through the ASGI proxy middleware.
+    </p>
+
+    <table class="table">
+      <tbody>
+        <tr>
+          <td class="text-muted text-xs font-mono w-48">Effective Client IP</td>
+          <td class="font-semibold font-mono">{{ proxy_state.effective_client_ip or "127.0.0.1" }}</td>
+        </tr>
+        <tr>
+          <td class="text-muted text-xs font-mono">Immediate Connecting IP</td>
+          <td class="font-mono text-secondary">{{ proxy_state.connecting_ip or "unknown" }}</td>
+        </tr>
+        <tr>
+          <td class="text-muted text-xs font-mono">Effective Scheme / TLS</td>
+          <td>
+            {% if proxy_state.effective_scheme == "https" %}
+              <span class="text-pass font-semibold">HTTPS (Secure Cookies Active)</span>
+            {% else %}
+              <span class="text-muted font-mono">HTTP</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr>
+          <td class="text-muted text-xs font-mono">Effective Host</td>
+          <td class="font-mono">{{ proxy_state.effective_host or request.headers.get("host") }}</td>
+        </tr>
+        <tr>
+          <td class="text-muted text-xs font-mono">Subpath Prefix (Root Path)</td>
+          <td class="font-mono">{{ proxy_state.root_path or "(none, hosted at /)" }}</td>
+        </tr>
+        <tr>
+          <td class="text-muted text-xs font-mono">X-Forwarded-For</td>
+          <td class="font-mono text-xs">{{ proxy_state.x_forwarded_for or "(none)" }}</td>
+        </tr>
+        <tr>
+          <td class="text-muted text-xs font-mono">X-Forwarded-Proto</td>
+          <td class="font-mono text-xs">{{ proxy_state.x_forwarded_proto or "(none)" }}</td>
+        </tr>
+        <tr>
+          <td class="text-muted text-xs font-mono">X-Forwarded-Host</td>
+          <td class="font-mono text-xs">{{ proxy_state.x_forwarded_host or "(none)" }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Outbound Forward Proxy & Live Probe -->
+  <div class="card">
+    <div class="card-title">Outbound Corporate Forward Proxy</div>
+    <p class="text-muted text-sm mb-4">
+      Used by HTTP checks, API tests, and Playwright browser execution to reach target systems in private enterprise networks.
+    </p>
+
+    <table class="table mb-4">
+      <tbody>
+        <tr>
+          <td class="text-muted text-xs font-mono w-48">Proxy Status</td>
+          <td>
+            {% if outbound_info %}
+              <span class="text-pass font-semibold">Configured</span> ({{ outbound_info.server }})
+            {% else %}
+              <span class="text-muted">None (Direct outbound connections)</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% if outbound_info and outbound_info.bypass %}
+        <tr>
+          <td class="text-muted text-xs font-mono">Bypass / NO_PROXY</td>
+          <td class="font-mono text-xs">{{ outbound_info.bypass }}</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+
+    <div class="border-t border-border pt-4">
+      <div class="font-semibold text-sm mb-2">Test Outbound Proxy Connection</div>
+      <p class="text-muted text-xs mb-3">Send a test probe through the active forward proxy to verify egress routing.</p>
+      <div class="flex gap-2 max-w-xl">
+        <input id="probe-target" type="url" class="input flex-1" value="https://httpbin.org/status/200" placeholder="https://target-service.com/health">
+        <button id="probe-btn" type="button" onclick="testOutboundProxy()" class="btn btn--primary">Probe Target</button>
+      </div>
+      <div id="probe-result" class="mt-3 text-sm hidden"></div>
+    </div>
+  </div>
+
+  <!-- Reverse Proxy Configurations -->
+  <div class="card">
+    <div class="card-title">Reverse Proxy Snippets</div>
+    <p class="text-muted text-sm mb-4">
+      Production reverse proxy templates customized to your detected hostname (<code>{{ proxy_state.effective_host or "harness.example.com" }}</code>).
+    </p>
+
+    <div class="space-y-4">
+      <div>
+        <div class="font-semibold text-sm mb-1">Caddy (Recommended)</div>
+        <pre class="bg-surface-2 p-3 rounded font-mono text-xs overflow-x-auto"><code>{{ snippets.caddy }}</code></pre>
+      </div>
+
+      <div>
+        <div class="font-semibold text-sm mb-1">Traefik v3 (Docker Compose Labels)</div>
+        <pre class="bg-surface-2 p-3 rounded font-mono text-xs overflow-x-auto"><code>{{ snippets.traefik }}</code></pre>
+      </div>
+
+      <div>
+        <div class="font-semibold text-sm mb-1">Nginx</div>
+        <pre class="bg-surface-2 p-3 rounded font-mono text-xs overflow-x-auto"><code>{{ snippets.nginx }}</code></pre>
+      </div>
+
+      <div>
+        <div class="font-semibold text-sm mb-1">Apache HTTP Server (mod_proxy)</div>
+        <pre class="bg-surface-2 p-3 rounded font-mono text-xs overflow-x-auto"><code>{{ snippets.apache }}</code></pre>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+async function testOutboundProxy() {
+  const target = document.getElementById("probe-target").value;
+  const btn = document.getElementById("probe-btn");
+  const resultDiv = document.getElementById("probe-result");
+
+  btn.disabled = true;
+  btn.textContent = "Probing...";
+  resultDiv.className = "mt-3 text-sm";
+  resultDiv.textContent = "Connecting to target...";
+  resultDiv.classList.remove("hidden");
+
+  try {
+    const formData = new FormData();
+    formData.append("target_url", target);
+    formData.append("csrf_token", "{{ csrf_token }}");
+
+    const resp = await fetch("/admin/proxy/test", {
+      method: "POST",
+      body: formData,
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      resultDiv.className = "mt-3 text-sm p-3 bg-pass/10 text-pass rounded border border-pass/20";
+      resultDiv.textContent = data.message;
+    } else {
+      resultDiv.className = "mt-3 text-sm p-3 bg-fail/10 text-fail rounded border border-fail/20";
+      resultDiv.textContent = data.message || "Failed to reach target via proxy.";
+    }
+  } catch (err) {
+    resultDiv.className = "mt-3 text-sm p-3 bg-fail/10 text-fail rounded border border-fail/20";
+    resultDiv.textContent = "Request error: " + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Probe Target";
+  }
+}
+</script>
+{% endblock %}

@@ -91,6 +91,18 @@
     <div class="admin-card-sub">For private TLS roots</div>
   </a>
 
+  <a href="/admin/proxy" class="admin-card">
+    <div class="admin-card-title">Proxy &amp; Gateway</div>
+    <div class="admin-card-stat admin-card-stat--small">
+      {% if stats.proxy_configured or stats.proxy_outbound %}
+        <span class="text-pass">Active</span>
+      {% else %}
+        <span class="text-muted">Standard</span>
+      {% endif %}
+    </div>
+    <div class="admin-card-sub">Reverse &amp; egress proxies</div>
+  </a>
+
   <a href="/admin/config" class="admin-card">
     <div class="admin-card-title">Config</div>
     <div class="admin-card-stat admin-card-stat--small">View</div>

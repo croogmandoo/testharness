@@ -125,7 +125,8 @@ async def execute_step(page: "Page", step: dict, base_url: str,
 async def run_browser_test(run_id: str, app: str, environment: str,
                            base_url: str, test_def: dict,
                            screenshot_dir: str = "data/screenshots",
-                           headless: bool = True, timeout_ms: int = 30000) -> TestResult:
+                           headless: bool = True, timeout_ms: int = 30000,
+                           proxy: Optional[dict] = None) -> TestResult:
     result = TestResult(run_id=run_id, app=app, environment=environment,
                         test_name=test_def["name"])
     step_log = []
@@ -144,6 +145,14 @@ async def run_browser_test(run_id: str, app: str, environment: str,
     # via ``--ignore-certificate-errors-spki-list``. Empty list when the
     # bundle is absent -- normal launch, normal trust.
     launch_args = chromium_spki_args(BUNDLE_PATH)
+    launch_kwargs: dict = {"headless": headless, "args": launch_args}
+    if proxy is not None:
+        launch_kwargs["proxy"] = proxy
+    else:
+        from harness.proxy import get_playwright_proxy_args
+        pw_proxy = get_playwright_proxy_args()
+        if pw_proxy:
+            launch_kwargs["proxy"] = pw_proxy
     # PEP-562 ``__getattr__`` only fires for attribute access on the module
     # (``browser_mod.async_playwright``), not bare-name lookup inside the
     # module itself -- which would raise ``NameError`` on the full image. So
@@ -153,7 +162,7 @@ async def run_browser_test(run_id: str, app: str, environment: str,
     if ap is None:
         from playwright.async_api import async_playwright as ap
     async with ap() as pw:
-        browser = await pw.chromium.launch(headless=headless, args=launch_args)
+        browser = await pw.chromium.launch(**launch_kwargs)
         page = await browser.new_page()
         page.set_default_timeout(timeout_ms)
         steps = test_def.get("steps", [])
@@ -183,7 +192,8 @@ async def run_browser_test(run_id: str, app: str, environment: str,
 
 async def run_availability_test(run_id: str, app: str, environment: str,
                                 base_url: str, test_def: dict,
-                                ssl_ctx: Optional[ssl.SSLContext] = None) -> TestResult:
+                                ssl_ctx: Optional[ssl.SSLContext] = None,
+                                proxy: Optional[str] = None) -> TestResult:
     import httpx
     result = TestResult(run_id=run_id, app=app, environment=environment,
                         test_name=test_def["name"])
@@ -191,7 +201,15 @@ async def run_availability_test(run_id: str, app: str, environment: str,
     expect_status = test_def.get("expect_status", 200)
     try:
         timeout_s = test_def.get("timeout_ms", 30000) / 1000
-        async with httpx.AsyncClient(timeout=timeout_s, verify=ssl_ctx or True) as client:
+        client_kwargs = {"timeout": timeout_s, "verify": ssl_ctx or True}
+        if proxy is not None:
+            client_kwargs["proxy"] = proxy
+        else:
+            from harness.proxy import get_httpx_proxy_url
+            p_url = get_httpx_proxy_url()
+            if p_url:
+                client_kwargs["proxy"] = p_url
+        async with httpx.AsyncClient(**client_kwargs) as client:
             resp = await client.get(base_url)
         elapsed = int((time.monotonic() - start) * 1000)
         if resp.status_code == expect_status:
