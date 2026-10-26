@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from web.auth import min_password_length
 from web.csrf import csrf_token_for, verify_csrf
 from web.templating import make_templates
 
@@ -27,6 +28,7 @@ def _nav_ctx(request: Request) -> dict:
         "environment": None,
         "current_user": None,
         "csrf_token": csrf_token_for(request),
+        "min_password_length": min_password_length(),
     }
 
 
@@ -80,9 +82,9 @@ async def setup_post(
     setup_token: str = Form(""),
     _csrf=Depends(verify_csrf),
 ):
-    from web.main import get_db, get_config
+    from web.main import get_db
     import bcrypt as _bcrypt
-    from web.auth import _make_token
+    from web.auth import issue_session_cookie, min_password_length
     from web.ratelimit import setup_limiter, client_ip
     db = get_db()
     if db.count_users() > 0:
@@ -111,11 +113,11 @@ async def setup_post(
         ctx["error"] = "Passwords do not match."
         return templates.TemplateResponse(request, "setup.html", ctx, status_code=422)
 
-    if len(password) < 8:
-        ctx["error"] = "Password must be at least 8 characters."
+    min_len = min_password_length()
+    if len(password) < min_len:
+        ctx["error"] = f"Password must be at least {min_len} characters."
         return templates.TemplateResponse(request, "setup.html", ctx, status_code=422)
 
-    config = get_config()
     user_id = str(uuid.uuid4())
     password_hash = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
     db.insert_user({
@@ -133,16 +135,8 @@ async def setup_post(
     })
     db.update_user_last_login(user_id, datetime.now(timezone.utc).isoformat())
 
-    token = _make_token(user_id)
-    session_hours = config.get("auth", {}).get("session_hours", 8)
-    secure = config.get("auth", {}).get("secure_cookie", False)
-
     response = RedirectResponse("/", status_code=303)
-    response.set_cookie(
-        "session", token,
-        httponly=True, samesite="lax", secure=secure,
-        max_age=session_hours * 3600,
-    )
+    issue_session_cookie(response, db.get_user_by_id(user_id))
     return response
 
 
@@ -169,7 +163,7 @@ async def login_post(
 ):
     from web.main import get_db, get_config
     from harness.auth_manager import verify_local_password, ldap_authenticate
-    from web.auth import _make_token
+    from web.auth import issue_session_cookie
     from web.ratelimit import login_limiter, client_ip
 
     db = get_db()
@@ -225,21 +219,25 @@ async def login_post(
 
     db.update_user_last_login(user["id"], datetime.now(timezone.utc).isoformat())
 
-    token = _make_token(user["id"])
-    session_hours = config.get("auth", {}).get("session_hours", 8)
-    secure = config.get("auth", {}).get("secure_cookie", False)
-
     response = RedirectResponse("/", status_code=303)
-    response.set_cookie(
-        "session", token,
-        httponly=True, samesite="lax", secure=secure,
-        max_age=session_hours * 3600,
-    )
+    issue_session_cookie(response, user)
     return response
 
 
 @router.post("/auth/logout")
 async def logout(request: Request, _csrf=Depends(verify_csrf)):
+    """End the session. Bumping the user's session version revokes every
+    session cookie issued to them, on all devices, not just this one."""
+    from web.auth import _load_claims
+    claims = _load_claims(request.cookies.get("session", ""))
+    if claims:
+        from web.main import get_db
+        db = get_db()
+        user = db.get_user_by_id(claims[0])
+        # Only a still-current token may revoke; a stale or forged-looking
+        # cookie must not let anyone log a user out repeatedly.
+        if user and claims[1] == int(user.get("session_version") or 0):
+            db.bump_session_version(user["id"])
     response = RedirectResponse("/auth/login", status_code=303)
     response.delete_cookie("session")
     return response
@@ -312,7 +310,7 @@ async def github_oauth_login(request: Request):
 async def github_oauth_callback(request: Request, code: str = "", state: str = ""):
     from fastapi import HTTPException
     from web.main import get_config, get_db
-    from web.auth import make_session_token, get_auth_config
+    from web.auth import issue_session_cookie
 
     stored_state = request.cookies.get("oauth_state", "")
     if not stored_state or not _secrets.compare_digest(
@@ -458,16 +456,7 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
             }
             db.insert_user(user)
 
-    auth_config = get_auth_config()
-    token = make_session_token(
-        user["id"], auth_config["signing_key"], auth_config["session_hours"]
-    )
     response = RedirectResponse("/", status_code=302)
-    response.set_cookie(
-        "session", token,
-        httponly=True, samesite="lax",
-        secure=auth_config.get("secure_cookie", False),
-        max_age=int(auth_config["session_hours"] * 3600),
-    )
+    issue_session_cookie(response, user)
     response.delete_cookie("oauth_state")
     return response

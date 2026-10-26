@@ -42,8 +42,8 @@ startup:  create_app()
                  └─ Fernet key            (info="harness-secrets-v1")
                        └─ encrypts/decrypts secret values in harness.db secrets table
 
-request:  cookie "session" (itsdangerous-signed user_id)
-            └─ get_current_user()        validates token, loads user row, checks is_active
+request:  cookie "session" (itsdangerous-signed [user_id, session_version])
+            └─ get_current_user()        validates token, loads user row, checks is_active + session_version
                  └─ require_role(...)    checks user["role"] membership → 403 if insufficient
 
 first-run: _FirstRunMiddleware
@@ -59,6 +59,8 @@ first-run: _FirstRunMiddleware
 1. **Fernet encryption** — secret values are encrypted before writing to the `secrets` table in `data/harness.db` and decrypted on read. The Fernet key is derived from `data/secret.key` via HKDF (info label `harness-secrets-v1`).
 2. **Session key derivation** — a separate 32-byte key is derived from the same root key file (info label `harness-sessions-v1`) and exposed as `.session_signing_key` for use by `web/auth.py`.
 3. **`inject_to_env()`** — called at startup to populate `os.environ` with all stored secrets so app YAML `$VAR` references resolve correctly.
+
+The key file is created with mode `0600` and published atomically: the key is written to a private temp file in the same directory and hard-linked into place, so concurrent first boots agree on one key and nobody reads a half-written file (filesystems without hard links fall back to an `O_EXCL` create). A key file that does not decode to exactly 32 bytes (empty, truncated, corrupt) is never used: after a ~2 s retry window startup fails with an error naming the file. On POSIX systems an existing key file readable or writable by group/other is tightened to `0600` at startup, with a warning in the log.
 
 **The `data/secret.key` file must be preserved across deployments and migrations.** A lost or replaced key file makes all stored secrets unrecoverable and invalidates all active sessions.
 
@@ -95,12 +97,23 @@ first-run: _FirstRunMiddleware
 | Function | Purpose |
 |---|---|
 | `set_auth_config(signing_key, session_hours, secure_cookie)` | Called at startup with values from `SecretsStore` and `config.yaml` |
-| `get_current_user(request)` | Reads `session` cookie, validates HMAC + expiry, loads user row, checks `is_active` |
+| `get_current_user(request)` | Reads `session` cookie, validates HMAC + expiry, loads user row, checks `is_active` and that the token's session version equals `users.session_version` |
 | `require_role(*roles)` | FastAPI dependency factory; wraps `get_current_user` and enforces role membership |
-| `make_session_token(user_id, ...)` | Creates a signed, time-limited token for the session cookie |
-| `load_session_token(token, ...)` | Validates and decodes a session token; returns `user_id` or `None` |
+| `make_session_token(user_id, ..., session_version=0)` | Creates a signed, time-limited token over `[user_id, session_version]` |
+| `load_session_claims(token, ...)` | Validates and decodes a session token; returns `(user_id, session_version)` or `None` |
+| `load_session_token(token, ...)` | Same, but returns only `user_id` (no version check) |
+| `issue_session_cookie(response, user)` | Sets the `session` cookie for `user` at their current `session_version`. Setup, local/LDAP login and the GitHub callback all use it |
 
 Cookie attributes: `HttpOnly=true`, `SameSite=lax`, `Secure` controlled by `auth.secure_cookie` in `config.yaml`, `Max-Age` = `auth.session_hours * 3600` (default 8 hours).
+
+### Revocation
+
+Every user row has an integer `session_version` (default 0). The session token carries the version it was issued at, and `get_current_user` rejects a token whose version no longer matches the row. `db.bump_session_version(user_id)` therefore ends **all** of that user's sessions at once. It is bumped:
+
+- on `POST /auth/logout` (when the presented cookie is still valid). Logging out on one browser signs the user out everywhere;
+- in `POST /users/{id}/edit` when the password is reset, the role changes, or the account is deactivated. When an admin changes their own password or role, the browser they did it from gets a fresh cookie; their other sessions end.
+
+Tokens issued before session versioning carry a bare user id. They are read as version 0, so they keep working after the upgrade until the user's first bump. API keys are not session tokens and are unaffected; revoke them separately.
 
 For API paths (`/api/*`), unauthenticated requests receive HTTP 401. For browser paths, they receive HTTP 307 → `/auth/login`.
 
@@ -116,6 +129,12 @@ For API paths (`/api/*`), unauthenticated requests receive HTTP 401. For browser
 | `read_only` | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 Secrets deletion (`POST /secrets/{name}/delete`) is restricted to `admin` only; creation and listing allow `admin` or `runner`.
+
+`POST /users/new` and `POST /users/{id}/edit` accept only these four role names (`web.auth.VALID_ROLES`); anything else returns 422 and changes nothing.
+
+### Password policy
+
+Local passwords must be at least `auth.min_password_length` characters (default 8). The limit applies to `POST /setup`, `POST /users/new` and to a new password set through `POST /users/{id}/edit`; a shorter password returns 422. The forms carry a matching `minlength` attribute. Existing passwords are not re-checked.
 
 ---
 
@@ -156,7 +175,7 @@ Until the first account exists, anyone who can reach the server could claim admi
 `/setup` submissions are also limited to 10 per client IP per 5 minutes (429 after that). Once any user exists, `/setup` returns 404 as before.
 
 **Session revocation:**
-Set `users.is_active = 0` in the database. There is no sessions table — `get_current_user` checks `is_active` on every request, so deactivation takes effect immediately on the next request.
+See [Revocation](#revocation). Deactivating a user, resetting their password or changing their role from `/users` ends their existing sessions on the next request; logging out ends all of the user's own sessions. There is no sessions table — `get_current_user` checks `is_active` and `session_version` on every request.
 
 ---
 
@@ -168,6 +187,7 @@ Relevant keys in `config.yaml`:
 |---|---|---|
 | `auth.session_hours` | `8` | Session cookie lifetime in hours |
 | `auth.secure_cookie` | `false` | Set `Secure` flag on session cookie (enable for HTTPS deployments) |
+| `auth.min_password_length` | `8` | Minimum length for local passwords (setup, user create, password reset) |
 | `auth.github.client_id` | — | GitHub OAuth app client id (enables the GitHub button) |
 | `auth.github.client_secret` | — | GitHub OAuth app client secret |
 | `auth.github.default_role` | `read_only` | Role given to newly created GitHub users |
@@ -192,7 +212,7 @@ Relevant keys in `config.yaml`:
 
 - `data/secret.key` must be preserved across migrations — a lost key makes stored secrets unrecoverable and invalidates all sessions.
 - `passlib` is **broken** with bcrypt 5.x — use `import bcrypt` directly everywhere.
-- Session revocation: set `users.is_active = 0` (no sessions table; checked on every request).
+- Session revocation: bump `users.session_version` (logout, password reset, role change and deactivation do this); there is no sessions table.
 - LDAP users are upserted into the local `users` table on every successful login (unless `role_override = 1`).
 
 ---

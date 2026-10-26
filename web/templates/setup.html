@@ -37,7 +37,7 @@
       </div>
       <div class="field">
         <label class="label">Password</label>
-        <input class="input" name="password" type="password" required autocomplete="new-password">
+        <input class="input" name="password" type="password" required minlength="{{ min_password_length }}" autocomplete="new-password">
       </div>
       <div class="field mb-6">
         <label class="label">Confirm password</label>

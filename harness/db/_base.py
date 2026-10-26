@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS users (
     last_login_at TEXT,
     oauth_provider_id TEXT,
     failed_login_count INTEGER NOT NULL DEFAULT 0,
-    locked_until       TEXT
+    locked_until       TEXT,
+    session_version    INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS secrets (
     id              TEXT PRIMARY KEY,
@@ -170,6 +171,9 @@ class Database(APIKeysMixin, AppStateMixin, AuditMixin, RunnerJobsMixin,
                 "ALTER TABLE users ADD COLUMN oauth_provider_id TEXT",
                 "ALTER TABLE users ADD COLUMN failed_login_count INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE users ADD COLUMN locked_until TEXT",
+                # security-hardening: session cookies carry this counter;
+                # bumping it revokes every outstanding session for the user.
+                "ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0",
                 # workers-v2: retry tracking on runner_jobs (feature #1)
                 "ALTER TABLE runner_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
                 # workers-v2: per-key scopes (feature #5). Existing keys default

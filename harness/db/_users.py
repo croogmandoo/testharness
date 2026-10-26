@@ -102,6 +102,17 @@ class UsersMixin:
                 [v for _, v in pairs] + [user_id],
             )
 
+    def bump_session_version(self, user_id: str) -> None:
+        """Invalidate every session cookie issued to ``user_id`` so far.
+
+        Session tokens embed the user's ``session_version``; a token whose
+        version no longer matches is rejected by ``get_current_user``."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET session_version = session_version + 1 WHERE id=?",
+                (user_id,),
+            )
+
     def update_user_last_login(self, user_id: str, timestamp: str) -> None:
         with self._connect() as conn:
             conn.execute(
