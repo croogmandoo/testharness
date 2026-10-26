@@ -13,8 +13,10 @@ This document establishes the architecture, code quality, security, and testing 
 
 ### 1.2 Harness Engine (`harness/`)
 - Pure Python logic with minimal external side effects.
-- Engines (`http_engine.py`, `api_engine.py`, `browser.py`) must be independent, returning typed `TestResult` and `StepResult` models.
+- Engines (`http_engine.py`, `api_engine.py`, `tls_engine.py`, `browser.py`) must be independent, returning typed `TestResult` and `StepResult` models.
 - Graceful degradation: `harness/browser.py` must remain safely importable even in environments where Playwright or full browser binaries are not installed.
+- Performance & Vitals: Browser journeys should capture Navigation Timing and Web Vitals (TTFB, FCP, LCP, CLS) without blocking UI execution.
+- Visual Baselines: Visual comparison diffs highlight regressions with high-contrast heatmaps; baseline promotion is strictly gated by authentication and audit logging.
 
 ### 1.3 Database & Storage Layer
 - Use SQLite with `PRAGMA journal_mode=WAL;` and `PRAGMA busy_timeout=5000;`.
@@ -37,7 +39,7 @@ This document establishes the architecture, code quality, security, and testing 
 
 ## 3. Testing & Verification Standards
 
-- **Zero Regressions**: All 790+ tests in `tests/` must pass prior to any commit or handoff.
+- **Zero Regressions**: All 850+ tests (currently 853 tests) in `tests/` must pass prior to any commit or handoff.
   ```bash
   .venv/bin/pytest
   ```

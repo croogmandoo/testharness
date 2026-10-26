@@ -23,7 +23,10 @@ graph TD
         
         Runner --> HTTPEngine["HTTP Availability Engine (harness/http_engine.py)"]
         Runner --> APIEngine["API & JSON Assertions (harness/api_engine.py)"]
+        Runner --> TLSEngine["TLS & Security Headers (harness/tls_engine.py)"]
         Runner --> BrowserEngine["Playwright Headless Browser (harness/browser.py)"]
+        BrowserEngine --> VitalsEngine["Web Vitals / Performance (harness/browser.py)"]
+        BrowserEngine --> DiffEngine["Visual Diff Heatmap (harness/screenshot_diff.py)"]
     end
 
     subgraph Reliability & Alerts
@@ -51,7 +54,10 @@ testharness/
 │   ├── runner.py                 # Central orchestrator: loads tests, executes engines, persists results
 │   ├── http_engine.py            # Fast async HTTP/HTTPS ping & availability checks
 │   ├── api_engine.py             # Multi-step REST API tests, JSON schema extraction & step chaining
-│   ├── browser.py                # Playwright automation, screenshot captures & visual diffing
+│   ├── tls_engine.py            # TLS certificate expiration, SAN validation & security headers prober
+│   ├── browser.py                # Playwright automation, screenshot captures & Core Web Vitals extraction
+│   ├── screenshot_diff.py        # Visual regression pixel diffing & high-contrast heatmap generation
+│   ├── proxy.py                  # Outbound forward proxy resolver (HTTP_PROXY / HTTPS_PROXY / config)
 │   ├── scheduler.py              # In-process cron scheduling (APScheduler)
 │   ├── alerts.py                 # Webhook, Slack, Teams, Discord & email dispatch
 │   ├── db.py                     # SQLite interface for runs, results, and test history (WAL mode)
@@ -61,10 +67,11 @@ testharness/
 │   └── models.py                 # Pydantic data schemas for tests, environments, and results
 ├── web/                          # FastAPI Web UI and REST API
 │   ├── main.py                   # App factory, lifespan lifecycle, middleware & static mounts
-│   ├── routes/                   # Route handlers (dashboard, API, auth, apps, runner, admin)
+│   ├── proxy_middleware.py       # ASGI Reverse Proxy middleware (CIDR trusted proxies & headers)
+│   ├── routes/                   # Route handlers (dashboard, API, auth, apps, runner, admin, proxy)
 │   ├── static/                   # Dark-themed CSS (Inter / JetBrains Mono) & client scripts
 │   └── templates/                # Jinja2 HTML templates for dashboard, run logs, and status pages
-├── tests/                        # Pytest suite (790+ passing unit & integration tests)
+├── tests/                        # Pytest suite (853+ passing unit & integration tests)
 ├── apps/                         # App definition YAMLs (target applications and synthetic steps)
 ├── data/                         # Local database files, secrets key & screenshots (gitignored)
 ├── config.yaml                   # Global scheduling, alerting channels & environment definitions
@@ -95,3 +102,27 @@ testharness/
 2. Traverses test steps: click, type, wait for selector, evaluate JavaScript.
 3. Captures full-page screenshots and compares with baseline images via Pillow diff.
 4. Records network logs, console errors, and step execution timings.
+
+### 3.4 TLS Certificate & Security Header Probing
+1. Connects directly to target host via SSL socket handshake in `tls_engine.py`.
+2. Inspects certificate Subject Alternative Names (SANs) and computes days remaining until expiration (`min_days_valid`).
+3. Verifies negotiated protocol version against minimum threshold (`min_tls_version`, e.g. `TLSv1.2` / `TLSv1.3`).
+4. Sends HTTPS probe to inspect HTTP security headers (`Strict-Transport-Security`, `X-Content-Type-Options`, `Content-Security-Policy`).
+5. Appends structured step log and triggers alerts if certificates are near expiration or headers are absent.
+
+### 3.5 Visual Regression & Baseline Approval Workflow
+1. When a browser test step executes `screenshot: null`, `harness/runner.py` captures a candidate screenshot.
+2. If `diff_threshold` is configured, it queries the database for the last passing screenshot baseline (`get_last_screenshot` with `status='pass'`).
+3. If visual variance exceeds the threshold, `generate_diff_image()` renders a high-contrast magenta (`#FF007F`) heatmap overlay image (`<slug>-diff.png`) and flags the step as failed.
+4. Operators review the failure in the web dashboard and can approve intentional UI updates via `POST /api/visual/approve`.
+5. Approval sets `status='pass'`, upserts `app_state` to passing, logs an audit entry, and immediately promotes the candidate image to the canonical baseline.
+
+### 3.6 Core Web Vitals & Frontend Performance Monitoring
+1. After browser page navigation, `extract_web_vitals()` queries the Navigation Timing API and `PerformanceObserver` paint and layout-shift entries.
+2. Captures Time to First Byte (TTFB), First Contentful Paint (FCP), Largest Contentful Paint (LCP), Cumulative Layout Shift (CLS), and DomContentLoaded / Load event timings.
+3. Evaluates optional test assertions (`max_lcp_ms`, `max_fcp_ms`, `max_ttfb_ms`, `max_cls`, `max_load_ms`).
+4. Records formatted performance summaries directly into test step logs for visualization in the run detail view and dashboard.
+
+### 3.7 Reverse & Outbound Proxy Architecture
+1. **Reverse Proxy (Inbound)**: `ReverseProxyMiddleware` parses incoming `X-Forwarded-*` headers, sanitizes client IP based on trusted CIDR masks, dynamically flags secure cookies over HTTPS, and sets `root_path` for subpath deployments. Diagnosed via `/admin/proxy`.
+2. **Forward Proxy (Outbound)**: `harness/proxy.py` extracts outbound egress proxies from `config.yaml` or system environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`), transparently forwarding them to Chromium browser launches and HTTP/API client engines.

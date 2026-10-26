@@ -500,6 +500,42 @@ Permanently deletes an archived app's YAML file. The app must already be archive
 
 ## Results
 
+### `POST /api/visual/approve`
+
+Approves a visual regression failure screenshot as the canonical new baseline.
+Updates `test_results.status = 'pass'`, upserts `app_state` to `passing`, and writes an audit event (`visual.baseline_approve`).
+
+**Auth required:** Yes  
+**Role required:** `admin`, `runner`
+
+**Request body (JSON):**
+```json
+{
+  "result_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "result_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "status": "pass",
+  "message": "Successfully approved candidate.png as new baseline"
+}
+```
+
+**Error responses:**
+
+| Status | Description |
+|---|---|
+| `400` | Test result has no screenshot to approve |
+| `401` | Not authenticated |
+| `403` | Insufficient role (viewer) |
+| `404` | Test result not found |
+
+---
+
 ### `GET /api/results/{app}/{environment}`
 
 Returns recent test results for an app and environment.
@@ -858,4 +894,41 @@ serving requests during the snapshot — no downtime needed.
 
 ```bash
 curl -fO -H "Authorization: Bearer hth_..." http://localhost:9552/admin/backup
+```
+
+---
+
+### `GET /admin/proxy`
+
+Renders the Proxy & Gateway settings and diagnostic view.
+Displays inbound client IP resolution, upstream trusted proxy status, sanitized headers, active outbound proxy configurations, and copy-paste reverse proxy configurations for Caddy, Traefik, Nginx, and Apache.
+
+**Auth required:** Yes  
+**Role required:** `admin`
+
+---
+
+### `POST /admin/proxy/test`
+
+Interactive outbound connectivity probe endpoint. Sends an egress HTTP request through configured forward proxies to verify connectivity and DNS resolution.
+
+**Auth required:** Yes  
+**Role required:** `admin`
+
+**Request body (JSON):**
+```json
+{
+  "target_url": "https://example.com"
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "status_code": 200,
+  "elapsed_ms": 142,
+  "resolved_ip": "93.184.216.34",
+  "proxy_used": "http://corporate-proxy:8080"
+}
 ```

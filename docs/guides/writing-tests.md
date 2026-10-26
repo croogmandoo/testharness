@@ -11,6 +11,7 @@ multi-step browser flows. (A Python-script test type is reserved for a future re
 2. [Test Types](#2-test-types)
    - [availability](#availability)
    - [api](#api)
+   - [tls](#tls)
    - [browser](#browser)
 3. [Referencing Page Content](#3-referencing-page-content)
    - [assert_text](#assert_text--check-visible-text)
@@ -274,6 +275,27 @@ trip it.
 
 ---
 
+### tls
+
+Inspects remote TLS/SSL certificates and security headers without running a browser.
+Validates certificate expiration, Subject Alternative Names (SANs), minimum TLS version, and HTTPS response headers.
+
+```yaml
+- name: "Production SSL and Security Headers"
+  type: tls
+  min_days_valid: 30            # Fail if cert expires in fewer than 30 days (default: 30)
+  min_tls_version: "TLSv1.2"    # Require at least TLSv1.2 or TLSv1.3
+  check_security_headers: true  # Validate HSTS, CSP, and X-Content-Type-Options
+```
+
+**What it validates:**
+- **Certificate Expiration**: Verifies `notAfter` date has not passed and is at least `min_days_valid` days in the future.
+- **Hostname / SAN Matching**: Verifies the domain matches the Common Name (CN) or Subject Alternative Names (SANs).
+- **Protocol Security**: Verifies the negotiated cipher/protocol meets `min_tls_version`.
+- **Security Headers**: Ensures `Strict-Transport-Security` (HSTS), `X-Content-Type-Options: nosniff`, and `Content-Security-Policy` are present.
+
+---
+
 ### browser
 
 Launches a headless Chromium browser, runs a sequence of steps, and passes
@@ -282,6 +304,9 @@ only if every step succeeds.
 ```yaml
 - name: "Login flow"
   type: browser
+  diff_threshold: 0.05          # Alert if screenshot differs from baseline by > 5%
+  max_lcp_ms: 2500              # Core Web Vitals: Largest Contentful Paint under 2.5s
+  max_fcp_ms: 1500              # First Contentful Paint under 1.5s
   steps:
     - navigate: /login
     - fill:
@@ -298,6 +323,33 @@ only if every step succeeds.
 
 Steps execute in order. If any step fails or errors, the test stops immediately
 and saves an automatic failure screenshot.
+
+#### Visual Regression Testing & Diff Heatmaps
+
+When `diff_threshold` (e.g. `0.02` for 2% pixel tolerance) is set on a browser test with a `screenshot` step:
+1. The harness compares the newly captured screenshot against the most recent passing baseline.
+2. If pixels changed exceed the threshold, the test fails with `Visual regression: X.X% pixels changed`.
+3. A visual diff heatmap (`<slug>-diff.png`) is automatically generated, highlighting changed pixels in vibrant magenta (`#FF007F`) on a dimmed background.
+4. An operator with `admin` or `runner` role can review the diff in the test detail view and click **"Approve as New Baseline"** to promote the new screenshot.
+
+#### Core Web Vitals & Frontend Performance
+
+Browser tests can capture and enforce Web Vitals metrics extracted from Chromium's Performance API:
+- `max_lcp_ms`: Largest Contentful Paint (ms) — recommended `< 2500`
+- `max_fcp_ms`: First Contentful Paint (ms) — recommended `< 1800`
+- `max_ttfb_ms`: Time to First Byte (ms) — recommended `< 800`
+- `max_cls`: Cumulative Layout Shift (score) — recommended `< 0.1`
+- `max_load_ms`: Full page load event duration (ms)
+- `capture_web_vitals: true`: Records metrics into the step log without asserting failure thresholds.
+
+Thresholds can also be declared as discrete steps:
+```yaml
+steps:
+  - navigate: /products
+  - assert_performance:
+      max_lcp_ms: 2000
+      max_ttfb_ms: 600
+```
 
 ---
 
