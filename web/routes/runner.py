@@ -3,6 +3,11 @@ heartbeat. Workers authenticate with an existing API key (Bearer hth_…) so we
 reuse the user/role/audit infrastructure without inventing a new credential
 type. CSRF doesn't apply (Bearer-only, /api/* exempt).
 
+Every endpoint goes through ``require_worker``: the caller must present an API
+key (session cookies are rejected) owned by a user with role admin or runner.
+Job descriptors carry resolved secrets, so a scope check alone isn't enough —
+any user can mint a key.
+
 See ``docs/superpowers/plans/2026-05-14-remote-worker.md`` for the design.
 """
 import asyncio
@@ -14,10 +19,45 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from typing import Optional
 
-from web.auth import get_current_user, require_scope
+from web.auth import require_scope
 
 router = APIRouter(prefix="/api/runner")
 _log = logging.getLogger("harness.runner_api")
+
+# Roles allowed to act as a worker. The runner role can already edit app YAML
+# (and so read any secret through an app), so this grants nothing new.
+_WORKER_ROLES = ("admin", "runner")
+
+
+def require_worker(scope: str):
+    """Dependency for /api/runner/*: ``require_scope(scope)`` plus API-key
+    auth and a worker-capable role. Returns ``(user, api_key_row)``.
+
+    * 401 when the request authenticated with a session cookie — workers
+      always use a key, and the key id is what a runner name is bound to.
+    * 403 when the key's owner isn't admin or runner. Applies to legacy
+      wildcard keys too.
+    """
+    scope_dep = require_scope(scope)
+
+    async def _dep(request: Request, user: dict = Depends(scope_dep)):
+        api_key = getattr(request.state, "api_key", None)
+        if api_key is None:
+            raise HTTPException(
+                status_code=401,
+                detail="runner endpoints require API-key (Bearer) authentication",
+            )
+        if user.get("role") not in _WORKER_ROLES:
+            _log.info(
+                "require_worker: user %s (role=%r) denied on %s",
+                user.get("username"), user.get("role"), request.url.path,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="runner endpoints require a user with role 'admin' or 'runner'",
+            )
+        return user, api_key
+    return _dep
 
 # Hard cap on how long the server will hold a long-poll connection open.
 # Longer than this and intermediate proxies / cloud LBs start killing the
@@ -112,8 +152,7 @@ class RunnerHeartbeatResponse(BaseModel):
 @router.post("/register", response_model=RunnerRegisterResponse)
 async def runner_register(
     req: RunnerRegisterRequest,
-    request: Request,
-    current_user: dict = Depends(require_scope("worker:results")),
+    worker: tuple = Depends(require_worker("worker:results")),
 ):
     """Worker announces itself on startup. Idempotent: re-registering with
     the same name updates tags/capabilities/version and resets last_seen_at.
@@ -131,12 +170,12 @@ async def runner_register(
         incompatibility_notice,
         is_version_stale,
     )
+    current_user, api_key = worker
     db = get_db()
     if not req.name.strip():
         raise HTTPException(status_code=422, detail="name must be non-empty")
 
-    # The current_user came from Bearer auth; pull the api_key_id by hash for audit.
-    api_key_id = _api_key_id_for_request(db, request)
+    api_key_id = api_key["id"]
 
     cv = central_version()
     warning_minors = _version_skew_warning_minors(get_config())
@@ -196,7 +235,7 @@ def _version_skew_warning_minors(config: Optional[dict]) -> int:
 @router.post("/poll")
 async def runner_poll(
     req: RunnerPollRequest,
-    current_user: dict = Depends(require_scope("worker:pull")),
+    worker: tuple = Depends(require_worker("worker:pull")),
 ):
     """Worker asks for next jobs. Returns 0..capacity job descriptors,
     immediately (short-poll v1). Updates the worker's last_seen_at.
@@ -252,7 +291,7 @@ async def runner_poll(
 @router.post("/results")
 async def runner_results(
     req: RunnerResultsRequest,
-    current_user: dict = Depends(require_scope("worker:results")),
+    worker: tuple = Depends(require_worker("worker:results")),
 ):
     """Worker submits completed test results for a job it owns.
 
@@ -371,7 +410,7 @@ def _save_screenshots(run_id: str, screenshots: list) -> dict:
 @router.post("/heartbeat", response_model=RunnerHeartbeatResponse)
 async def runner_heartbeat(
     req: RunnerHeartbeatRequest,
-    current_user: dict = Depends(require_scope("worker:results")),
+    worker: tuple = Depends(require_worker("worker:results")),
 ):
     """Liveness ping. Workers call this periodically (~30s) between polls
     so the /admin/runners status display stays accurate even if the worker
@@ -468,7 +507,7 @@ async def runner_jobs_long_poll(
     name: str,
     wait: int = 0,
     capacity: int = 1,
-    current_user: dict = Depends(require_scope("worker:pull")),
+    worker: tuple = Depends(require_worker("worker:pull")),
 ):
     """Long-poll alternative to POST /poll. Matches the same dispatch semantics
     but blocks until a job is available (or ``wait`` seconds elapse)."""
@@ -544,26 +583,3 @@ async def runner_jobs_long_poll(
             )
         # Defensive: clear so the next iteration blocks again.
         event.clear()
-
-
-# ── Helpers ─────────────────────────────────────────────────────────────────
-
-def _api_key_id_for_request(db, request: Request) -> Optional[str]:
-    """Best-effort: pull the api_keys.id used by this Bearer token, for audit
-    linkage. Returns None if the auth was session-based (admins testing) or
-    the key can't be looked up."""
-    import hashlib
-    auth = request.headers.get("Authorization", "")
-    token = ""
-    if auth.startswith("Bearer hth_"):
-        token = auth[len("Bearer "):]
-    elif request.headers.get("X-API-Key", "").startswith("hth_"):
-        token = request.headers["X-API-Key"]
-    if not token:
-        return None
-    prefix = token[4:12]
-    key_hash = hashlib.sha256(token.encode()).hexdigest()
-    for candidate in db.get_api_key_by_prefix(prefix):
-        if candidate["key_hash"] == key_hash:
-            return candidate["id"]
-    return None
