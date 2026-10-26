@@ -76,6 +76,8 @@
    - Add recurring maintenance window schedules (e.g. weekly Sunday 02:00-04:00 UTC) in addition to one-off datetime windows.
 4. **[Multi-Environment Dashboard Filtering]**:
    - Add persistent environment selection cookies/filters in the UI header for operators monitoring multi-region deployments.
+5. **[Optional Exploration: Windows-Level Control & Desktop Automation (Linear CRO-47)]**:
+   - Evaluate hybrid browser + desktop automation (`rpaframework`, `pywinauto`) for Windows-hosted remote workers testing native desktop clients and OS dialogs.
 
 ---
 
