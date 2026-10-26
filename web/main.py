@@ -441,7 +441,14 @@ def main():
 
     config = load_config("config.yaml")
     app = create_app(config=config)
-    uvicorn.run(app, host="0.0.0.0", port=9552)
+    forwarded_ips = os.environ.get("FORWARDED_ALLOW_IPS", "127.0.0.1")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=9552,
+        proxy_headers=True,
+        forwarded_allow_ips=forwarded_ips,
+    )
 
 
 if __name__ == "__main__":

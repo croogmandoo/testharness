@@ -152,12 +152,12 @@ The compose file includes a healthcheck that polls `/health` every 30 seconds:
 
 ```yaml
 healthcheck:
-  test: ["CMD", "python", "-c",
-         "import urllib.request; urllib.request.urlopen('http://localhost:9552/health')"]
+  test: ["CMD", "curl", "--fail", "--silent", "--show-error",
+         "http://127.0.0.1:9552/health"]
   interval: 30s
-  timeout: 10s
+  timeout: 5s
   retries: 3
-  start_period: 15s
+  start_period: 10s
 ```
 
 Check health status:
@@ -185,29 +185,145 @@ docker compose build
 docker compose up -d
 
 # Open a shell inside the container
-docker compose exec app bash
+docker compose exec harness bash
 ```
 
 ---
 
-## Reverse Proxy (HTTPS)
+## Production Hardening & Reverse Proxy (HTTPS)
 
-For production, put the harness behind nginx or Caddy. Set `auth.secure_cookie: true` in `config.yaml` when serving over HTTPS so the session cookie is marked `Secure`.
+Production deployments should never expose the raw FastAPI port 9552 directly to the public internet. Terminate TLS through a reverse proxy (Caddy, Traefik, or Nginx) and observe the security checklist below.
 
-**Example nginx snippet:**
+### Production Hardening Checklist
+
+- [ ] **Enforce HTTPS & Cookie Security**: Set `auth.secure_cookie: true` in `config.yaml` so session cookies carry the `Secure` flag and are never transmitted over plain HTTP.
+- [ ] **Protect Secrets Encryption Key**: Confirm `data/secret.key` is present, has non-zero length, and has strict `0600` POSIX file permissions (`chmod 0600 data/secret.key`).
+- [ ] **Configure Proxy Client IP Forwarding**: Set `FORWARDED_ALLOW_IPS` (in `.env` or compose `environment:`) to your proxy's IP address, subnet, or `*` (if within an isolated private container network). This ensures the in-process rate limiters on `/auth/login` and `/setup` accurately throttle attackers by real client IP rather than choking the entire reverse proxy.
+- [ ] **Run Container Unprivileged**: By default the container entrypoint normalises bind-mount ownership and `gosu`-drops privileges to UID `10001` (`harness`). Never run the container root process directly in production.
+- [ ] **Gating Public Status Page**: If test names and uptime summaries should remain internal, disable the status page in `config.yaml`:
+  ```yaml
+  status_page:
+    enabled: false
+  ```
+- [ ] **Monitor Application Liveness**: Configure upstream load balancers and proxy monitors to probe `/health` (returns `HTTP 200 {"status":"ok"}`).
+
+---
+
+### Reverse Proxy Configuration Examples
+
+#### 1. Caddy (Recommended for Automatic HTTPS)
+
+Caddy terminates TLS, obtains Let's Encrypt certificates automatically, and forwards client headers by default.
+
+```caddyfile
+# /etc/caddy/Caddyfile
+harness.example.com {
+    encode gzip zstd
+
+    # Proxy to testharness container on port 9552
+    reverse_proxy 127.0.0.1:9552 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+
+        # Active healthcheck probing
+        health_uri /health
+        health_interval 30s
+        health_timeout 5s
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
+```
+
+#### 2. Traefik (Docker Provider Labels)
+
+When deploying behind Traefik v2 or v3, add container labels directly to `docker-compose.yml`:
+
+```yaml
+services:
+  harness:
+    build: .
+    image: testharness:latest
+    container_name: harness
+    restart: unless-stopped
+    environment:
+      - FORWARDED_ALLOW_IPS=*
+    networks:
+      - traefik-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.harness.rule=Host(`harness.example.com`)"
+      - "traefik.http.routers.harness.entrypoints=websecure"
+      - "traefik.http.routers.harness.tls.certresolver=letsencrypt"
+      - "traefik.http.services.harness.loadbalancer.server.port=9552"
+      - "traefik.http.services.harness.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.harness.loadbalancer.healthcheck.interval=30s"
+
+networks:
+  traefik-net:
+    external: true
+```
+
+#### 3. Nginx
+
+A hardened Nginx virtual host with modern TLS ciphers, WebSocket proxying, and streaming buffers:
 
 ```nginx
+# /etc/nginx/sites-available/harness.conf
 server {
-    listen 443 ssl;
+    listen 80;
+    listen [::]:80;
+    server_name harness.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name harness.example.com;
 
-    # ... ssl_certificate, ssl_certificate_key ...
+    ssl_certificate /etc/letsencrypt/live/harness.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/harness.example.com/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+
+    client_max_body_size 10M;
 
     location / {
-        proxy_pass         http://localhost:9552;
-        proxy_set_header   Host              $host;
-        proxy_set_header   X-Real-IP         $remote_addr;
-        proxy_set_header   X-Forwarded-Proto https;
+        proxy_pass http://127.0.0.1:9552;
+        proxy_http_version 1.1;
+
+        # Forward real client headers
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket support (for live execution dashboard)
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_read_timeout 90s;
+        proxy_connect_timeout 10s;
+    }
+
+    # Dedicated monitoring probe
+    location = /health {
+        proxy_pass http://127.0.0.1:9552/health;
+        access_log off;
     }
 }
 ```

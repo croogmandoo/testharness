@@ -451,3 +451,27 @@ def test_key_creation_falls_back_without_hardlinks(tmp_path, monkeypatch):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["secret.key"]
     if os.name == "posix":
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_secure_cookie_flag_in_production_config(db, apps_dir):
+    """When auth.secure_cookie is True, session cookies include the Secure attribute."""
+    from web.csrf import verify_csrf
+    from web.main import create_app
+
+    cfg = {
+        "default_environment": "production",
+        "environments": {"production": {"label": "Production"}},
+        "auth": {"session_hours": 8, "secure_cookie": True},
+    }
+    app = create_app(db=db, config=cfg, apps_dir=str(apps_dir))
+    app.dependency_overrides[verify_csrf] = lambda: None
+    _insert_user(db, "alice", role="admin")
+
+    c = TestClient(app, follow_redirects=False)
+    resp = c.post("/auth/login", data={"username": "alice", "password": "Secret123!"})
+    assert resp.status_code == 303
+    set_cookie_header = resp.headers.get("set-cookie", "")
+    assert "Secure" in set_cookie_header
+    assert "HttpOnly" in set_cookie_header
+    assert "SameSite=lax" in set_cookie_header
+
