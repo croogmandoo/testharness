@@ -64,7 +64,8 @@ RUN install -d -o harness -g harness /app/data /app/data/screenshots
 # uid (10001), then `gosu`-drops privileges before exec'ing CMD. If the
 # operator pins a uid via `user:` in compose, the script detects the
 # non-root start and skips the chown (operator owns permissions then).
-COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 0755 /usr/local/bin/entrypoint.sh
 
 # NOTE: we intentionally do NOT set `USER harness` here. The entrypoint
 # starts as root so it can fix bind-mount ownership, then drops to
