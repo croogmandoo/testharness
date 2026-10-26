@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from web.auth import require_role
+from web.auth import issue_session_cookie, require_role
 from web.csrf import csrf_token_for, verify_csrf
 from web.templating import make_templates
 
@@ -148,6 +148,15 @@ async def users_update(
     if password:
         updates["password_hash"] = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
     db.update_user(user_id, **updates)
+    # Credential, privilege or status changes revoke the user's existing
+    # sessions so an old cookie can't outlive them.
+    revoke = (
+        bool(password)
+        or target_user.get("role") != role
+        or (int(target_user.get("is_active") or 0) and not int(is_active))
+    )
+    if revoke:
+        db.bump_session_version(user_id)
     changes = []
     if target_user.get("role") != role:
         changes.append(f"role: {target_user.get('role')} -> {role}")
@@ -159,4 +168,13 @@ async def users_update(
                  username=current_user.get("username"),
                  target=target_user["username"],
                  details="; ".join(changes) if changes else "no role/auth changes")
-    return RedirectResponse("/users", status_code=303)
+    response = RedirectResponse("/users", status_code=303)
+    if (revoke and user_id == current_user["id"]
+            and getattr(request.state, "api_key", None) is None
+            and request.cookies.get("session")):
+        # An admin editing their own account keeps this browser signed in
+        # with a fresh cookie; their other sessions are still revoked.
+        refreshed = db.get_user_by_id(user_id)
+        if refreshed and refreshed.get("is_active"):
+            issue_session_cookie(response, refreshed)
+    return response

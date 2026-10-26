@@ -1,8 +1,8 @@
 import json
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, Response
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 _log = logging.getLogger("harness.auth")
@@ -38,25 +38,74 @@ def get_auth_config() -> dict:
     }
 
 
-def make_session_token(user_id: str, signing_key: bytes, session_hours: int) -> str:
-    return URLSafeTimedSerializer(signing_key).dumps(user_id)
+def make_session_token(user_id: str, signing_key: bytes, session_hours: int,
+                       session_version: int = 0) -> str:
+    """Sign ``[user_id, session_version]``. The version ties the token to
+    ``users.session_version``; bumping that column revokes the token."""
+    return URLSafeTimedSerializer(signing_key).dumps([user_id, int(session_version)])
 
 
-def load_session_token(token: str, signing_key: bytes, session_hours: int) -> Optional[str]:
+def load_session_claims(token: str, signing_key: bytes,
+                        session_hours: int) -> Optional[Tuple[str, int]]:
+    """Verify ``token`` and return ``(user_id, session_version)``.
+
+    Tokens issued before session versioning carry a bare user-id string;
+    they are read as version 0 so existing sessions survive the upgrade
+    until the user's first version bump. Returns None for anything invalid,
+    expired or malformed."""
     if not token:
         return None
     try:
-        return URLSafeTimedSerializer(signing_key).loads(token, max_age=session_hours * 3600)
+        payload = URLSafeTimedSerializer(signing_key).loads(
+            token, max_age=session_hours * 3600
+        )
     except (BadSignature, SignatureExpired, Exception):
         return None
+    if isinstance(payload, str):
+        return (payload, 0) if payload else None
+    if (
+        isinstance(payload, list)
+        and len(payload) == 2
+        and isinstance(payload[0], str) and payload[0]
+        and isinstance(payload[1], int) and not isinstance(payload[1], bool)
+    ):
+        return payload[0], payload[1]
+    return None
 
 
-def _make_token(user_id: str) -> str:
-    return make_session_token(user_id, _signing_key, _session_hours)
+def load_session_token(token: str, signing_key: bytes, session_hours: int) -> Optional[str]:
+    """Return only the user id from a valid session token (see
+    ``load_session_claims``). Does not check the session version."""
+    claims = load_session_claims(token, signing_key, session_hours)
+    return claims[0] if claims else None
+
+
+def _make_token(user_id: str, session_version: int = 0) -> str:
+    return make_session_token(user_id, _signing_key, _session_hours, session_version)
 
 
 def _load_token(token: str) -> Optional[str]:
     return load_session_token(token, _signing_key, _session_hours)
+
+
+def _load_claims(token: str) -> Optional[Tuple[str, int]]:
+    return load_session_claims(token, _signing_key, _session_hours)
+
+
+def issue_session_cookie(response: Response, user: dict) -> Response:
+    """Set the ``session`` cookie for ``user`` on ``response``.
+
+    The single place session cookies are minted (setup, password/LDAP login
+    and GitHub OAuth): the token carries the user's current
+    ``session_version`` and the cookie is HttpOnly, SameSite=Lax, Secure
+    per ``auth.secure_cookie`` and expires with the token."""
+    token = _make_token(user["id"], int(user.get("session_version") or 0))
+    response.set_cookie(
+        "session", token,
+        httponly=True, samesite="lax", secure=_secure_cookie,
+        max_age=int(_session_hours * 3600),
+    )
+    return response
 
 
 async def get_current_user(request: Request) -> dict:
@@ -111,11 +160,16 @@ async def get_current_user(request: Request) -> dict:
 
     # --- Session cookie fallback ---
     token = request.cookies.get("session", "")
-    user_id = _load_token(token)
-    if not user_id:
+    claims = _load_claims(token)
+    if not claims:
         _not_authed()
+    user_id, session_version = claims
     user = db.get_user_by_id(user_id)
     if not user or not user.get("is_active"):
+        _not_authed()
+    # A logout, password/role change or deactivation bumps the stored
+    # version, which revokes every cookie minted before it.
+    if session_version != int(user.get("session_version") or 0):
         _not_authed()
     return user
 
