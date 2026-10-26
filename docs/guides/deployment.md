@@ -32,6 +32,15 @@ curl http://localhost:9552/health
 
 Open `http://localhost:9552` in your browser. On first run you'll be prompted to create an admin account.
 
+The setup form asks for a **first-run setup token**, so nobody else who can reach the port can claim the admin account before you do. Either read the generated token from the logs (it is printed once, when `/setup` is first opened):
+
+```bash
+docker logs harness 2>&1 | grep "setup token"
+# → ... WARNING ... First-run setup token: 3q2-...
+```
+
+or choose your own by setting `HARNESS_SETUP_TOKEN` in `.env` before the first start. The generated token changes on every restart until the admin account exists.
+
 ---
 
 ## File Layout

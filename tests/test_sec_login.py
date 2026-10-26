@@ -410,3 +410,66 @@ def test_unknown_or_ineligible_user_still_runs_bcrypt(db, monkeypatch, setup):
                         lambda pw, h: calls.append(h) or real(pw, h))
     assert verify_local_password("bob", "whatever", db) is None
     assert len(calls) == 1
+
+
+# ── /setup race: first-run setup token ───────────────────────────────────────
+
+SETUP_FORM = {"username": "root", "password": "Secret123!",
+              "confirm": "Secret123!", "display_name": ""}
+
+
+@pytest.fixture
+def no_env_setup_token(monkeypatch):
+    monkeypatch.delenv("HARNESS_SETUP_TOKEN", raising=False)
+
+
+def test_setup_without_token_is_403(db, login_client, no_env_setup_token):
+    r = login_client.post("/setup", data=SETUP_FORM)
+    assert r.status_code == 403
+    assert db.count_users() == 0
+
+
+def test_setup_with_wrong_token_is_403(db, login_client, no_env_setup_token):
+    r = login_client.post("/setup", data={**SETUP_FORM, "setup_token": "guess"})
+    assert r.status_code == 403
+    assert db.count_users() == 0
+
+
+def test_setup_with_generated_token_is_303(db, login_client, no_env_setup_token):
+    from web.routes.auth import get_setup_token
+    r = login_client.post("/setup", data={**SETUP_FORM, "setup_token": get_setup_token()})
+    assert r.status_code == 303
+    assert db.get_user_by_username("root")["role"] == "admin"
+
+
+def test_setup_token_from_env(db, login_client, monkeypatch):
+    from web.routes.auth import get_setup_token
+    monkeypatch.setenv("HARNESS_SETUP_TOKEN", "from-the-env-file")
+    assert get_setup_token() == "from-the-env-file"
+    r = login_client.post("/setup", data={**SETUP_FORM, "setup_token": "nope"})
+    assert r.status_code == 403
+    r = login_client.post("/setup", data={**SETUP_FORM, "setup_token": "from-the-env-file"})
+    assert r.status_code == 303
+
+
+def test_setup_token_is_logged_once_on_first_get(db, login_client, monkeypatch,
+                                                 no_env_setup_token, caplog):
+    import logging
+    import web.routes.auth as auth_routes
+    monkeypatch.setattr(auth_routes, "_setup_token_logged", False)
+    with caplog.at_level(logging.WARNING, logger="web.routes.auth"):
+        assert login_client.get("/setup").status_code == 200
+        login_client.get("/setup")
+    msgs = [r.getMessage() for r in caplog.records
+            if "First-run setup token" in r.getMessage()]
+    assert msgs == [f"First-run setup token: {auth_routes.get_setup_token()}"]
+
+
+def test_setup_attempts_are_throttled(db, login_client, no_env_setup_token):
+    for _ in range(10):
+        r = login_client.post("/setup", data={**SETUP_FORM, "setup_token": "guess"})
+        assert r.status_code == 403
+    from web.routes.auth import get_setup_token
+    r = login_client.post("/setup", data={**SETUP_FORM, "setup_token": get_setup_token()})
+    assert r.status_code == 429
+    assert db.count_users() == 0

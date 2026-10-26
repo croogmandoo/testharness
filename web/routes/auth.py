@@ -31,12 +31,41 @@ def _nav_ctx(request: Request) -> dict:
 
 # ── First-run setup ───────────────────────────────────────────────────────────
 
+_generated_setup_token: "str | None" = None
+_setup_token_logged = False
+
+
+def get_setup_token() -> str:
+    """The token ``POST /setup`` requires.
+
+    ``HARNESS_SETUP_TOKEN`` wins when set. Otherwise a random per-process
+    token is generated on first use; ``_announce_setup_token`` logs it so
+    whoever has access to the server logs can finish first-run setup, and
+    nobody else racing for the open ``/setup`` page can."""
+    global _generated_setup_token
+    env_token = os.environ.get("HARNESS_SETUP_TOKEN", "").strip()
+    if env_token:
+        return env_token
+    if _generated_setup_token is None:
+        _generated_setup_token = _secrets.token_urlsafe(24)
+    return _generated_setup_token
+
+
+def _announce_setup_token() -> None:
+    global _setup_token_logged
+    if _setup_token_logged or os.environ.get("HARNESS_SETUP_TOKEN", "").strip():
+        return
+    _setup_token_logged = True
+    _log.warning("First-run setup token: %s", get_setup_token())
+
+
 @router.get("/setup", response_class=HTMLResponse)
 async def setup_get(request: Request):
     from web.main import get_db
     if get_db().count_users() > 0:
         from fastapi import HTTPException
         raise HTTPException(status_code=404)
+    _announce_setup_token()
     return templates.TemplateResponse(request, "setup.html", _nav_ctx(request))
 
 
@@ -47,17 +76,35 @@ async def setup_post(
     password: str = Form(...),
     confirm: str = Form(...),
     display_name: str = Form(""),
+    setup_token: str = Form(""),
     _csrf=Depends(verify_csrf),
 ):
     from web.main import get_db, get_config
     import bcrypt as _bcrypt
     from web.auth import _make_token
+    from web.ratelimit import setup_limiter, client_ip
     db = get_db()
     if db.count_users() > 0:
         from fastapi import HTTPException
         raise HTTPException(status_code=404)
 
     ctx = {**_nav_ctx(request), "error": None}
+
+    ip = client_ip(request)
+    if setup_limiter.is_limited(ip):
+        ctx["error"] = "Too many setup attempts. Try again later."
+        return templates.TemplateResponse(
+            request, "setup.html", ctx, status_code=429,
+            headers={"Retry-After": str(setup_limiter.retry_after(ip))},
+        )
+    setup_limiter.hit(ip)
+
+    _announce_setup_token()
+    if not _secrets.compare_digest(
+        setup_token.strip().encode("utf-8"), get_setup_token().encode("utf-8")
+    ):
+        ctx["error"] = "Invalid setup token."
+        return templates.TemplateResponse(request, "setup.html", ctx, status_code=403)
 
     if password != confirm:
         ctx["error"] = "Passwords do not match."

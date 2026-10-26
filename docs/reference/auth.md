@@ -147,6 +147,13 @@ If `users.role_override = 1` for an LDAP user, their role is not updated from LD
 **First-run setup:**
 `_FirstRunMiddleware` intercepts every request when `count_users() == 0` and redirects to `GET /setup`. `POST /setup` creates the initial admin account and sets the session cookie in one step.
 
+Until the first account exists, anyone who can reach the server could claim admin through `/setup`. To close that race, `POST /setup` requires a **setup token** (form field `setup_token`, compared with `secrets.compare_digest`; a missing or wrong token returns 403):
+
+- If the `HARNESS_SETUP_TOKEN` environment variable is set, its value is the token.
+- Otherwise the server generates a random per-process token (`secrets.token_urlsafe(24)`) and logs it once at WARNING as `First-run setup token: <token>` the first time `/setup` is requested while there are no users. A restart generates a new one.
+
+`/setup` submissions are also limited to 10 per client IP per 5 minutes (429 after that). Once any user exists, `/setup` returns 404 as before.
+
 **Session revocation:**
 Set `users.is_active = 0` in the database. There is no sessions table — `get_current_user` checks `is_active` on every request, so deactivation takes effect immediately on the next request.
 
@@ -166,6 +173,7 @@ Relevant keys in `config.yaml`:
 | `auth.github.allowed_users` | `[]` | GitHub logins allowed to sign in (case-insensitive) |
 | `auth.github.allowed_orgs` | `[]` | GitHub orgs whose members may sign in (adds the `read:org` scope) |
 | `auth.github.auto_provision` | `false` | Create accounts for any GitHub user when no allowlist is set |
+| `HARNESS_SETUP_TOKEN` (env) | random, logged | Token required by `POST /setup` on first run |
 | `auth.ldap.enabled` | `false` | Enable LDAP authentication fallback |
 | `auth.ldap.server` | — | LDAP server hostname |
 | `auth.ldap.port` | — | LDAP server port (typically 389 or 636) |
