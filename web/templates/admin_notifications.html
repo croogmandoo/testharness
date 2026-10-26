@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="breadcrumb">
+  <a href="/admin">Admin</a> / Notification Groups
+</div>
+<div class="page-header">
+  <div>
+    <h1>Notification Groups</h1>
+    <p class="text-secondary mt-1">Create targeted notification groups for email alerts and assign them to specific applications.</p>
+  </div>
+</div>
+
+<div class="grid grid-2 gap-6">
+  <div>
+    <div class="card">
+      <div class="card-title">Create Notification Group</div>
+      {% if error %}
+      <div class="form-error mb-4">{{ error }}</div>
+      {% endif %}
+      <form method="post" action="/admin/notifications">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="field">
+          <label class="label">Group Name</label>
+          <input class="input" name="name" placeholder="e.g. Platform DevOps" required>
+        </div>
+        <div class="field">
+          <label class="label">Description (optional)</label>
+          <input class="input" name="description" placeholder="Primary on-call escalation team">
+        </div>
+        <div class="field">
+          <label class="label">Email Addresses (one per line or comma-separated)</label>
+          <textarea class="input" name="emails" rows="5" placeholder="devops@example.com&#10;oncall@example.com" required></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Create Group</button>
+      </form>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-title">Configured Notification Groups</div>
+      {% if groups %}
+      <div class="space-y-4">
+        {% for g in groups %}
+        <div class="p-4 bg-1 border rounded-md">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <strong class="text-md">{{ g.name }}</strong>
+              {% if g.description %}
+              <div class="text-xs text-muted mt-0.5">{{ g.description }}</div>
+              {% endif %}
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="button" class="btn btn-sm" onclick="openEditModal('{{ g.id }}', '{{ g.name|escape }}', '{{ (g.description or '')|escape }}', {{ g.emails|tojson }})">Edit</button>
+              <form method="post" action="/admin/notifications/{{ g.id }}/delete" onsubmit="return confirm('Delete notification group {{ g.name }}?');" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+              </form>
+            </div>
+          </div>
+
+          <div class="mb-2">
+            <span class="text-xs font-semibold text-muted uppercase">Recipients ({{ g.emails|length }}):</span>
+            <div class="flex flex-wrap gap-1 mt-1">
+              {% for em in g.emails %}
+              <span class="tag-chip font-mono text-xs">{{ em }}</span>
+              {% endfor %}
+            </div>
+          </div>
+
+          {% if g.assigned_apps %}
+          <div class="text-xs text-muted">
+            <span class="font-semibold uppercase">Assigned Apps:</span>
+            {{ g.assigned_apps|join(", ") }}
+          </div>
+          {% else %}
+          <div class="text-xs text-muted italic">Not currently assigned to any app</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-muted">No notification groups created yet. Groups created here can be assigned to apps in their YAML definitions or the app editor.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Edit Group Modal Dialog -->
+<dialog id="edit-modal" class="modal-dialog">
+  <div class="modal-box">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-lg font-bold" id="edit-modal-title">Edit Notification Group</h3>
+      <button type="button" class="btn btn-sm" onclick="document.getElementById('edit-modal').close()">✕</button>
+    </div>
+    <form id="edit-modal-form" method="post" action="">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field">
+        <label class="label">Group Name</label>
+        <input class="input" id="edit-modal-name" name="name" required>
+      </div>
+      <div class="field">
+        <label class="label">Description</label>
+        <input class="input" id="edit-modal-desc" name="description">
+      </div>
+      <div class="field">
+        <label class="label">Email Addresses (one per line)</label>
+        <textarea class="input" id="edit-modal-emails" name="emails" rows="5" required></textarea>
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" class="btn" onclick="document.getElementById('edit-modal').close()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<script>
+function openEditModal(id, name, desc, emails) {
+  const form = document.getElementById("edit-modal-form");
+  form.action = "/admin/notifications/" + id + "/edit";
+  document.getElementById("edit-modal-title").textContent = "Edit " + name;
+  document.getElementById("edit-modal-name").value = name;
+  document.getElementById("edit-modal-desc").value = desc;
+  document.getElementById("edit-modal-emails").value = (emails || []).join("\n");
+  document.getElementById("edit-modal").showModal();
+}
+</script>
+{% endblock %}

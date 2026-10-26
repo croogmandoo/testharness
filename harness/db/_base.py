@@ -10,6 +10,7 @@ import sqlite3
 from ._api_keys import APIKeysMixin
 from ._app_state import AppStateMixin
 from ._audit import AuditMixin
+from ._notification_groups import NotificationGroupsMixin
 from ._runner_jobs import RunnerJobsMixin
 from ._runners import RunnersMixin
 from ._runs import RunsMixin
@@ -145,14 +146,24 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
     error        TEXT,
     retry_count  INTEGER NOT NULL DEFAULT 0   -- number of times reaper requeued this job
 );
+CREATE TABLE IF NOT EXISTS notification_groups (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    description TEXT,
+    emails      TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notification_groups_name
+    ON notification_groups(name);
 CREATE INDEX IF NOT EXISTS idx_runner_jobs_dispatch
     ON runner_jobs(state, runner_name, target_tag);
 CREATE INDEX IF NOT EXISTS idx_runner_jobs_run_id
     ON runner_jobs(run_id);
 """
 
-class Database(APIKeysMixin, AppStateMixin, AuditMixin, RunnerJobsMixin,
-               RunnersMixin, RunsMixin, SecretsMixin, UsersMixin):
+class Database(APIKeysMixin, AppStateMixin, AuditMixin, NotificationGroupsMixin,
+               RunnerJobsMixin, RunnersMixin, RunsMixin, SecretsMixin, UsersMixin):
     def __init__(self, path: str = "data/harness.db"):
         self.path = path
 
@@ -195,6 +206,15 @@ class Database(APIKeysMixin, AppStateMixin, AuditMixin, RunnerJobsMixin,
                 # try/except below swallows the IntegrityError), but new
                 # inserts will be blocked at the SQL layer.
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_ca_certs_name ON ca_certs(name)",
+                "CREATE TABLE IF NOT EXISTS notification_groups ("
+                "  id TEXT PRIMARY KEY, "
+                "  name TEXT NOT NULL UNIQUE COLLATE NOCASE, "
+                "  description TEXT, "
+                "  emails TEXT NOT NULL, "
+                "  created_at TEXT NOT NULL, "
+                "  updated_at TEXT NOT NULL"
+                ")",
+                "CREATE INDEX IF NOT EXISTS idx_notification_groups_name ON notification_groups(name)",
             ):
                 try:
                     conn.execute(migration)

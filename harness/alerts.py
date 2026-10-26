@@ -4,7 +4,7 @@ import logging
 import httpx
 import smtplib
 from email.message import EmailMessage
-from typing import Union
+from typing import Union, Optional
 from harness.types import AlertType
 
 logger = logging.getLogger("harness.alerts")
@@ -37,11 +37,17 @@ async def _send_discord(webhook_url: str, text: str) -> None:
     async with httpx.AsyncClient(timeout=10) as client:
         await client.post(webhook_url, json={"content": text})
 
-def _send_email(smtp_config: dict, subject: str, body: str) -> None:
+def _send_email(smtp_config: dict, subject: str, body: str,
+                recipients: Optional[list] = None) -> None:
+    to_list = recipients if recipients else smtp_config.get("to", [])
+    if isinstance(to_list, str):
+        to_list = [to_list]
+    if not to_list:
+        return
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = smtp_config["from"]
-    msg["To"] = ", ".join(smtp_config["to"])
+    msg["To"] = ", ".join(to_list)
     msg.set_content(body)
     with smtplib.SMTP(smtp_config["smtp_host"], smtp_config.get("smtp_port", 587)) as s:
         s.starttls()
@@ -124,7 +130,8 @@ async def _send_custom_webhook(url: str, payload_data: dict, webhook_config: dic
             await client.post(url, content=payload, headers=headers)
 
 
-async def dispatch_alerts(alerts: list, alerts_config: dict) -> None:
+async def dispatch_alerts(alerts: list, alerts_config: dict,
+                           db=None, app_defs: Optional[list] = None) -> None:
     if not alerts_config:
         return
     teams_cfg = alerts_config.get("teams")
@@ -150,10 +157,39 @@ async def dispatch_alerts(alerts: list, alerts_config: dict) -> None:
                 logger.warning("Discord error: %s", e)
         if email_cfg:
             subject = f"[Harness] {app} — {test_name} {'FAILED' if alert_type == AlertType.FAIL else 'RESOLVED'}"
+            recipients = None
+            active_db = db
+            active_apps = app_defs
+            if active_db is None:
+                try:
+                    from web.main import get_db
+                    active_db = get_db()
+                except Exception:
+                    pass
+            if active_apps is None:
+                try:
+                    from web.main import get_apps
+                    active_apps = get_apps()
+                except Exception:
+                    pass
+            if active_db is not None:
+                groups = None
+                if active_apps:
+                    matched = next((a for a in active_apps if a.get("app") == app), None)
+                    if matched:
+                        groups = matched.get("notification_groups")
+                if groups:
+                    resolved = active_db.resolve_emails_for_groups(groups)
+                    if resolved:
+                        recipients = resolved
+
             try:
                 # Run blocking smtplib off the event loop via asyncio.to_thread
                 # (the older executor-fetch pattern was removed in Python 3.14).
-                await asyncio.to_thread(_send_email, email_cfg, subject, text)
+                if recipients is not None:
+                    await asyncio.to_thread(_send_email, email_cfg, subject, text, recipients=recipients)
+                else:
+                    await asyncio.to_thread(_send_email, email_cfg, subject, text)
             except Exception as e:
                 logger.error("Email failed: %s", e)
 

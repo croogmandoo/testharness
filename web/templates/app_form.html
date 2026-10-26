@@ -49,6 +49,25 @@
     <button type="button" class="btn btn-sm mt-1" onclick="addEnvRow()">+ Add Environment</button>
   </div>
 
+  <div class="field mb-5">
+    <label class="field-mini mb-1">Notification Groups</label>
+    <p class="text-sm text-dim mb-2">Select which notification groups should receive alert emails for this application.</p>
+    {% if notification_groups %}
+    <div class="groups-checkbox-grid" style="display: flex; flex-wrap: wrap; gap: 10px;">
+      {% set app_groups = app_def.notification_groups or [] %}
+      {% for grp in notification_groups %}
+      <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; background: var(--bg-surface, #1e222b); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border-color, #2d333b); font-size: 13px;">
+        <input type="checkbox" class="notification-group-checkbox" value="{{ grp.name | e }}"
+               {% if grp.name in app_groups or (grp.id|string) in app_groups %}checked{% endif %}>
+        <span><strong>{{ grp.name }}</strong> <span class="text-dim">({{ grp.emails | length }} email{{ 's' if grp.emails|length != 1 else '' }})</span></span>
+      </label>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-sm text-dim" style="font-style: italic;">No notification groups configured. You can manage them in <a href="/admin/notifications">Admin &gt; Notifications</a>.</p>
+    {% endif %}
+  </div>
+
   <div class="field mb-6">
     <label class="field-mini mb-2">Tests</label>
     <div id="tests-container">
@@ -184,6 +203,13 @@ function collectSimpleFormData() {
       const v = row.querySelector('.env-url').value.trim();
       if (k) obj.environments[k] = v;
     });
+  }
+  const selectedGroups = [];
+  document.querySelectorAll('.notification-group-checkbox:checked').forEach(function(cb) {
+    selectedGroups.push(cb.value);
+  });
+  if (selectedGroups.length > 0) {
+    obj.notification_groups = selectedGroups;
   }
   obj.tests = [];
   document.querySelectorAll('#tests-container .test-block').forEach(function(block) {

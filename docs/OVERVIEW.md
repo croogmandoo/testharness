@@ -59,8 +59,10 @@ testharness/
 │   ├── screenshot_diff.py        # Visual regression pixel diffing & high-contrast heatmap generation
 │   ├── proxy.py                  # Outbound forward proxy resolver (HTTP_PROXY / HTTPS_PROXY / config)
 │   ├── scheduler.py              # In-process cron scheduling (APScheduler)
-│   ├── alerts.py                 # Webhook, Slack, Teams, Discord & email dispatch
-│   ├── db.py                     # SQLite interface for runs, results, and test history (WAL mode)
+│   ├── alerts.py                 # Webhook, Slack, Teams, Discord & email dispatch (targeted routing)
+│   ├── db/                       # Modular SQLite interface (WAL mode)
+│   │   ├── _notification_groups.py # Notification groups data access & email resolution
+│   │   └── ...                   # Database mixins (runs, results, metrics, audit logs)
 │   ├── auth_db.py                # SQLite store for users, hashed passwords, roles & session tokens
 │   ├── secrets.py                # Symmetric Fernet encryption for credentials and auth headers
 │   ├── ca_certs.py               # Custom CA certificates and Chromium SPKI pin injection
@@ -68,10 +70,10 @@ testharness/
 ├── web/                          # FastAPI Web UI and REST API
 │   ├── main.py                   # App factory, lifespan lifecycle, middleware & static mounts
 │   ├── proxy_middleware.py       # ASGI Reverse Proxy middleware (CIDR trusted proxies & headers)
-│   ├── routes/                   # Route handlers (dashboard, API, auth, apps, runner, admin, proxy)
+│   ├── routes/                   # Route handlers (dashboard, API, auth, apps, runner, admin, notifications)
 │   ├── static/                   # Dark-themed CSS (Inter / JetBrains Mono) & client scripts
-│   └── templates/                # Jinja2 HTML templates for dashboard, run logs, and status pages
-├── tests/                        # Pytest suite (868+ passing unit & integration tests)
+│   └── templates/                # Jinja2 HTML templates for dashboard, run logs, status pages & notifications
+├── tests/                        # Pytest suite (882 passing unit & integration tests)
 ├── deploy/                       # Production observability & alerting assets
 │   ├── prometheus/alerts.yml     # Prometheus alerting rules (failure rates, stalls, staleness)
 │   └── grafana/dashboard.json    # Complete Grafana operations dashboard model
@@ -129,3 +131,9 @@ testharness/
 ### 3.7 Reverse & Outbound Proxy Architecture
 1. **Reverse Proxy (Inbound)**: `ReverseProxyMiddleware` parses incoming `X-Forwarded-*` headers, sanitizes client IP based on trusted CIDR masks, dynamically flags secure cookies over HTTPS, and sets `root_path` for subpath deployments. Diagnosed via `/admin/proxy`.
 2. **Forward Proxy (Outbound)**: `harness/proxy.py` extracts outbound egress proxies from `config.yaml` or system environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`), transparently forwarding them to Chromium browser launches and HTTP/API client engines.
+
+### 3.8 Notification Groups & Targeted Alert Routing
+1. **Management & Administration**: Operators and Admins define notification groups with a name, description, and list of recipient email addresses via `/admin/notifications` or the REST API (`/api/notification-groups`).
+2. **App Assignment**: Applications can specify one or more notification groups in their YAML definition (`notification_groups: ["DevOps", "Platform"]`) or through the app configuration UI.
+3. **Targeted Email Dispatch**: When tests fail or resolve, `dispatch_alerts()` queries `db.resolve_emails_for_groups()`. Recipient lists across assigned groups are merged, sanitized, and deduplicated.
+4. **Resilient Fallback**: If an application has no assigned notification groups, or none resolve to valid emails, alert dispatching falls back seamlessly to the global `alerts.email.to` configuration list.

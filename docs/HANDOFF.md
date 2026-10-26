@@ -1,9 +1,9 @@
 # Web Testing Harness Session Handoff & Operational Runbook
 
-**Generated:** 2026-10-26T18:50:00-04:00  
+**Generated:** 2026-10-26T19:05:00-04:00  
 **Branch:** `master` (synchronized with `origin/master`)  
 **Workspace:** `/home/craig/orca/workspaces/testharness/main`  
-**Test Suite:** **868 / 868 tests passing** (100% green, ~41s)
+**Test Suite:** **882 / 882 tests passing** (100% green, ~42s)
 
 ---
 
@@ -16,32 +16,41 @@
   - Authentication DB: `data/auth.db`
 - **Secrets Key**: `data/secret.key` (Fernet 32-byte key, enforced `0600` permissions)
 - **Primary Dependencies**: FastAPI, Uvicorn, Playwright, SQLite3, Jinja2, Pytest, Pillow, ReportLab, Cryptography, APScheduler
-- **GitHub Task Tracking**: Issues #8 through #21 closed and verified on `croogmandoo/testharness`.
-- **Linear Project**: `Web Testing Harness (testharness)` on `Croogmando-homelab` (`CRO-47`).
+- **GitHub Task Tracking**: Issues #8 through #21 and #23 closed and verified on `croogmandoo/testharness`.
+- **Linear Project**: `Web Testing Harness (testharness)` on `Croogmando-homelab` (`CRO-47`, `CRO-49`).
 - **Observability Assets**: Prometheus alerting rules in [deploy/prometheus/alerts.yml](file:///home/craig/orca/workspaces/testharness/main/deploy/prometheus/alerts.yml) and Grafana dashboard in [deploy/grafana/dashboard.json](file:///home/craig/orca/workspaces/testharness/main/deploy/grafana/dashboard.json).
 
 ---
 
 ## 2. Recent Work & Hardening Accomplishments
 
-1. **Prometheus Alerting Rules & Grafana Dashboard**:
+1. **Notification Groups Management & Targeted App Alert Routing (Issue #23 - CLOSED)**:
+   - Added [harness/db/_notification_groups.py](file:///home/craig/orca/workspaces/testharness/main/harness/db/_notification_groups.py) with `NotificationGroupsMixin` supporting group creation, listing, updating, deletion, and email address resolution (`resolve_emails_for_groups`).
+   - Integrated into [harness/db/_base.py](file:///home/craig/orca/workspaces/testharness/main/harness/db/_base.py) with automatic schema migration (`notification_groups` table with unique name index).
+   - Added full REST API endpoints in [web/routes/api.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/api.py) (`GET`, `POST`, `PUT`, `DELETE /api/notification-groups`) with RBAC enforcement (`admin`, `runner`), input validation, and audit logging.
+   - Built Admin UI in [web/routes/admin_notifications.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/admin_notifications.py) and [web/templates/admin_notifications.html](file:///home/craig/orca/workspaces/testharness/main/web/templates/admin_notifications.html) with group creation, email badges, edit dialogs, delete confirmations, and assigned app cross-referencing.
+   - Integrated notification group selection into application forms ([web/templates/app_form.html](file:///home/craig/orca/workspaces/testharness/main/web/templates/app_form.html), [web/routes/apps.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/apps.py)) allowing one or more groups to be assigned to an application.
+   - Enhanced alert engine in [harness/alerts.py](file:///home/craig/orca/workspaces/testharness/main/harness/alerts.py), [harness/runner.py](file:///home/craig/orca/workspaces/testharness/main/harness/runner.py), and [harness/worker_dispatch.py](file:///home/craig/orca/workspaces/testharness/main/harness/worker_dispatch.py) to resolve assigned groups, deduplicate recipient emails, and dynamically route alert emails to assigned groups with seamless fallback to global SMTP settings.
+   - Verified 14 comprehensive unit and integration tests in [tests/test_notification_groups.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_notification_groups.py).
+
+2. **Prometheus Alerting Rules & Grafana Dashboard**:
    - Added [deploy/prometheus/alerts.yml](file:///home/craig/orca/workspaces/testharness/main/deploy/prometheus/alerts.yml) with production Prometheus alerts (`HarnessTestFailing`, `HarnessHighFailureRate`, `HarnessAppStale`, `HarnessSlowTestExecution`, `HarnessRunnerHeartbeatMissing`).
    - Added [deploy/grafana/dashboard.json](file:///home/craig/orca/workspaces/testharness/main/deploy/grafana/dashboard.json) with fleet health stats, test duration percentiles, app status timeline matrix, run volume bar charts, and staleness monitoring.
    - Added `harness_runner_last_seen_timestamp_seconds` heartbeat gauge to [web/routes/metrics.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/metrics.py), tested in [tests/test_web_metrics.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_web_metrics.py).
 
-2. **Multi-Environment Selector & Persistent Cookie Filtering (Issue #20 - CLOSED)**:
+3. **Multi-Environment Selector & Persistent Cookie Filtering (Issue #20 - CLOSED)**:
    - Added interactive environment selector chips (`.env-chips`, `.env-chip`) to the dashboard header in [web/templates/dashboard.html](file:///home/craig/orca/workspaces/testharness/main/web/templates/dashboard.html) and breadcrumb bar in [web/templates/detail.html](file:///home/craig/orca/workspaces/testharness/main/web/templates/detail.html).
    - Added persistent cookie resolution (`selected_environment`) in [web/routes/dashboard.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/dashboard.py), persisting chosen environments across dashboard views and app details.
    - Tested in [tests/test_web_environment_filter.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_web_environment_filter.py).
 
-3. **Custom Webhook Payload Templating & Incident Webhook Dispatch (Issue #21 - CLOSED)**:
+4. **Custom Webhook Payload Templating & Incident Webhook Dispatch (Issue #21 - CLOSED)**:
    - Added Jinja2 template rendering (`_render_webhook_payload`) in [harness/alerts.py](file:///home/craig/orca/workspaces/testharness/main/harness/alerts.py) for outbound run webhooks and incident alerts.
    - Added pre-packaged formats for PagerDuty Events API v2 (`format: "pagerduty"`) and Opsgenie Alerts API (`format: "opsgenie"`).
    - Added support for custom headers (`headers: {...}`) and HMAC-SHA256 payload signing (`X-Harness-Signature`).
    - Enabled incident alert webhooks in `dispatch_alerts()` supporting both single webhook dicts and lists of webhook endpoints.
    - Tested in [tests/test_alerts_templating.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_alerts_templating.py).
 
-4. **TLS Certificate Expiration & Security Headers Prober (Issue #17 - CLOSED)**:
+5. **TLS Certificate Expiration & Security Headers Prober (Issue #17 - CLOSED)**:
    - Added [harness/tls_engine.py](file:///home/craig/orca/workspaces/testharness/main/harness/tls_engine.py) implementing `run_tls_test` and `inspect_cert_sync` using Python `ssl` and `socket`.
    - Validates TLS certificate expiration date against configurable threshold (`min_days_valid`, default 30 days).
    - Verifies Subject Alternative Names (SANs) match the target hostname and checks negotiated TLS protocol against `min_tls_version` (e.g. `TLSv1.2` or `TLSv1.3`).
@@ -59,12 +68,13 @@
    - Tested in [tests/test_browser_performance.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_browser_performance.py).
 
 7. **Test Suite Milestone**:
-   - Reached **868 passing unit and integration tests** (100% green, 0 failures, 0 regressions).
+   - Reached **882 passing unit and integration tests** (100% green, 0 failures, 0 regressions).
 
 ---
 
 ## 3. Key Architectural Invariants & Gotchas
 
+- **Notification Group Email Deduplication**: `db.resolve_emails_for_groups(groups)` deduplicates and sorts emails across all assigned groups. If an app has no notification groups or none resolve to emails, alert dispatching falls back to global `alerts.email.to`.
 - **Playwright Fallback**: `harness/browser.py` is written to be cleanly importable even on headless systems without Playwright installed; keep browser imports lazy inside test execution routines.
 - **Visual Baseline Invariant**: `get_last_screenshot` only queries `status='pass'` so failures do not contaminate subsequent baseline comparisons unless explicitly approved by an operator or admin.
 - **SQLite Concurrency**: Always keep `PRAGMA journal_mode=WAL;` and `PRAGMA busy_timeout=5000;` on connection pools to prevent `database is locked` during concurrent background runs and web requests.
@@ -75,8 +85,8 @@
 
 ## 4. Prioritized Next Actions
 
-1. **[Prometheus Alerting Rules & Grafana Dashboards]**:
-   - Add standard Prometheus alerting rule templates in `deploy/prometheus/` for elevated failure rates, worker heartbeat drops, and database lock contention.
+1. **[Guided Journey Creator - Interactive URL Recording & Step Generation (Issue #22 / Linear CRO-49)]**:
+   - Allow user to provide a URL, launch Playwright in recording mode (`codegen` or custom browser session), capture clicks/fills/assertions interactively, and generate a structured YAML browser test step list directly into the app builder.
 2. **[Scheduled Maintenance Window Recurrence]**:
    - Add recurring maintenance window schedules (e.g. weekly Sunday 02:00-04:00 UTC) in addition to one-off datetime windows.
 3. **[Optional Exploration: Windows-Level Control & Desktop Automation (Linear CRO-47)]**:
@@ -89,6 +99,6 @@
 ```text
 I am resuming work on Web Testing Harness (testharness).
 Please read docs/HANDOFF.md, docs/OVERVIEW.md, and docs/STANDARDS.md to understand the current architecture and state.
-All 867 tests are passing on master in .venv/bin/pytest. All GitHub issues (#8-#21) are closed.
-Our next priority is to review the new prioritized roadmap items in Section 4.
+All 882 tests are passing on master in .venv/bin/pytest. GitHub issues #8-#21 and #23 are closed.
+Our next priority is to review the new prioritized roadmap items in Section 4 (starting with Guided Journey Creator, Issue #22 / CRO-49).
 ```

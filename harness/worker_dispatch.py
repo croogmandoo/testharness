@@ -296,7 +296,7 @@ async def ingest_runner_results(
         )
         alerts_to_send = []
     if alerts_to_send:
-        await dispatch_alerts(alerts_to_send, (config.get("alerts") or {}))
+        await dispatch_alerts(alerts_to_send, (config.get("alerts") or {}), db=db)
 
     webhook_cfg = (config.get("alerts") or {}).get("webhook") or {}
     if webhook_cfg.get("url") and not maint:

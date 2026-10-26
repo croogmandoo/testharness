@@ -295,3 +295,109 @@ async def approve_visual_baseline(
         "status": "pass",
         "message": f"Successfully approved {result['screenshot']} as new baseline",
     }
+
+
+class NotificationGroupCreateRequest(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    emails: list[str]
+
+
+class NotificationGroupUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    emails: Optional[list[str]] = None
+
+
+@router.get("/notification-groups")
+async def list_notification_groups(current_user: dict = Depends(require_role("admin", "runner", "viewer"))):
+    from web.main import get_db
+    return get_db().list_notification_groups()
+
+
+@router.post("/notification-groups", status_code=201)
+async def create_notification_group(
+    req: NotificationGroupCreateRequest,
+    current_user: dict = Depends(require_role("admin", "runner")),
+):
+    from web.main import get_db
+    db = get_db()
+    try:
+        group = db.create_notification_group(name=req.name, emails=req.emails, description=req.description or "")
+    except ValueError as e:
+        if "already exists" in str(e):
+            raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        if "UNIQUE constraint failed" in str(e):
+            raise HTTPException(status_code=409, detail=f"Notification group '{req.name}' already exists")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    db.log_audit(
+        "notification_group.create",
+        user_id=current_user["id"],
+        username=current_user.get("username"),
+        target=group["name"],
+        details=f"Created notification group with {len(group['emails'])} recipients",
+    )
+    return group
+
+
+@router.put("/notification-groups/{group_id}")
+async def update_notification_group(
+    group_id: str,
+    req: NotificationGroupUpdateRequest,
+    current_user: dict = Depends(require_role("admin", "runner")),
+):
+    from web.main import get_db
+    db = get_db()
+    existing = db.get_notification_group(group_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Notification group not found")
+
+    try:
+        updated = db.update_notification_group(
+            group_id,
+            name=req.name,
+            emails=req.emails,
+            description=req.description,
+        )
+    except ValueError as e:
+        if "already exists" in str(e):
+            raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        if "UNIQUE constraint failed" in str(e):
+            raise HTTPException(status_code=409, detail="A notification group with this name already exists")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    db.log_audit(
+        "notification_group.update",
+        user_id=current_user["id"],
+        username=current_user.get("username"),
+        target=updated["name"],
+        details=f"Updated notification group ({len(updated['emails'])} recipients)",
+    )
+    return updated
+
+
+@router.delete("/notification-groups/{group_id}")
+async def delete_notification_group(
+    group_id: str,
+    current_user: dict = Depends(require_role("admin", "runner")),
+):
+    from web.main import get_db
+    db = get_db()
+    existing = db.get_notification_group(group_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Notification group not found")
+
+    db.delete_notification_group(group_id)
+    db.log_audit(
+        "notification_group.delete",
+        user_id=current_user["id"],
+        username=current_user.get("username"),
+        target=existing["name"],
+        details=f"Deleted notification group {existing['name']}",
+    )
+    return {"ok": True, "deleted": group_id}

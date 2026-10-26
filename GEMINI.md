@@ -11,7 +11,7 @@ You are developing **Web Testing Harness (`testharness`)**, a self-hosted synthe
    - **`harness/`**: Core test execution engines (`harness/http_engine.py`, `harness/api_engine.py`, `harness/browser.py`), test runner orchestration (`harness/runner.py`), cron scheduler (`harness/scheduler.py`), and alerting (`harness/alerts.py`).
    - **Data Access**: All persistence flows through `harness/db.py` (results, runs, metrics), `harness/auth_db.py` (users, sessions, roles, API keys), and `harness/ca_certs.py` (custom root certificates).
 2. **Deterministic Test Suite & Zero Regressions**:
-   - The test suite contains 860+ unit and integration tests (868 tests passing).
+   - The test suite contains 880+ unit and integration tests (882 tests passing).
    - **Always run `.venv/bin/pytest`** before finalizing any change. Never merge or hand off code with failing tests.
    - Browser tests must use mocks or headless fixtures rather than launching full real browsers during CI/testing unless explicitly intended.
 3. **Database & Storage Discipline**:

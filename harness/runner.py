@@ -265,7 +265,7 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
             alerts_to_send = []
 
     if alerts_to_send:
-        await dispatch_alerts(alerts_to_send, alerts_cfg)
+        await dispatch_alerts(alerts_to_send, alerts_cfg, db=db, app_defs=[app_def])
     webhook_cfg = config.get("alerts", {}).get("webhook", {})
     if webhook_cfg.get("url") and not maint:
         finished_run = db.get_run(run.id)

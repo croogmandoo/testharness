@@ -118,6 +118,9 @@ def _gather_card_stats(db, config: dict) -> dict:
     # CA Certs
     stats["ca_certs_count"] = len(db.list_ca_certs())
 
+    # Notification Groups
+    stats["notification_groups_count"] = len(db.list_notification_groups())
+
     # Maintenance windows
     from harness.maintenance import is_in_maintenance
     active_window = is_in_maintenance(config)

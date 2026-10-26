@@ -41,6 +41,9 @@ async def apps_list(request: Request,
 @router.get("/apps/new", response_class=HTMLResponse)
 async def apps_new(request: Request,
                    current_user: dict = Depends(require_role("admin", "runner"))):
+    from web.main import get_db
+    db = get_db()
+    groups = db.list_notification_groups() if db else []
     return templates.TemplateResponse(request, "app_form.html", {
         **_nav_ctx(request),
         "mode": "create",
@@ -48,6 +51,7 @@ async def apps_new(request: Request,
         "app_def": {},
         "raw_yaml": "",
         "current_user": current_user,
+        "notification_groups": groups,
     })
 
 
@@ -55,8 +59,10 @@ async def apps_new(request: Request,
 async def apps_edit(request: Request, app_name: str,
                     current_user: dict = Depends(require_role("admin", "runner"))):
     import harness.app_manager as mgr
-    from web.main import get_apps_dir
+    from web.main import get_apps_dir, get_db
     apps_dir = get_apps_dir()
+    db = get_db()
+    groups = db.list_notification_groups() if db else []
     try:
         raw_yaml = mgr.read_app_raw(app_name, apps_dir=apps_dir)
     except mgr.AppManagerError:
@@ -69,4 +75,5 @@ async def apps_edit(request: Request, app_name: str,
         "app_def": app_def,
         "raw_yaml": raw_yaml,
         "current_user": current_user,
+        "notification_groups": groups,
     })
