@@ -188,7 +188,7 @@ class AppStateMixin:
             row = conn.execute(
                 "SELECT screenshot FROM test_results "
                 "WHERE app=? AND environment=? AND test_name=? "
-                "AND screenshot IS NOT NULL "
+                "AND screenshot IS NOT NULL AND status='pass' "
                 "ORDER BY finished_at DESC LIMIT 1",
                 (app, environment, test_name),
             ).fetchone()

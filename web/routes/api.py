@@ -37,6 +37,17 @@ class VarsResponse(BaseModel):
     vars: list[str] = []
 
 
+class ApproveBaselineRequest(BaseModel):
+    result_id: str
+
+
+class ApproveBaselineResponse(BaseModel):
+    ok: bool = True
+    result_id: str
+    status: str
+    message: str
+
+
 @router.post("/runs", status_code=202, response_model=RunResponse)
 async def trigger_run(req: RunRequest, background_tasks: BackgroundTasks,
                       current_user: dict = Depends(require_role("admin", "runner"))):
@@ -233,3 +244,54 @@ async def delete_app_permanently(app_name: str,
         mgr.delete_archived_app(app_name, apps_dir=get_apps_dir())
     except mgr.AppManagerError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/visual/approve", response_model=ApproveBaselineResponse)
+async def approve_visual_baseline(
+    req: ApproveBaselineRequest,
+    current_user: dict = Depends(require_role("admin", "runner")),
+):
+    """Approve a visual regression failure screenshot as the new baseline."""
+    from web.main import get_db
+    from datetime import datetime, timezone
+    from harness.models import AppState
+
+    db = get_db()
+    with db._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM test_results WHERE id=?",
+            (req.result_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Test result not found")
+        result = dict(row)
+        if not result.get("screenshot"):
+            raise HTTPException(status_code=400, detail="Test result has no screenshot to approve")
+
+        conn.execute(
+            "UPDATE test_results SET status='pass', error_msg=? WHERE id=?",
+            (f"Approved baseline by {current_user.get('username')}", req.result_id),
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    db.upsert_app_state(AppState(
+        app=result["app"],
+        environment=result["environment"],
+        test_name=result["test_name"],
+        state="passing",
+        since=now_iso,
+    ))
+
+    db.log_audit(
+        "visual.baseline_approve",
+        user_id=current_user["id"],
+        username=current_user.get("username"),
+        details=f"Approved screenshot {result['screenshot']} for {result['app']}/{result['environment']}/{result['test_name']}",
+    )
+
+    return {
+        "ok": True,
+        "result_id": req.result_id,
+        "status": "pass",
+        "message": f"Successfully approved {result['screenshot']} as new baseline",
+    }

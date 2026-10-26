@@ -73,7 +73,14 @@
   {% endif %}
   {% if tr.screenshot %}
   <div class="screenshot-wrap">
-    <div class="screenshot-label">Screenshot at failure</div>
+    <div class="flex items-center justify-between mb-2">
+      <div class="screenshot-label">Screenshot at failure</div>
+      {% if tr.status in ('fail', 'error') and tr.error_msg and 'Visual regression' in tr.error_msg and current_user and current_user.role in ('admin', 'runner') %}
+      <button type="button" class="btn btn--sm btn--primary" id="btn-approve-{{ tr.id }}" onclick="approveBaseline('{{ tr.id }}')">
+        Approve as New Baseline
+      </button>
+      {% endif %}
+    </div>
     <img src="/screenshots/{{ tr.screenshot }}" alt="Screenshot" class="screenshot">
   </div>
   {% endif %}
@@ -180,5 +187,39 @@ var timer = setInterval(function() {
   }
 })();
 {% endif %}
+
+async function approveBaseline(resultId) {
+  const btn = document.getElementById("btn-approve-" + resultId);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Approving...";
+  }
+  try {
+    const resp = await fetch("/api/visual/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result_id: resultId }),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      if (btn) {
+        btn.textContent = "✓ Baseline Approved";
+      }
+      setTimeout(() => location.reload(), 800);
+    } else {
+      alert("Approval failed: " + (data.detail || data.message || "Unknown error"));
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Approve as New Baseline";
+      }
+    }
+  } catch (err) {
+    alert("Error: " + err.message);
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Approve as New Baseline";
+    }
+  }
+}
 </script>
 {% endblock %}

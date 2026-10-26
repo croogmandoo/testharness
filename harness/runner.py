@@ -76,16 +76,29 @@ async def _execute_test(test_def: dict, run_id: str, app: str, environment: str,
                         f"{SCREENSHOTS_DIR}/{result.screenshot}",
                     )
                     if diff > diff_threshold:
+                        diff_name = f"{result.screenshot.rsplit('.', 1)[0]}-diff.png"
+                        diff_path = f"{SCREENSHOTS_DIR}/{diff_name}"
+                        from harness.screenshot_diff import generate_diff_image
+                        generate_diff_image(
+                            f"{SCREENSHOTS_DIR}/{prev_shot}",
+                            f"{SCREENSHOTS_DIR}/{result.screenshot}",
+                            diff_path,
+                        )
                         result.step_log.append(StepResult(
                             step=f"Screenshot diff: {diff:.1%} pixels changed "
                                  f"(threshold {diff_threshold:.0%})",
                             status="fail",
                             duration_ms=0,
+                            screenshot=diff_name,
                         ))
                         result.status = "fail"
                         result.error_msg = (
-                            f"Visual regression: {diff:.1%} pixels changed"
+                            f"Visual regression: {diff:.1%} pixels changed (previous baseline: {prev_shot})"
                         )
+        elif test_type in ("tls", "certificate", "ssl"):
+            from harness.tls_engine import run_tls_test
+            result = await run_tls_test(run_id, app, environment, base_url,
+                                        test_def, ssl_ctx=ssl_ctx)
         else:
             result = await run_availability_test(run_id, app, environment, base_url,
                                                  test_def, ssl_ctx=ssl_ctx)

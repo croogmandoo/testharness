@@ -31,6 +31,91 @@ def __getattr__(name: str):  # PEP 562
         return _ap
     raise AttributeError(f"module 'harness.browser' has no attribute {name!r}")
 
+async def extract_web_vitals(page: "Page") -> dict:
+    """Extract Navigation Timing and Core Web Vitals metrics from the active page."""
+    script = """() => {
+        try {
+            const nav = (performance.getEntriesByType('navigation') || [])[0] || {};
+            const paint = performance.getEntriesByType('paint') || [];
+            const fcpEntry = paint.find(e => e.name === 'first-contentful-paint');
+            const lcpEntries = performance.getEntriesByType('largest-contentful-paint') || [];
+            const layoutShiftEntries = performance.getEntriesByType('layout-shift') || [];
+
+            let cls = 0.0;
+            for (const entry of layoutShiftEntries) {
+                if (!entry.hadRecentInput) {
+                    cls += (entry.value || 0);
+                }
+            }
+
+            const ttfb = nav.responseStart ? Math.round(nav.responseStart) : null;
+            const domContentLoaded = nav.domContentLoadedEventEnd ? Math.round(nav.domContentLoadedEventEnd) : null;
+            const loadTime = nav.loadEventEnd ? Math.round(nav.loadEventEnd) : null;
+            const fcp = fcpEntry ? Math.round(fcpEntry.startTime) : null;
+            const lcp = lcpEntries.length > 0 ? Math.round(lcpEntries[lcpEntries.length - 1].startTime) : null;
+
+            return {
+                ttfb: ttfb,
+                dom_content_loaded: domContentLoaded,
+                load_time: loadTime,
+                fcp: fcp,
+                lcp: lcp,
+                cls: Number(cls.toFixed(3)),
+            };
+        } catch (e) {
+            return { error: String(e) };
+        }
+    }"""
+    try:
+        metrics = await page.evaluate(script)
+        if isinstance(metrics, dict) and "error" not in metrics:
+            return metrics
+    except Exception:
+        pass
+    return {}
+
+
+def evaluate_performance_thresholds(metrics: dict, thresholds: dict) -> tuple[str, Optional[str]]:
+    """Check metrics against performance thresholds.
+
+    Supported thresholds: max_lcp_ms, max_fcp_ms, max_ttfb_ms, max_cls, max_load_ms.
+    Returns (summary_step_description, error_message_or_None).
+    """
+    parts = []
+    if metrics.get("ttfb") is not None:
+        parts.append(f"TTFB={metrics['ttfb']}ms")
+    if metrics.get("fcp") is not None:
+        parts.append(f"FCP={metrics['fcp']}ms")
+    if metrics.get("lcp") is not None:
+        parts.append(f"LCP={metrics['lcp']}ms")
+    if metrics.get("cls") is not None:
+        parts.append(f"CLS={metrics['cls']}")
+    if metrics.get("load_time") is not None:
+        parts.append(f"Load={metrics['load_time']}ms")
+
+    summary = "Web Vitals: " + (", ".join(parts) if parts else "metrics unavailable")
+
+    errors = []
+    if "max_lcp_ms" in thresholds and metrics.get("lcp") is not None:
+        if metrics["lcp"] > thresholds["max_lcp_ms"]:
+            errors.append(f"LCP {metrics['lcp']}ms exceeded max_lcp_ms {thresholds['max_lcp_ms']}ms")
+    if "max_fcp_ms" in thresholds and metrics.get("fcp") is not None:
+        if metrics["fcp"] > thresholds["max_fcp_ms"]:
+            errors.append(f"FCP {metrics['fcp']}ms exceeded max_fcp_ms {thresholds['max_fcp_ms']}ms")
+    if "max_ttfb_ms" in thresholds and metrics.get("ttfb") is not None:
+        if metrics["ttfb"] > thresholds["max_ttfb_ms"]:
+            errors.append(f"TTFB {metrics['ttfb']}ms exceeded max_ttfb_ms {thresholds['max_ttfb_ms']}ms")
+    if "max_cls" in thresholds and metrics.get("cls") is not None:
+        if metrics["cls"] > thresholds["max_cls"]:
+            errors.append(f"CLS {metrics['cls']} exceeded max_cls {thresholds['max_cls']}")
+    if "max_load_ms" in thresholds and metrics.get("load_time") is not None:
+        if metrics["load_time"] > thresholds["max_load_ms"]:
+            errors.append(f"Load time {metrics['load_time']}ms exceeded max_load_ms {thresholds['max_load_ms']}ms")
+
+    error_msg = "; ".join(errors) if errors else None
+    return summary, error_msg
+
+
 async def execute_step(page: "Page", step: dict, base_url: str,
                        screenshot_path: Optional[str] = None) -> StepResult:
     start = time.monotonic()
@@ -117,6 +202,16 @@ async def execute_step(page: "Page", step: dict, base_url: str,
             rel = os.path.relpath(screenshot_path, "data/screenshots").replace("\\", "/")
             return StepResult(step="screenshot", status="pass", duration_ms=_elapsed(),
                               screenshot=rel)
+        if any(k in step for k in ("assert_performance", "performance_metrics", "web_vitals", "capture_web_vitals")):
+            thresholds = {}
+            for k in ("assert_performance", "performance_metrics", "web_vitals"):
+                val = step.get(k)
+                if isinstance(val, dict):
+                    thresholds.update(val)
+            metrics = await extract_web_vitals(page)
+            summary, error_msg = evaluate_performance_thresholds(metrics, thresholds)
+            status = "fail" if error_msg else "pass"
+            return StepResult(step=summary, status=status, duration_ms=_elapsed(), error=error_msg)
         return StepResult(step=str(step), status="error", duration_ms=_elapsed(),
                           error=f"Unknown step type: {list(step.keys())}")
     except Exception as e:
@@ -183,6 +278,30 @@ async def run_browser_test(run_id: str, app: str, environment: str,
                 result.screenshot = os.path.join(app, environment, run_id, f"{slug}.png")
                 result.error_msg = step_result.error
                 break
+        if not failed:
+            top_thresholds = {
+                k: test_def[k]
+                for k in ("max_lcp_ms", "max_fcp_ms", "max_ttfb_ms", "max_cls", "max_load_ms")
+                if k in test_def
+            }
+            if "assert_performance" in test_def and isinstance(test_def["assert_performance"], dict):
+                top_thresholds.update(test_def["assert_performance"])
+
+            if top_thresholds or test_def.get("capture_web_vitals"):
+                metrics = await extract_web_vitals(page)
+                summary, error_msg = evaluate_performance_thresholds(metrics, top_thresholds)
+                perf_status = "fail" if error_msg else "pass"
+                step_log.append(StepResult(step=summary, status=perf_status, duration_ms=0, error=error_msg))
+                if error_msg:
+                    failed = True
+                    result.error_msg = error_msg
+                    failure_shot = os.path.join(screenshot_dir, app, environment, run_id, f"{slug}.png")
+                    os.makedirs(os.path.dirname(failure_shot), exist_ok=True)
+                    try:
+                        await page.screenshot(path=failure_shot)
+                        result.screenshot = os.path.join(app, environment, run_id, f"{slug}.png")
+                    except Exception:
+                        pass
         await browser.close()
     result.status = "fail" if failed else "pass"
     result.step_log = step_log
