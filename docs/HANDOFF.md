@@ -1,7 +1,7 @@
 # Web Testing Harness Session Handoff & Operational Runbook
 
-**Generated:** 2026-10-26T16:30:00-04:00  
-**Branch:** `croogmandoo/main` (Base: `security-hardening` @ `2e0ef10`)  
+**Generated:** 2026-10-26T16:55:00-04:00  
+**Branch:** `master` (synchronized with `origin/master` @ `23268c1`)  
 **Workspace:** `/home/craig/orca/workspaces/testharness/main`  
 **Test Suite:** **806 / 806 tests passing** (100% green, ~37s)
 
@@ -42,8 +42,11 @@
 6. **Worker Concurrency Limit Hardening**:
    - Hardened `worker/worker.py`'s `poll_loop` so saturated workers (`remaining <= 0`) await in-flight task completion (`asyncio.wait(FIRST_COMPLETED)`) rather than polling central with a forced `capacity >= 1`.
    - Prevents memory bloat and job hoarding under high test volume.
-7. **Test Suite Expansion**:
-   - Expanded to **806 passing unit and integration tests** (100% green, 0 failures, 0 regressions).
+7. **Upstream Merge & PR to Master ([#8](https://github.com/croogmandoo/testharness/issues/8))**:
+   - Merged PR [#13](https://github.com/croogmandoo/testharness/pull/13) cleanly to `master` with 4 passing GitHub Actions CI checks (`Docker`, `CI/pytest`, `Security/Dependency audit`, `Security/Secret scan`).
+   - Local `master` fast-forwarded and synchronized with `origin/master`.
+8. **Test Suite Expansion**:
+   - Reached **806 passing unit and integration tests** (100% green, 0 failures, 0 regressions).
 
 ---
 
@@ -56,17 +59,15 @@
 
 ---
 
-## 4. Prioritized Next Actions (Top 5)
+## 4. Prioritized Next Actions (Top 4)
 
-1. **[Upstream Merge Review & Clean PR]** ([#8](https://github.com/croogmandoo/testharness/issues/8)):
-   - Prepare and submit a clean pull request from `croogmandoo/main` to `origin/master` (verified zero merge conflicts, fast-forward compatible).
-2. **[Production Hardening Checklist]** ([#9](https://github.com/croogmandoo/testharness/issues/9)):
+1. **[Production Hardening Checklist]** ([#9](https://github.com/croogmandoo/testharness/issues/9)):
    - Review production deployment documentation and reverse proxy TLS termination examples (e.g. Caddy/Nginx reverse proxy with HTTPS).
-3. **[API Contract & OpenAPI Documentation]** ([#10](https://github.com/croogmandoo/testharness/issues/10)):
+2. **[API Contract & OpenAPI Documentation]** ([#10](https://github.com/croogmandoo/testharness/issues/10)):
    - Verify OpenAPI specs (`/docs`, `/openapi.json`) for all `/api/v1/` endpoints.
-4. **[Continuous Integration Validation]** ([#11](https://github.com/croogmandoo/testharness/issues/11)):
+3. **[Continuous Integration Validation]** ([#11](https://github.com/croogmandoo/testharness/issues/11)):
    - Run full CI security checks including `pip-audit` against `requirements.lock`.
-5. **[Remote Worker End-to-End Smoke Test]** ([#12](https://github.com/croogmandoo/testharness/issues/12)):
+4. **[Remote Worker End-to-End Smoke Test]** ([#12](https://github.com/croogmandoo/testharness/issues/12)):
    - Run `v2-smoke-compose.yml` to exercise live remote worker job dispatch and screenshot artifact uploads.
 
 ---
@@ -76,6 +77,6 @@
 ```text
 I am resuming work on Web Testing Harness (testharness).
 Please read docs/HANDOFF.md, docs/OVERVIEW.md, and docs/STANDARDS.md to understand the current architecture and state.
-All 806 tests are passing in .venv/bin/pytest.
-Our immediate first priority is Task 1: Upstream Merge Review & Clean PR to origin/master.
+All 806 tests are passing on master in .venv/bin/pytest.
+Our immediate first priority is Issue #9: Production Hardening Checklist & Reverse Proxy TLS Configuration.
 ```
