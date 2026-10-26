@@ -23,8 +23,13 @@
     <form method="post" action="/setup">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="field">
+        <label class="label">Setup token</label>
+        <input class="input" name="setup_token" type="password" required autofocus autocomplete="off" spellcheck="false">
+        <p class="text-muted text-xs mt-1">Printed in the server log as <code>First-run setup token: …</code>, or the value of <code>HARNESS_SETUP_TOKEN</code>.</p>
+      </div>
+      <div class="field">
         <label class="label">Username</label>
-        <input class="input" name="username" required autofocus autocomplete="username">
+        <input class="input" name="username" required autocomplete="username">
       </div>
       <div class="field">
         <label class="label">Display name <span class="text-muted font-normal">(optional)</span></label>
@@ -32,7 +37,7 @@
       </div>
       <div class="field">
         <label class="label">Password</label>
-        <input class="input" name="password" type="password" required autocomplete="new-password">
+        <input class="input" name="password" type="password" required minlength="{{ min_password_length }}" autocomplete="new-password">
       </div>
       <div class="field mb-6">
         <label class="label">Confirm password</label>

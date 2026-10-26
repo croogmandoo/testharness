@@ -37,7 +37,7 @@
     <div class="field">
       <label class="label">Role</label>
       <select class="input" name="role">
-        {% for r in ["admin","runner","reporting","read_only"] %}
+        {% for r in roles %}
         <option value="{{ r }}" {% if user.role == r %}selected{% endif %}>{{ r }}</option>
         {% endfor %}
       </select>
@@ -52,6 +52,8 @@
     </div>
     <div class="field">
       <label class="checkbox-label">
+        {# An unchecked box submits nothing; the hidden 0 makes "inactive" explicit. #}
+        <input type="hidden" name="is_active" value="0">
         <input type="checkbox" name="is_active" value="1" {% if user.is_active %}checked{% endif %}>
         Active
       </label>
@@ -62,8 +64,8 @@
       <label class="label">
         {% if mode == "create" %}Password{% else %}New password <span class="text-muted font-normal">(leave blank to keep)</span>{% endif %}
       </label>
-      <input class="input" name="password" type="password"
-             {% if mode == "create" %}required minlength="8" data-validate="required minlength"{% endif %}>
+      <input class="input" name="password" type="password" minlength="{{ min_password_length }}"
+             {% if mode == "create" %}required data-validate="required minlength"{% endif %}>
     </div>
 
     <div class="form-actions">

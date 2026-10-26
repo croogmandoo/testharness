@@ -493,7 +493,7 @@ def test_runner_passes_ssl_ctx_to_api_test(monkeypatch, tmp_path):
 
     app_def = {
         "app": "myapp",
-        "environments": {"prod": {"base_url": "http://example.com"}},
+        "environments": {"prod": "http://example.com"},
         "tests": [{"name": "ping", "type": "api", "method": "GET", "endpoint": "/ping"}],
     }
     config = {}

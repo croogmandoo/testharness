@@ -21,7 +21,7 @@
       <td class="font-semibold">
         <a href="/app/{{ app.app }}/{{ environment or (environments.keys()|list|first) or 'production' }}">{{ app.app }}</a>
       </td>
-      <td><a href="{{ app.url }}" target="_blank" class="text-secondary">{{ app.url }}</a></td>
+      <td><a href="{{ app.url | safe_url }}" target="_blank" rel="noopener noreferrer" class="text-secondary">{{ app.url }}</a></td>
       <td class="text-secondary">{{ app.tests | length }}</td>
       <td class="text-right">
         <div class="btn-group justify-end">

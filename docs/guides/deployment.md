@@ -32,6 +32,17 @@ curl http://localhost:9552/health
 
 Open `http://localhost:9552` in your browser. On first run you'll be prompted to create an admin account.
 
+The setup form asks for a **first-run setup token**, so nobody else who can reach the port can claim the admin account before you do. Either read the generated token from the logs (it is printed once, when `/setup` is first opened):
+
+```bash
+docker logs harness 2>&1 | grep "setup token"
+# → ... WARNING ... First-run setup token: 3q2-...
+```
+
+or choose your own by setting `HARNESS_SETUP_TOKEN` in `.env` before the first start. The generated token changes on every restart until the admin account exists, and differs per process, so set `HARNESS_SETUP_TOKEN` if you run more than one worker process.
+
+With no `allowed_users`/`allowed_orgs` configured, a pre-provisioned `github:<login>` account binds to whichever GitHub account first signs in while owning that login.
+
 ---
 
 ## File Layout
@@ -86,6 +97,11 @@ auth:
     client_id: "$GITHUB_CLIENT_ID"
     client_secret: "$GITHUB_CLIENT_SECRET"
     default_role: read_only
+    # New GitHub sign-ins are refused unless one of these matches.
+    # When either list is set it is checked on every login.
+    allowed_users: [octocat]
+    allowed_orgs: [my-company]
+    auto_provision: false        # true = any GitHub account may sign in
 ```
 
 ### `.env` file

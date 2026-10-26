@@ -41,8 +41,16 @@ WORKDIR /app
 # Playwright browsers to a shared, world-readable location.  Doing the
 # install as root means apt deps via --with-deps work; the path lets the
 # runtime harness user execute the browser without re-downloading.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install from the resolved lock when present (same pattern as ci.yml) so
+# the image gets the audited, pinned dependency set; fall back to
+# requirements.txt if the lock has been removed. The trailing glob keeps the
+# COPY valid when requirements.lock is absent.
+COPY requirements.txt requirements.lock* ./
+RUN if [ -f requirements.lock ]; then \
+        pip install --no-cache-dir -r requirements.lock; \
+    else \
+        pip install --no-cache-dir -r requirements.txt; \
+    fi
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 RUN playwright install chromium --with-deps \
     && chmod -R a+rX /opt/playwright
@@ -56,7 +64,8 @@ RUN install -d -o harness -g harness /app/data /app/data/screenshots
 # uid (10001), then `gosu`-drops privileges before exec'ing CMD. If the
 # operator pins a uid via `user:` in compose, the script detects the
 # non-root start and skips the chown (operator owns permissions then).
-COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 0755 /usr/local/bin/entrypoint.sh
 
 # NOTE: we intentionally do NOT set `USER harness` here. The entrypoint
 # starts as root so it can fix bind-mount ownership, then drops to

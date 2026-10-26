@@ -20,7 +20,8 @@ services:
       - ./apps:/app/apps
       - ./config.yaml:/app/config.yaml:ro
     env_file:
-      - .env
+      - path: .env
+        required: false
     restart: unless-stopped
     healthcheck:
       # Same probe as the Dockerfile HEALTHCHECK — kept here so compose users

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from web.auth import require_role
+from web.auth import VALID_ROLES, issue_session_cookie, min_password_length, require_role
 from web.csrf import csrf_token_for, verify_csrf
 from web.templating import make_templates
 
@@ -21,6 +21,8 @@ def _ctx(request: Request, current_user: dict, **extra) -> dict:
         "environment": None,
         "current_user": current_user,
         "csrf_token": csrf_token_for(request),
+        "roles": VALID_ROLES,
+        "min_password_length": min_password_length(),
         **extra,
     }
 
@@ -65,8 +67,15 @@ async def users_create(
     if db.get_user_by_username(username.strip()):
         ctx["error"] = "Username already exists."
         return templates.TemplateResponse(request, "user_form.html", ctx, status_code=409)
+    if role not in VALID_ROLES:
+        ctx["error"] = "Invalid role."
+        return templates.TemplateResponse(request, "user_form.html", ctx, status_code=422)
     if not password:
         ctx["error"] = "Password is required for local accounts."
+        return templates.TemplateResponse(request, "user_form.html", ctx, status_code=422)
+    min_len = min_password_length()
+    if len(password) < min_len:
+        ctx["error"] = f"Password must be at least {min_len} characters."
         return templates.TemplateResponse(request, "user_form.html", ctx, status_code=422)
     pw_hash = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
     new_id = str(uuid.uuid4())
@@ -142,12 +151,36 @@ async def users_update(
     target_user = db.get_user_by_id(user_id)
     if not target_user:
         raise HTTPException(status_code=404)
+    error = None
+    min_len = min_password_length()
+    if role not in VALID_ROLES:
+        error = "Invalid role."
+    elif password and len(password) < min_len:
+        error = f"Password must be at least {min_len} characters."
+    if error:
+        form_user = {k: v for k, v in target_user.items() if k != "password_hash"}
+        form_user.update(display_name=display_name, email=email,
+                         role_override=role_override, is_active=is_active)
+        return templates.TemplateResponse(
+            request, "user_form.html",
+            _ctx(request, current_user, mode="edit", user=form_user, error=error),
+            status_code=422,
+        )
     updates = dict(display_name=display_name.strip(),
                    email=email.strip() or None,
                    role=role, role_override=role_override, is_active=is_active)
     if password:
         updates["password_hash"] = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
     db.update_user(user_id, **updates)
+    # Credential, privilege or status changes revoke the user's existing
+    # sessions so an old cookie can't outlive them.
+    revoke = (
+        bool(password)
+        or target_user.get("role") != role
+        or (int(target_user.get("is_active") or 0) and not int(is_active))
+    )
+    if revoke:
+        db.bump_session_version(user_id)
     changes = []
     if target_user.get("role") != role:
         changes.append(f"role: {target_user.get('role')} -> {role}")
@@ -159,4 +192,13 @@ async def users_update(
                  username=current_user.get("username"),
                  target=target_user["username"],
                  details="; ".join(changes) if changes else "no role/auth changes")
-    return RedirectResponse("/users", status_code=303)
+    response = RedirectResponse("/users", status_code=303)
+    if (revoke and user_id == current_user["id"]
+            and getattr(request.state, "api_key", None) is None
+            and request.cookies.get("session")):
+        # An admin editing their own account keeps this browser signed in
+        # with a fresh cookie; their other sessions are still revoked.
+        refreshed = db.get_user_by_id(user_id)
+        if refreshed and refreshed.get("is_active"):
+            issue_session_cookie(response, refreshed)
+    return response

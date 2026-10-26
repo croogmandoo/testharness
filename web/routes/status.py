@@ -58,6 +58,13 @@ async def status_page(request: Request):
                                   and row.get("total", 0) > 0
                 else "unknown"
             )
+            history = db.get_app_run_history(row["app"], env_key, limit=10)
+            row["history"] = list(reversed(history))
+            if history:
+                passing_runs = sum(1 for h in history if h.get("status") == "pass")
+                row["uptime_pct"] = round((passing_runs / len(history)) * 100.0, 1)
+            else:
+                row["uptime_pct"] = None
         by_env.append({
             "key": env_key,
             "label": (env_cfg or {}).get("label", env_key),

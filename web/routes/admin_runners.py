@@ -257,11 +257,15 @@ async def runners_delete(
     db = get_db()
     if db.get_runner_by_name(name) is None:
         raise HTTPException(status_code=404, detail=f"runner {name!r} not found")
-    db.delete_runner(name)
+    requeued = db.delete_runner(name)
+    if requeued:
+        from harness.worker_dispatch import notify_job_queued
+        notify_job_queued()
     db.log_audit(
         "runner.delete",
         user_id=current_user["id"],
         username=current_user.get("username"),
         target=name,
+        details=f"requeued={requeued}" if requeued else None,
     )
     return RedirectResponse("/admin/runners", status_code=303)

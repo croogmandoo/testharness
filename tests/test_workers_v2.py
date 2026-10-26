@@ -1426,3 +1426,62 @@ def test_worker_module_has_no_get_event_loop_call():
                 "asyncio.get_event_loop() was removed in Python 3.14; "
                 "use asyncio.get_running_loop() inside async funcs."
             )
+
+
+@pytest.mark.asyncio
+async def test_poll_loop_does_not_oversubscribe_when_saturated(monkeypatch):
+    """When worker is at full capacity, it must wait for an in-flight job to finish
+    instead of polling central with a forced capacity >= 1."""
+    import worker.worker as w
+
+    cfg = w.WorkerConfig.__new__(w.WorkerConfig)
+    cfg.capacity = 2
+    cfg.name = "test-worker"
+    cfg.poll_interval = 1
+    cfg.long_poll_wait = 1
+
+    polls = []
+    job_done_event = asyncio.Event()
+
+    async def fake_poll(client, cfg, capacity):
+        polls.append(capacity)
+        if len(polls) == 1:
+            # First poll: return 2 jobs (saturates worker)
+            return [{"job_id": "j1"}, {"job_id": "j2"}], None
+        return [], None
+
+    async def fake_execute(job, cfg):
+        # Wait until test signals before completing job
+        await job_done_event.wait()
+        return ("complete", [], None, [])
+
+    async def fake_submit(client, cfg, job_id, status, results, error, screenshots=None):
+        pass
+
+    monkeypatch.setattr(w, "poll_for_jobs", fake_poll)
+    monkeypatch.setattr(w, "execute_job", fake_execute)
+    monkeypatch.setattr(w, "submit_results", fake_submit)
+    monkeypatch.setattr(w, "_collect_screenshots", lambda raw, cfg: [])
+
+    # Reset shutdown event
+    w._shutdown_event = asyncio.Event()
+
+    loop_task = asyncio.create_task(w.poll_loop(None, cfg))
+
+    # Let the first poll run and spawn 2 jobs
+    await asyncio.sleep(0.05)
+    assert len(polls) == 1
+    assert polls[0] == 2  # polled with capacity 2
+
+    # While both jobs are in-flight, worker is saturated; it should NOT poll again
+    await asyncio.sleep(0.05)
+    assert len(polls) == 1
+
+    # Now finish the jobs
+    job_done_event.set()
+    await asyncio.sleep(0.05)
+
+    # Trigger shutdown
+    w._shutdown_event.set()
+    await asyncio.wait_for(loop_task, timeout=1.0)
+

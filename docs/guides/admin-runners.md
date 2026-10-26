@@ -105,9 +105,10 @@ the `api_keys.scope` JSON column for `runners.api_key_id`. Possible values:
 - `worker:pull worker:results` — the recommended minimum.
 - `*` — legacy/wildcard key. Works, but the audit-blast-radius is bigger
   than necessary; rotate to a scoped key on the next opportunity.
-- Em-dash (—) — the runner row has no `api_key_id`. Either it pre-dates the
-  scoped-key feature, or the key it registered with has been deleted. The
-  worker will keep functioning until its next register/heartbeat, then 401.
+- Em-dash (—) — the runner row has no `api_key_id`, or the key it points
+  at has been deleted. A row with no key pre-dates name-to-key binding:
+  poll, long-poll and heartbeat return 403 until the worker re-registers,
+  which binds the name to its key. A deleted key gets 401 on every call.
 
 A scope cell that's missing the scope your worker actually needs is a hint
 the worker was provisioned wrong. See `remote-workers.md` § "Provision an
@@ -165,11 +166,31 @@ registration races.
 |---|---|---|---|
 | **Drain** | `POST /admin/runners/{name}/drain` | Sets `runners.status='draining'`. Dispatch stops sending new jobs. In-flight jobs are allowed to finish. | `runner.drain` |
 | **Resume** | `POST /admin/runners/{name}/resume` | Sets `runners.status='online'`. Dispatch resumes immediately. | `runner.resume` |
-| **Remove** | `POST /admin/runners/{name}/delete` | Deletes the `runners` row. The worker process is unaffected until its next register/heartbeat, at which point it 404s and should exit. **In-flight jobs assigned to this worker become stranded** — the reaper will requeue them after `worker.job_timeout_seconds`. | `runner.delete` |
+| **Remove** | `POST /admin/runners/{name}/delete` | Deletes the `runners` row. The worker process is unaffected until its next register/heartbeat, at which point it 404s and should exit. **In-flight jobs assigned to this worker go straight back to `queued`** (no retry bump) so another worker, or whoever re-registers the name, claims them afresh; results the old worker posts for them are refused (409 or 403). The audit details record `requeued=N`. | `runner.delete` |
 
 The Drain ↔ Resume buttons swap based on current state. Remove is always
 present and always confirms via a JS dialog. Revoke the worker's API key
 separately (`/api-keys`) if removal is in response to a credential leak.
+
+### Rebinding a runner name
+
+The first register binds a runner name to the API key that sent it
+(`runners.api_key_id`). After that, only that key can poll, long-poll,
+heartbeat or post results for the name. A register for the same name with a
+different key gets `409 runner name already bound to another API key`,
+unless:
+
+- the bound key has been revoked, has expired or has been deleted, or
+- the new key belongs to the same user as the bound key (key rotation for
+  one service account).
+
+In both cases the register rebinds the name and audit-logs `runner.rebind`
+with the old and new key ids.
+
+To move a name to a key owned by a **different** user while the old key is
+still live, click **Remove**. The next register from the new key creates the
+row again, bound to the new key. Revoke the old key too if it shouldn't be
+used again.
 
 ---
 

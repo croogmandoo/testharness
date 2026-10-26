@@ -2,11 +2,96 @@ import re
 import shutil
 import yaml
 from pathlib import Path
-from harness.loader import load_apps
+from urllib.parse import urlsplit
+from harness.config import ConfigError, _ENV_REF
+from harness.loader import load_apps, resolve_base_url
 
 
 class AppManagerError(Exception):
     pass
+
+
+class AppValidationError(AppManagerError):
+    """The app definition is well-formed YAML but has an unsafe/invalid value."""
+    pass
+
+
+# Whitespace and C0/C1 control characters. Browsers strip these when parsing
+# an href (e.g. "java\tscript:" or " javascript:"), so strip them before
+# checking the scheme.
+_URL_STRIP = re.compile(r"[\x00-\x20\x7f-\x9f]")
+
+
+def is_http_url(value) -> bool:
+    """True when ``value`` is a string whose scheme is http/https and which
+    has a non-empty host, after stripping whitespace/control characters."""
+    if not isinstance(value, str):
+        return False
+    try:
+        parts = urlsplit(_URL_STRIP.sub("", value))
+    except ValueError:
+        return False
+    return parts.scheme.lower() in ("http", "https") and bool(parts.netloc)
+
+
+def _check_url(field: str, value, allow_refs: bool, redact: bool) -> None:
+    # Unresolved definitions (write time): a whole-value `$VAR` reference is
+    # allowed — it is checked again after resolution, before any run.
+    if allow_refs and isinstance(value, str) and _ENV_REF.match(value.strip()):
+        return
+    if not is_http_url(value):
+        # Resolved values may come from secrets — don't echo them.
+        shown = "" if redact else f", got {value!r}"
+        raise AppValidationError(
+            f"{field} must be an http(s) URL with a host{shown}"
+        )
+
+
+def validate_app_urls(app_def: dict, *, allow_refs: bool = True,
+                      redact: bool = False) -> None:
+    """Validate ``url`` and every ``environments.*`` value as http(s) URLs.
+
+    ``allow_refs=True`` (raw YAML being written) accepts whole-value ``$VAR``
+    references; pass ``False`` after resolution, right before a run, so a
+    secret like ``file:///etc/passwd`` cannot become the base URL.
+    ``redact=True`` keeps the (possibly secret-derived) value out of the
+    error message.
+
+    Raises :class:`AppValidationError` on the first invalid value.
+    """
+    if not isinstance(app_def, dict):
+        raise AppValidationError("app definition must be a mapping")
+    if "url" in app_def:
+        _check_url("url", app_def["url"], allow_refs, redact)
+    envs = app_def.get("environments")
+    if envs is None:
+        return
+    if not isinstance(envs, dict):
+        raise AppValidationError("environments must be a mapping of name -> URL")
+    for name, value in envs.items():
+        _check_url(f"environments.{name}", value, allow_refs, redact)
+
+
+def resolve_safe_base_url(app_def: dict, environment: str) -> str:
+    """Validate a *resolved* app definition's URLs and return the base URL
+    for ``environment``.
+
+    Run right before execution (local run or remote dispatch): ``$VAR``
+    URLs are only checked syntactically at write time, so a secret set to
+    ``file:///etc/passwd`` must be caught here. Raises ``ConfigError`` with
+    a message that never contains the resolved value.
+    """
+    try:
+        validate_app_urls(app_def, allow_refs=False, redact=True)
+    except AppValidationError as exc:
+        raise ConfigError(f"app {app_def.get('app', '?')!r}: {exc}") from None
+    base_url = resolve_base_url(app_def, environment)
+    if not is_http_url(base_url):
+        raise ConfigError(
+            f"app {app_def.get('app', '?')!r}: base URL for environment "
+            f"{environment!r} must be an http(s) URL with a host"
+        )
+    return base_url
 
 
 def slugify_app_name(name: str) -> str:
@@ -26,6 +111,7 @@ def app_file_path(name: str, apps_dir: str = "apps") -> Path:
 def write_app(app_def: dict, apps_dir: str = "apps") -> Path:
     if "app" not in app_def:
         raise AppManagerError("app_def must have an 'app' key")
+    validate_app_urls(app_def)
     Path(apps_dir).mkdir(parents=True, exist_ok=True)
     path = app_file_path(app_def["app"], apps_dir=apps_dir)
     if path.exists():
@@ -35,6 +121,7 @@ def write_app(app_def: dict, apps_dir: str = "apps") -> Path:
 
 
 def update_app(app_name: str, app_def: dict, apps_dir: str = "apps") -> Path:
+    validate_app_urls(app_def)
     path = app_file_path(app_name, apps_dir=apps_dir)
     if not path.exists():
         raise AppManagerError(f"App '{app_name}' not found at {path}")

@@ -4,9 +4,7 @@ from harness.loader import load_apps, resolve_base_url, slugify_test_name
 from harness.config import ConfigError
 
 @pytest.fixture
-def apps_dir(tmp_path, monkeypatch):
-    monkeypatch.setenv("EXAMPLE_USER", "admin")
-    monkeypatch.setenv("EXAMPLE_PASS", "secret")
+def apps_dir(tmp_path):
     (tmp_path / "portal.yaml").write_text(yaml.dump({
         "app": "Customer Portal",
         "url": "https://portal.example.com",
@@ -32,10 +30,25 @@ def test_load_apps_returns_list(apps_dir):
     assert apps[0]["app"] == "Customer Portal"
 
 def test_load_apps_resolves_env_vars(apps_dir):
-    apps = load_apps(apps_dir)
+    apps = load_apps(apps_dir, extra_vars={"EXAMPLE_USER": "admin",
+                                           "EXAMPLE_PASS": "secret"})
     login_test = next(t for t in apps[0]["tests"] if t["name"] == "Login works")
     fill_step = login_test["steps"][1]
     assert fill_step["fill"]["value"] == "admin"
+
+
+def test_load_apps_does_not_read_process_env_by_default(apps_dir, monkeypatch):
+    monkeypatch.setenv("EXAMPLE_USER", "from-env")
+    apps = load_apps(apps_dir)
+    login_test = next(t for t in apps[0]["tests"] if t["name"] == "Login works")
+    assert login_test["steps"][1]["fill"]["value"] == "$EXAMPLE_USER"
+
+
+def test_load_apps_reads_allowlisted_environ(apps_dir, monkeypatch):
+    monkeypatch.setenv("EXAMPLE_USER", "from-env")
+    apps = load_apps(apps_dir, environ={"EXAMPLE_USER": "from-env"})
+    login_test = next(t for t in apps[0]["tests"] if t["name"] == "Login works")
+    assert login_test["steps"][1]["fill"]["value"] == "from-env"
 
 def test_resolve_base_url_uses_environment_key():
     app = {"url": "https://default.com", "environments": {"staging": "https://staging.com"}}

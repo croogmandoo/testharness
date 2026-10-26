@@ -601,7 +601,10 @@ async def execute_job(
     for test_def in app_def.get("tests", []):
         # Worker-side capture chaining mirrors harness.runner._execute_test
         from harness.config import resolve_env_vars
-        resolved_td = resolve_env_vars(test_def, strict=True, extra_vars=captures)
+        # environ={}: only captures are substituted here. The worker's own
+        # env (HARNESS_API_KEY, ...) must never be reachable from app YAML.
+        resolved_td = resolve_env_vars(test_def, strict=True, extra_vars=captures,
+                                       environ={})
         ttype = resolved_td.get("type", "availability")
         max_retries = int(resolved_td.get("retry", 0))
         timeout_ms = browser_cfg.get("timeout_ms", 30000)
@@ -723,8 +726,21 @@ async def poll_loop(client: httpx.AsyncClient, cfg: WorkerConfig) -> None:
 
     while _shutdown_event is None or not _shutdown_event.is_set():
         # Available slots = capacity - currently in flight
-        # (semaphore approximates this; for poll we ask for what we can take on)
-        remaining = max(1, cfg.capacity - len([t for t in inflight if not t.done()]))
+        active_count = len([t for t in inflight if not t.done()])
+        remaining = cfg.capacity - active_count
+        if remaining <= 0:
+            # Saturated — wait for at least one in-flight task to complete before polling central
+            if inflight:
+                try:
+                    await asyncio.wait(
+                        inflight,
+                        return_when=asyncio.FIRST_COMPLETED,
+                        timeout=1.0,
+                    )
+                except Exception:
+                    pass
+            continue
+
         jobs, retry_after = await poll_for_jobs(client, cfg, remaining)
         for job in jobs:
             task = asyncio.create_task(_run_one(job))

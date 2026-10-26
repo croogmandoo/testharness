@@ -23,7 +23,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from harness.config import resolve_env_vars
+from harness.config import ConfigError, app_environ, resolve_env_vars
 from harness.models import Run
 
 _log = logging.getLogger("harness.worker_dispatch")
@@ -96,22 +96,22 @@ def should_dispatch_remotely(app_def: dict) -> bool:
     return name is not None or tag is not None
 
 
-def queue_remote_run(
-    db,
+def resolve_app_def_for_dispatch(
     app_def: dict,
-    environment: str,
-    triggered_by: str,
+    *,
     secrets_store=None,
-    run_id: Optional[str] = None,
-) -> str:
-    """Create a Run row in state='queued' and a runner_jobs row carrying the
-    fully-resolved app definition. Returns the run_id.
+    config: Optional[dict] = None,
+) -> dict:
+    """Resolve ``$VAR`` references in ``app_def`` for a remote worker.
 
-    The app_def is resolved here (not on the worker) because the central
-    harness owns the secrets store. The worker sees the resolved version
-    with plaintext secrets in headers / fill values / etc.
+    Values come from the secrets store, then the ``apps_env_allowlist``
+    subset of process env (never arbitrary env). ``extract:`` capture names
+    are seeded with their own ``$NAME`` placeholder so they survive for the
+    worker's per-test resolution. Raises ``ConfigError`` on a missing var or
+    when a resolved ``url``/``environments.*`` value is not http(s).
     """
-    # Resolve secrets the same way harness.runner.run_app does.
+    from harness.app_manager import AppValidationError, validate_app_urls
+
     extra_vars = (
         secrets_store.get_all_decrypted() if secrets_store is not None else {}
     )
@@ -120,8 +120,40 @@ def queue_remote_run(
         for capture_name in (td.get("extract") or {}).keys():
             capture_seeds[capture_name] = "$" + capture_name
     resolved = resolve_env_vars(
-        app_def, strict=True, extra_vars={**extra_vars, **capture_seeds}
+        app_def, strict=True, extra_vars={**extra_vars, **capture_seeds},
+        environ=app_environ(config),
     )
+    try:
+        validate_app_urls(resolved, allow_refs=False, redact=True)
+    except AppValidationError as exc:
+        raise ConfigError(f"app {resolved.get('app', '?')!r}: {exc}") from None
+    return resolved
+
+
+def queue_remote_run(
+    db,
+    app_def: dict,
+    environment: str,
+    triggered_by: str,
+    secrets_store=None,
+    run_id: Optional[str] = None,
+    config: Optional[dict] = None,
+) -> str:
+    """Create a Run row in state='queued' and a runner_jobs row carrying the
+    fully-resolved app definition. Returns the run_id.
+
+    The app_def is resolved here (not on the worker) because the central
+    harness owns the secrets store. The worker sees the resolved version
+    with plaintext secrets in headers / fill values / etc. ``config`` supplies
+    ``apps_env_allowlist``; without it no process env is exposed.
+    """
+    # Resolve secrets the same way harness.runner.run_app does.
+    resolved = resolve_app_def_for_dispatch(
+        app_def, secrets_store=secrets_store, config=config,
+    )
+    from harness.app_manager import resolve_safe_base_url
+    # The worker navigates to this; fail before queueing, not on the worker.
+    resolve_safe_base_url(resolved, environment)
 
     runner_name, target_tag = parse_run_on(resolved)
 
