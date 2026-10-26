@@ -58,15 +58,15 @@
 
 ## 4. Prioritized Next Actions (Top 5)
 
-1. **[Upstream Merge Review & Clean PR]**:
+1. **[Upstream Merge Review & Clean PR]** ([#8](https://github.com/croogmandoo/testharness/issues/8)):
    - Prepare and submit a clean pull request from `croogmandoo/main` to `origin/master` (verified zero merge conflicts, fast-forward compatible).
-2. **[Production Hardening Checklist]**:
+2. **[Production Hardening Checklist]** ([#9](https://github.com/croogmandoo/testharness/issues/9)):
    - Review production deployment documentation and reverse proxy TLS termination examples (e.g. Caddy/Nginx reverse proxy with HTTPS).
-3. **[API Contract & OpenAPI Documentation]**:
+3. **[API Contract & OpenAPI Documentation]** ([#10](https://github.com/croogmandoo/testharness/issues/10)):
    - Verify OpenAPI specs (`/docs`, `/openapi.json`) for all `/api/v1/` endpoints.
-4. **[Continuous Integration Validation]**:
+4. **[Continuous Integration Validation]** ([#11](https://github.com/croogmandoo/testharness/issues/11)):
    - Run full CI security checks including `pip-audit` against `requirements.lock`.
-5. **[Remote Worker End-to-End Smoke Test]**:
+5. **[Remote Worker End-to-End Smoke Test]** ([#12](https://github.com/croogmandoo/testharness/issues/12)):
    - Run `v2-smoke-compose.yml` to exercise live remote worker job dispatch and screenshot artifact uploads.
 
 ---
