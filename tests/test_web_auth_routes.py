@@ -143,6 +143,7 @@ def test_github_oauth_callback_creates_user_and_sets_session(db, tmp_path):
                 "client_id": "cid",
                 "client_secret": "csecret",
                 "default_role": "read_only",
+                "allowed_users": ["testuser"],
             }
         },
         "environments": {"production": {"label": "Production"}},
@@ -151,8 +152,10 @@ def test_github_oauth_callback_creates_user_and_sets_session(db, tmp_path):
     c = TestClient(app, follow_redirects=False)
 
     token_response = MagicMock()
+    token_response.status_code = 200
     token_response.json = MagicMock(return_value={"access_token": "gha_test_token"})
     user_response = MagicMock()
+    user_response.status_code = 200
     user_response.json = MagicMock(return_value={
         "id": 12345,
         "login": "testuser",
@@ -223,8 +226,10 @@ def test_github_oauth_callback_rejects_inactive_user_by_oauth_id(db, tmp_path):
     c = TestClient(app, follow_redirects=False)
 
     token_response = MagicMock()
+    token_response.status_code = 200
     token_response.json = MagicMock(return_value={"access_token": "gha_test_token"})
     user_response = MagicMock()
+    user_response.status_code = 200
     user_response.json = MagicMock(return_value={
         "id": 12345,
         "login": "inactiveuser",
@@ -289,8 +294,10 @@ def test_github_oauth_callback_rejects_inactive_user_by_username(db, tmp_path):
     c = TestClient(app, follow_redirects=False)
 
     token_response = MagicMock()
+    token_response.status_code = 200
     token_response.json = MagicMock(return_value={"access_token": "gha_test_token"})
     user_response = MagicMock()
+    user_response.status_code = 200
     user_response.json = MagicMock(return_value={
         "id": 99999,
         "login": "existinguser",
@@ -355,8 +362,10 @@ def test_github_oauth_callback_allows_active_user(db, tmp_path):
     c = TestClient(app, follow_redirects=False)
 
     token_response = MagicMock()
+    token_response.status_code = 200
     token_response.json = MagicMock(return_value={"access_token": "gha_test_token"})
     user_response = MagicMock()
+    user_response.status_code = 200
     user_response.json = MagicMock(return_value={
         "id": 54321,
         "login": "activeuser",

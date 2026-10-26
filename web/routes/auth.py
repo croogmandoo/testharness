@@ -1,8 +1,11 @@
+import logging
+import re
 import uuid
 import os
 import secrets as _secrets
 import httpx
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -11,6 +14,7 @@ from web.templating import make_templates
 
 router = APIRouter()
 templates = make_templates()
+_log = logging.getLogger("web.routes.auth")
 
 
 def _nav_ctx(request: Request) -> dict:
@@ -182,6 +186,44 @@ async def logout(request: Request, _csrf=Depends(verify_csrf)):
     return response
 
 
+# ── GitHub OAuth ──────────────────────────────────────────────────────────────
+
+_GITHUB_LOGIN_RE = re.compile(r"^[A-Za-z0-9-]{1,39}$")
+_auto_provision_warned = False
+
+
+def _github_allowlist(github_cfg: dict) -> tuple:
+    """Return (allowed_users, allowed_orgs) as lower-cased sets."""
+    users = {str(u).lower() for u in (github_cfg.get("allowed_users") or [])}
+    orgs = {str(o).lower() for o in (github_cfg.get("allowed_orgs") or [])}
+    return users, orgs
+
+
+async def _github_user_in_orgs(access_token: str, allowed_orgs: set) -> bool:
+    """True if the token's user belongs to any of ``allowed_orgs``.
+    Any GitHub error or malformed response counts as "not a member"."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                "https://api.github.com/user/orgs?per_page=100",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json",
+                },
+            )
+        if resp.status_code != 200:
+            return False
+        orgs = resp.json()
+    except Exception:
+        return False
+    if not isinstance(orgs, list):
+        return False
+    for org in orgs:
+        if isinstance(org, dict) and str(org.get("login", "")).lower() in allowed_orgs:
+            return True
+    return False
+
+
 @router.get("/auth/oauth/github/login")
 async def github_oauth_login(request: Request):
     from web.main import get_config
@@ -192,9 +234,11 @@ async def github_oauth_login(request: Request):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="GitHub OAuth not configured")
     state = _secrets.token_urlsafe(16)
-    url = (
-        f"https://github.com/login/oauth/authorize"
-        f"?client_id={client_id}&state={state}&scope=user:email"
+    scope = "user:email"
+    if github_cfg.get("allowed_orgs"):
+        scope += " read:org"
+    url = "https://github.com/login/oauth/authorize?" + urlencode(
+        {"client_id": client_id, "state": state, "scope": scope}
     )
     response = RedirectResponse(url, status_code=302)
     response.set_cookie("oauth_state", state, max_age=300, httponly=True, samesite="lax")
@@ -208,7 +252,7 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
     from web.auth import make_session_token, get_auth_config
 
     stored_state = request.cookies.get("oauth_state", "")
-    if not stored_state or stored_state != state:
+    if not stored_state or not _secrets.compare_digest(stored_state, state):
         raise HTTPException(status_code=400, detail="Invalid OAuth state parameter")
 
     config = get_config()
@@ -216,18 +260,35 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
     client_id = github_cfg.get("client_id")
     client_secret = github_cfg.get("client_secret")
     default_role = github_cfg.get("default_role", "read_only")
+    allowed_users, allowed_orgs = _github_allowlist(github_cfg)
+    allowlist_configured = bool(allowed_users or allowed_orgs)
+    auto_provision = bool(github_cfg.get("auto_provision", False))
 
+    global _auto_provision_warned
+    if auto_provision and not allowlist_configured and not _auto_provision_warned:
+        _auto_provision_warned = True
+        _log.warning(
+            "auth.github.auto_provision is enabled with no allowed_users/allowed_orgs: "
+            "any GitHub account can sign in and is created with role %r",
+            default_role,
+        )
+
+    # ── Exchange the code for an access token ────────────────────────────────
     async with httpx.AsyncClient(timeout=15) as client:
         token_resp = await client.post(
             "https://github.com/login/oauth/access_token",
             json={"client_id": client_id, "client_secret": client_secret, "code": code},
             headers={"Accept": "application/json"},
         )
-    token_data = token_resp.json()
-    access_token = token_data.get("access_token")
-    if not access_token:
+    try:
+        token_data = token_resp.json() if token_resp.status_code == 200 else None
+    except ValueError:
+        token_data = None
+    access_token = token_data.get("access_token") if isinstance(token_data, dict) else None
+    if not isinstance(access_token, str) or not access_token:
         raise HTTPException(status_code=400, detail="GitHub OAuth failed — no access token")
 
+    # ── Fetch and validate the GitHub identity ───────────────────────────────
     async with httpx.AsyncClient(timeout=15) as client:
         user_resp = await client.get(
             "https://api.github.com/user",
@@ -236,27 +297,70 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
                 "Accept": "application/vnd.github.v3+json",
             },
         )
-    github_user = user_resp.json()
+    try:
+        github_user = user_resp.json() if user_resp.status_code == 200 else None
+    except ValueError:
+        github_user = None
+    if (
+        not isinstance(github_user, dict)
+        or not isinstance(github_user.get("id"), int)
+        or isinstance(github_user.get("id"), bool)
+        or not isinstance(github_user.get("login"), str)
+        or not _GITHUB_LOGIN_RE.match(github_user["login"])
+    ):
+        raise HTTPException(status_code=400, detail="GitHub OAuth failed — invalid user response")
+
+    login = github_user["login"]
     github_id = str(github_user["id"])
-    username = f"github:{github_user['login']}"
-    display_name = github_user.get("name") or github_user["login"]
-    email = github_user.get("email")
+    username = f"github:{login}"
+    name = github_user.get("name")
+    display_name = name if isinstance(name, str) and name else login
+    email = github_user.get("email") if isinstance(github_user.get("email"), str) else None
+
+    # ── Allowlist: enforced on every login once configured ───────────────────
+    allowed = False
+    if allowlist_configured:
+        allowed = login.lower() in allowed_users
+        if not allowed and allowed_orgs:
+            allowed = await _github_user_in_orgs(access_token, allowed_orgs)
+        if not allowed:
+            _log.warning("GitHub login %r refused: not in allowed_users/allowed_orgs", login)
+            raise HTTPException(status_code=403, detail="GitHub account is not allowed")
 
     db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
     existing = db.get_user_by_oauth_provider_id("github", github_id)
     if existing:
         if not existing.get("is_active"):
             raise HTTPException(status_code=403, detail="Account is disabled")
         user = existing
-        db.update_user_last_login(user["id"], datetime.now(timezone.utc).isoformat())
+        db.update_user_last_login(user["id"], now)
     else:
         existing_by_name = db.get_user_by_username(username)
         if existing_by_name:
+            # Only a pre-provisioned GitHub row that has never been linked may
+            # be bound to this GitHub id. A row already linked to a different
+            # id means the login was renamed/recycled on GitHub — refuse it.
+            if (existing_by_name.get("auth_provider") != "github"
+                    or existing_by_name.get("oauth_provider_id")):
+                _log.warning(
+                    "GitHub login %r (id %s) refused: username belongs to another identity",
+                    login, github_id,
+                )
+                raise HTTPException(status_code=403, detail="Account is linked to a different identity")
             if not existing_by_name.get("is_active"):
                 raise HTTPException(status_code=403, detail="Account is disabled")
+            if not db.set_user_oauth_provider_id(existing_by_name["id"], github_id):
+                raise HTTPException(status_code=403, detail="Account is linked to a different identity")
             user = existing_by_name
-            db.update_user_last_login(user["id"], datetime.now(timezone.utc).isoformat())
+            db.update_user_last_login(user["id"], now)
         else:
+            if not (allowed or auto_provision):
+                _log.warning(
+                    "GitHub login %r refused: no matching user and auto_provision is off",
+                    login,
+                )
+                raise HTTPException(status_code=403, detail="GitHub account is not allowed")
             user = {
                 "id": str(uuid.uuid4()),
                 "username": username,
@@ -268,8 +372,8 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
                 "oauth_provider_id": github_id,
                 "role_override": 0,
                 "is_active": 1,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "last_login_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": now,
+                "last_login_at": now,
             }
             db.insert_user(user)
 
@@ -282,6 +386,7 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
         "session", token,
         httponly=True, samesite="lax",
         secure=auth_config.get("secure_cookie", False),
+        max_age=int(auth_config["session_hours"] * 3600),
     )
     response.delete_cookie("oauth_state")
     return response

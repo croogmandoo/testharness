@@ -32,6 +32,20 @@ class UsersMixin:
             ).fetchone()
             return dict(row) if row else None
 
+    def set_user_oauth_provider_id(self, user_id: str, provider_id: str) -> bool:
+        """Bind an OAuth provider id to a pre-provisioned user row.
+
+        Only fills an empty ``oauth_provider_id``; an already-linked row is
+        never re-pointed at a different external identity. Returns True when
+        the row was updated."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE users SET oauth_provider_id=? "
+                "WHERE id=? AND oauth_provider_id IS NULL",
+                (provider_id, user_id),
+            )
+            return cur.rowcount == 1
+
     def get_user_by_username(self, username: str) -> Optional[dict]:
         with self._connect() as conn:
             row = conn.execute(

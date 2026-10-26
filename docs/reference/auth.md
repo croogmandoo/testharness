@@ -126,6 +126,15 @@ Secrets deletion (`POST /secrets/{name}/delete`) is restricted to `admin` only; 
 **LDAP auth (fallback):**
 `POST /auth/login` → `verify_local_password()` returns `None` + `auth.ldap.enabled` is true → `ldap_authenticate()` → `db.upsert_ldap_user()` → set `session` cookie → redirect `/`
 
+**GitHub OAuth:**
+`GET /auth/oauth/github/login` → GitHub → `GET /auth/oauth/github/callback`. The callback rejects (400) a token response that is not HTTP 200 with a string `access_token`, and a `/user` response that is not HTTP 200 with an integer `id` and a `login` matching `^[A-Za-z0-9-]{1,39}$`. It then resolves the account in this order:
+
+1. A row whose `oauth_provider_id` equals the GitHub numeric id (must be `is_active`).
+2. A row named `github:<login>` — bound to the GitHub id only if its `auth_provider` is `github` and its `oauth_provider_id` is still empty (an admin-pre-provisioned account). A `github:<login>` row already linked to a *different* id, or one owned by another provider, is refused with 403. This blocks a renamed or recycled GitHub login from inheriting someone else's account.
+3. Otherwise a new user is created with `auth.github.default_role` — but only if the login is in `auth.github.allowed_users` (case-insensitive), the user belongs to one of `auth.github.allowed_orgs` (checked via `GET /user/orgs`; the authorize URL then requests the `read:org` scope), or `auth.github.auto_provision: true`. Otherwise 403.
+
+When `allowed_users` or `allowed_orgs` is set, it is enforced on **every** GitHub login, not just at account creation, so removing someone from the org (or the list) cuts off their access at their next login. `auto_provision: true` without any allowlist lets any GitHub account sign in and logs a warning on the first callback. The GitHub session cookie has the same `Max-Age`, `SameSite=lax` and `Secure` settings as the local-login cookie.
+
 **LDAP / local account collision:**
 `upsert_ldap_user()` only ever creates or updates rows whose `auth_provider` is `ldap`. If the directory username matches an existing local or GitHub account, the upsert returns `None`, the row is left untouched, the login fails with the generic 401, and an `auth.ldap_conflict` audit event is written. Rename one of the accounts to resolve the clash. An LDAP user whose row has `is_active = 0` is also refused with 401, even when the directory bind succeeds.
 
@@ -148,6 +157,12 @@ Relevant keys in `config.yaml`:
 |---|---|---|
 | `auth.session_hours` | `8` | Session cookie lifetime in hours |
 | `auth.secure_cookie` | `false` | Set `Secure` flag on session cookie (enable for HTTPS deployments) |
+| `auth.github.client_id` | — | GitHub OAuth app client id (enables the GitHub button) |
+| `auth.github.client_secret` | — | GitHub OAuth app client secret |
+| `auth.github.default_role` | `read_only` | Role given to newly created GitHub users |
+| `auth.github.allowed_users` | `[]` | GitHub logins allowed to sign in (case-insensitive) |
+| `auth.github.allowed_orgs` | `[]` | GitHub orgs whose members may sign in (adds the `read:org` scope) |
+| `auth.github.auto_provision` | `false` | Create accounts for any GitHub user when no allowlist is set |
 | `auth.ldap.enabled` | `false` | Enable LDAP authentication fallback |
 | `auth.ldap.server` | — | LDAP server hostname |
 | `auth.ldap.port` | — | LDAP server port (typically 389 or 636) |

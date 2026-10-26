@@ -86,6 +86,11 @@ auth:
     client_id: "$GITHUB_CLIENT_ID"
     client_secret: "$GITHUB_CLIENT_SECRET"
     default_role: read_only
+    # New GitHub sign-ins are refused unless one of these matches.
+    # When either list is set it is checked on every login.
+    allowed_users: [octocat]
+    allowed_orgs: [my-company]
+    auto_provision: false        # true = any GitHub account may sign in
 ```
 
 ### `.env` file

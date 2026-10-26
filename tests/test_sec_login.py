@@ -153,3 +153,182 @@ def test_ldap_bind_name_uses_domain_from_base_dn():
          patch("harness.auth_manager.Server"):
         assert ldap_authenticate("bob", "pw", LDAP_CFG) is not None
     assert ctor.call_args.kwargs["user"] == "bob@corp.com"
+
+
+# ── #3 GitHub OAuth ──────────────────────────────────────────────────────────
+
+def _resp(status, payload):
+    r = MagicMock()
+    r.status_code = status
+    r.json = MagicMock(return_value=payload)
+    return r
+
+
+GH_USER = {"id": 777, "login": "octo", "name": "Octo Cat", "email": "o@x.io"}
+
+
+def _github_callback(db, apps_dir, github_cfg, *, token=None, user=None,
+                     orgs=None):
+    """Drive /auth/oauth/github/callback with mocked GitHub responses."""
+    from unittest.mock import AsyncMock
+    config = {
+        "environments": {"production": {"label": "Production"}},
+        "auth": {"github": {"client_id": "cid", "client_secret": "cs",
+                            "default_role": "read_only", **github_cfg}},
+    }
+    app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+    c = TestClient(app, follow_redirects=False)
+    c.cookies.set("oauth_state", "st")
+
+    token = token if token is not None else _resp(200, {"access_token": "gho_x"})
+    user = user if user is not None else _resp(200, GH_USER)
+    orgs = orgs if orgs is not None else _resp(200, [])
+
+    async def _get(url, **kw):
+        return orgs if "/user/orgs" in url else user
+
+    with patch("web.routes.auth.httpx") as mock_httpx:
+        mc = AsyncMock()
+        mc.__aenter__ = AsyncMock(return_value=mc)
+        mc.__aexit__ = AsyncMock(return_value=False)
+        mc.post = AsyncMock(return_value=token)
+        mc.get = AsyncMock(side_effect=_get)
+        mock_httpx.AsyncClient.return_value = mc
+        r = c.get("/auth/oauth/github/callback?code=abc&state=st")
+    return r, mc
+
+
+def _github_row(db, login, provider_id, *, provider="github", active=1):
+    uid = str(uuid.uuid4())
+    db.insert_user({
+        "id": uid, "username": f"github:{login}", "display_name": login,
+        "email": None, "password_hash": None, "role": "admin",
+        "auth_provider": provider, "oauth_provider_id": provider_id,
+        "role_override": 0, "is_active": active,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    })
+    return uid
+
+
+def test_github_no_allowlist_new_user_is_403(db, apps_dir):
+    r, _ = _github_callback(db, apps_dir, {})
+    assert r.status_code == 403
+    assert "session" not in r.cookies
+    assert db.get_user_by_username("github:octo") is None
+
+
+def test_github_allowlisted_user_is_created(db, apps_dir):
+    r, _ = _github_callback(db, apps_dir, {"allowed_users": ["OCTO"]})
+    assert r.status_code == 302
+    u = db.get_user_by_oauth_provider_id("github", "777")
+    assert u["username"] == "github:octo"
+    assert u["role"] == "read_only"
+
+
+def test_github_auto_provision_creates_user(db, apps_dir):
+    r, _ = _github_callback(db, apps_dir, {"auto_provision": True})
+    assert r.status_code == 302
+    assert db.get_user_by_oauth_provider_id("github", "777") is not None
+
+
+def test_github_org_membership_allows_login(db, apps_dir):
+    r, mc = _github_callback(
+        db, apps_dir, {"allowed_orgs": ["acme"]},
+        orgs=_resp(200, [{"login": "other"}, {"login": "ACME"}]),
+    )
+    assert r.status_code == 302
+    assert any("/user/orgs" in call.args[0] for call in mc.get.call_args_list)
+
+
+def test_github_not_in_org_is_403(db, apps_dir):
+    r, _ = _github_callback(db, apps_dir, {"allowed_orgs": ["acme"]},
+                            orgs=_resp(200, [{"login": "other"}]))
+    assert r.status_code == 403
+
+
+def test_github_allowlist_enforced_for_existing_linked_user(db, apps_dir):
+    _github_row(db, "octo", "777")
+    r, _ = _github_callback(db, apps_dir, {"allowed_users": ["someone-else"]})
+    assert r.status_code == 403
+    assert "session" not in r.cookies
+
+
+def test_github_existing_linked_user_without_allowlist_still_works(db, apps_dir):
+    _github_row(db, "octo", "777")
+    r, _ = _github_callback(db, apps_dir, {})
+    assert r.status_code == 302
+    assert "session" in r.cookies
+
+
+def test_github_renamed_login_cannot_take_over_linked_row(db, apps_dir):
+    """A different GitHub account that now holds the login 'octo' must not
+    inherit the row linked to the original 'octo' (id 111)."""
+    victim = _github_row(db, "octo", "111")
+    r, _ = _github_callback(db, apps_dir, {"auto_provision": True})
+    assert r.status_code == 403
+    assert "session" not in r.cookies
+    assert db.get_user_by_id(victim)["oauth_provider_id"] == "111"
+
+
+def test_github_login_cannot_claim_non_github_row(db, apps_dir):
+    _github_row(db, "octo", None, provider="local")
+    r, _ = _github_callback(db, apps_dir, {"auto_provision": True})
+    assert r.status_code == 403
+
+
+def test_github_preprovisioned_row_gets_bound(db, apps_dir):
+    uid = _github_row(db, "octo", None)
+    r, _ = _github_callback(db, apps_dir, {})
+    assert r.status_code == 302
+    assert db.get_user_by_id(uid)["oauth_provider_id"] == "777"
+    assert db.get_user_by_oauth_provider_id("github", "777")["id"] == uid
+
+
+def test_set_user_oauth_provider_id_never_overwrites(db):
+    uid = _github_row(db, "octo", "111")
+    assert db.set_user_oauth_provider_id(uid, "777") is False
+    assert db.get_user_by_id(uid)["oauth_provider_id"] == "111"
+
+
+@pytest.mark.parametrize("token", [
+    _resp(500, {"access_token": "gho_x"}),
+    _resp(200, {"error": "bad_verification_code"}),
+    _resp(200, {"access_token": 123}),
+    _resp(200, ["gho_x"]),
+])
+def test_github_bad_token_response_is_400(db, apps_dir, token):
+    r, _ = _github_callback(db, apps_dir, {"auto_provision": True}, token=token)
+    assert r.status_code == 400
+
+
+@pytest.mark.parametrize("user", [
+    _resp(401, GH_USER),
+    _resp(200, {**GH_USER, "id": "777"}),
+    _resp(200, {**GH_USER, "id": True}),
+    _resp(200, {**GH_USER, "login": "octo/../admin"}),
+    _resp(200, {**GH_USER, "login": "a" * 40}),
+    _resp(200, {"id": 777}),
+])
+def test_github_malformed_user_response_is_400(db, apps_dir, user):
+    r, _ = _github_callback(db, apps_dir, {"auto_provision": True}, user=user)
+    assert r.status_code == 400
+
+
+def test_github_session_cookie_has_max_age(db, apps_dir):
+    r, _ = _github_callback(db, apps_dir, {"allowed_users": ["octo"]})
+    assert r.status_code == 302
+    set_cookie = [h for h in r.headers.get_list("set-cookie") if h.startswith("session=")]
+    assert set_cookie
+    assert "Max-Age=" in set_cookie[0]
+    assert "samesite=lax" in set_cookie[0].lower()
+
+
+def test_github_login_requests_read_org_only_with_orgs(db, apps_dir):
+    def _loc(cfg):
+        config = {"auth": {"github": {"client_id": "cid", **cfg}}}
+        app = create_app(db=db, config=config, apps_dir=str(apps_dir))
+        c = TestClient(app, follow_redirects=False)
+        return c.get("/auth/oauth/github/login").headers["location"]
+    assert "read%3Aorg" not in _loc({})
+    assert "read%3Aorg" in _loc({"allowed_orgs": ["acme"]})
