@@ -66,8 +66,41 @@ def test_allowlist_wildcard_restores_legacy_and_warns(home_app_dir, monkeypatch,
     apps = load_apps(home_app_dir, environ=env)
     assert _headers(apps) == {"X-Home": "/home/victim",
                               "X-Base": "https://allowed.example"}
-    warnings = [r for r in caplog.records if "apps_env_allowlist" in r.getMessage()]
+    warnings = [r for r in caplog.records if "can resolve ANY" in r.getMessage()]
     assert len(warnings) == 1
+
+
+@pytest.mark.parametrize("pattern", ["?*", "**", "*?", "*"])
+def test_allowlist_wildcard_only_patterns_warn(monkeypatch, caplog, pattern):
+    monkeypatch.setattr(hconfig, "_wildcard_warned", False)
+    monkeypatch.setenv("HOME", "/home/victim")
+    with caplog.at_level(logging.WARNING, logger="harness.config"):
+        env = app_environ({"apps_env_allowlist": [pattern]})
+    assert env.get("HOME") == "/home/victim"
+    assert any("can resolve ANY" in r.getMessage() for r in caplog.records)
+
+
+def test_allowlist_specific_glob_does_not_trigger_wildcard_warning(monkeypatch, caplog):
+    monkeypatch.setattr(hconfig, "_wildcard_warned", False)
+    with caplog.at_level(logging.WARNING, logger="harness.config"):
+        app_environ({"apps_env_allowlist": ["MYAPP_*"]})
+    assert not any("can resolve ANY" in r.getMessage() for r in caplog.records)
+
+
+def test_allowlist_warns_on_credential_like_names_without_values(monkeypatch, caplog):
+    monkeypatch.setattr(hconfig, "_sensitive_warned", set())
+    monkeypatch.setenv("HARNESS_API_KEY", "server-key-value")
+    monkeypatch.setenv("HARNESS_DB_Password", "pw-value")
+    monkeypatch.setenv("HARNESS_APP_BASE", "https://x.example")
+    with caplog.at_level(logging.WARNING, logger="harness.config"):
+        env = app_environ({"apps_env_allowlist": ["HARNESS_*"]})
+        app_environ({"apps_env_allowlist": ["HARNESS_*"]})
+    assert "HARNESS_API_KEY" in env
+    msgs = [r.getMessage() for r in caplog.records if "credential-like" in r.getMessage()]
+    assert len(msgs) == 1
+    assert "HARNESS_API_KEY" in msgs[0] and "HARNESS_DB_Password" in msgs[0]
+    assert "HARNESS_APP_BASE" not in msgs[0]
+    assert "server-key-value" not in msgs[0] and "pw-value" not in msgs[0]
 
 
 def test_app_environ_default_is_empty(monkeypatch):
@@ -210,3 +243,158 @@ def test_load_apps_warns_but_keeps_app_with_bad_url(tmp_path, caplog):
         apps = load_apps(str(d))
     assert [a["app"] for a in apps] == ["evil"]
     assert any("http(s)" in r.getMessage() for r in caplog.records)
+
+
+# ── Resolved URLs are re-validated before any run / dispatch ───────────────
+
+class _FakeSecrets:
+    def __init__(self, values):
+        self._values = values
+
+    def get_all_decrypted(self):
+        return dict(self._values)
+
+
+def _var_url_app(**extra):
+    return {"app": "fileapp", "url": "$TARGET_URL",
+            "tests": [{"name": "t", "type": "availability"}], **extra}
+
+
+@pytest.mark.parametrize("secret_url", [
+    "file:///etc/passwd", "javascript:alert(1)", "data:text/html,x",
+])
+@pytest.mark.asyncio
+async def test_run_app_rejects_non_http_url_from_secret(tmp_path, monkeypatch, secret_url):
+    from harness.db import Database
+    from harness import runner as hrunner
+
+    db = Database(str(tmp_path / "h.db"))
+    db.init_schema()
+    called = []
+
+    async def fake_execute(*a, **kw):  # pragma: no cover — must not run
+        called.append(a)
+
+    monkeypatch.setattr(hrunner, "_execute_test", fake_execute)
+    run_id = await hrunner.run_app(
+        _var_url_app(), "production", "test", db, {},
+        secrets_store=_FakeSecrets({"TARGET_URL": secret_url}),
+    )
+    assert called == []
+    run = db.get_run(run_id)
+    assert run["status"] == "error"
+    results = db.get_results_for_run(run_id)
+    assert len(results) == 1 and results[0]["status"] == "error"
+    assert "http(s)" in results[0]["error_msg"]
+    # The secret-derived value must not be echoed into results.
+    assert secret_url not in results[0]["error_msg"]
+
+
+@pytest.mark.asyncio
+async def test_run_app_missing_var_records_error_run_with_preinserted_id(tmp_path, monkeypatch):
+    from harness.db import Database
+    from harness.models import Run
+    from harness import runner as hrunner
+
+    db = Database(str(tmp_path / "h.db"))
+    db.init_schema()
+    run = Run(app="fileapp", environment="production", triggered_by="api")
+    db.insert_run(run)
+    rid = await hrunner.run_app(_var_url_app(), "production", "api", db, {},
+                                run_id=run.id)
+    assert rid == run.id
+    assert db.get_run(run.id)["status"] == "error"
+    msg = db.get_results_for_run(run.id)[0]["error_msg"]
+    assert "TARGET_URL" in msg and "apps_env_allowlist" in msg
+
+
+@pytest.mark.asyncio
+async def test_run_app_rejects_bad_environment_base_url(tmp_path, monkeypatch):
+    from harness.db import Database
+    from harness import runner as hrunner
+
+    db = Database(str(tmp_path / "h.db"))
+    db.init_schema()
+    app_def = {"app": "envapp", "url": "https://ok.example",
+               "environments": {"staging": "$STAGING_URL"},
+               "tests": [{"name": "t", "type": "availability"}]}
+    run_id = await hrunner.run_app(
+        app_def, "staging", "test", db, {},
+        secrets_store=_FakeSecrets({"STAGING_URL": "file:///etc/shadow"}),
+    )
+    assert db.get_run(run_id)["status"] == "error"
+
+
+def test_queue_remote_run_rejects_non_http_url_from_secret(tmp_path):
+    from harness.db import Database
+    from harness.worker_dispatch import queue_remote_run
+
+    db = Database(str(tmp_path / "h.db"))
+    db.init_schema()
+    with pytest.raises(ConfigError, match="http") as excinfo:
+        queue_remote_run(
+            db, _var_url_app(run_on="w1"), "production", "api",
+            secrets_store=_FakeSecrets({"TARGET_URL": "file:///etc/passwd"}),
+        )
+    assert "/etc/passwd" not in str(excinfo.value)
+    with db._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM runner_jobs").fetchone()[0] == 0
+
+
+def test_resolve_app_def_for_dispatch_rejects_non_http_url():
+    from harness.worker_dispatch import resolve_app_def_for_dispatch
+    with pytest.raises(ConfigError):
+        resolve_app_def_for_dispatch(
+            _var_url_app(),
+            secrets_store=_FakeSecrets({"TARGET_URL": "file:///etc/passwd"}),
+        )
+
+
+def test_api_trigger_remote_run_with_bad_resolved_url_returns_422(tmp_path):
+    from fastapi.testclient import TestClient
+    from harness.db import Database
+    from web.main import create_app
+    from web.auth import get_current_user
+
+    db = Database(str(tmp_path / "h.db"))
+    db.init_schema()
+    apps = tmp_path / "apps"
+    apps.mkdir()
+    (apps / "fileapp.yaml").write_text(yaml.dump(_var_url_app(run_on="w1")))
+    app = create_app(db=db, config={"environments": {"production": {}}},
+                     apps_dir=str(apps))
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": 1, "username": "admin", "role": "admin"}
+    resp = TestClient(app).post("/api/runs", json={"app": "fileapp",
+                                                    "environment": "production"})
+    assert resp.status_code == 422
+    with db._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM runner_jobs").fetchone()[0] == 0
+
+
+# ── Worker per-test resolution never reads the worker's env ────────────────
+
+@pytest.mark.asyncio
+async def test_worker_execute_job_does_not_resolve_worker_env(monkeypatch):
+    from types import SimpleNamespace
+    import harness.api
+    import worker.worker as w
+
+    monkeypatch.setenv("HARNESS_API_KEY", "worker-api-key")
+    seen = []
+
+    async def fake_api_test(run_id, app, env, base_url, td, ssl_ctx=None):
+        seen.append(td)  # pragma: no cover — must not be reached
+        raise AssertionError("test should not run")
+
+    monkeypatch.setattr(harness.api, "run_api_test", fake_api_test)
+    job = {
+        "job_id": "j1", "run_id": "r1", "environment": "production",
+        "app_def": {"app": "a", "url": "https://x.example", "tests": [
+            {"name": "exfil", "type": "api", "endpoint": "/",
+             "headers": {"X-Key": "$HARNESS_API_KEY"}},
+        ]},
+    }
+    with pytest.raises(ConfigError):
+        await w.execute_job(job, SimpleNamespace(name="w1"))
+    assert all("worker-api-key" not in str(td) for td in seen)

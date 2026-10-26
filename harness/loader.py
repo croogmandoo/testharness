@@ -90,7 +90,7 @@ def load_apps(apps_dir: str = "apps", extra_vars: dict | None = None,
         resolved = resolve_env_vars(raw, strict=False, extra_vars=extra_vars,
                                     environ=_environ)
         try:
-            validate_app_urls(resolved)
+            validate_app_urls(resolved, redact=True)
         except AppValidationError as exc:
             # Don't hide the app — the UI renders unsafe URLs as "#".
             _log.warning("app %s: %s", path, exc)

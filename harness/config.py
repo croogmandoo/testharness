@@ -60,6 +60,17 @@ def _resolve_var(name: str, strict: bool, extra: dict, environ: Mapping):
 
 
 _wildcard_warned = False
+_sensitive_warned: set = set()
+
+# Names that look like credentials. Allowlisting them for app YAML is almost
+# always a mistake (e.g. `HARNESS_*` also matches the worker's HARNESS_API_KEY).
+_SENSITIVE_NAME = re.compile(r"KEY|SECRET|PASSWORD|PASSWD|TOKEN", re.IGNORECASE)
+
+
+def _is_wildcard_only(pattern: str) -> bool:
+    """True for patterns made only of glob wildcards (``*``, ``?*``, ``**``)
+    that contain a ``*`` — they match (practically) every variable name."""
+    return "*" in pattern and not pattern.strip("*?")
 
 
 def app_environ(config: dict | None) -> dict:
@@ -69,9 +80,13 @@ def app_environ(config: dict | None) -> dict:
     arbitrary process env (``$HARNESS_API_KEY``, ``$AWS_SECRET_ACCESS_KEY``,
     ...) would leak server secrets. Only names matching the top-level
     ``apps_env_allowlist`` (exact names or ``fnmatch`` globs such as
-    ``HARNESS_APP_*``) are exposed. The default (absent/empty) is ``{}`` —
-    app YAML then resolves from the secrets store only. ``["*"]`` restores
-    the legacy behaviour (every env var) and logs a warning once.
+    ``MYAPP_*``) are exposed. The default (absent/empty) is ``{}`` —
+    app YAML then resolves from the secrets store only. A wildcard-only
+    pattern such as ``"*"`` restores the legacy behaviour (every env var).
+
+    Warnings (once each, names only — never values) are logged for
+    wildcard-only patterns and for allowlisted names that look like
+    credentials (``*KEY*``, ``*SECRET*``, ``*PASSWORD*``, ``*TOKEN*``).
     """
     global _wildcard_warned
     patterns = (config or {}).get("apps_env_allowlist") or []
@@ -80,19 +95,35 @@ def app_environ(config: dict | None) -> dict:
     patterns = [p for p in patterns if isinstance(p, str) and p]
     if not patterns:
         return {}
-    if "*" in patterns:
+    wild = [p for p in patterns if _is_wildcard_only(p)]
+    if wild:
         if not _wildcard_warned:
             _log.warning(
-                "apps_env_allowlist contains '*': app YAML can resolve ANY "
+                "apps_env_allowlist contains %s: app YAML can resolve ANY "
                 "process environment variable (including server secrets). "
-                "Prefer the secrets store or an explicit allowlist."
+                "Prefer the secrets store or an explicit allowlist.",
+                ", ".join(repr(p) for p in wild),
             )
             _wildcard_warned = True
-        return dict(os.environ)
-    return {
-        k: v for k, v in os.environ.items()
-        if any(fnmatch.fnmatchcase(k, p) for p in patterns)
-    }
+        visible = dict(os.environ)
+    else:
+        visible = {
+            k: v for k, v in os.environ.items()
+            if any(fnmatch.fnmatchcase(k, p) for p in patterns)
+        }
+    sensitive = sorted(
+        k for k in visible
+        if _SENSITIVE_NAME.search(k) and k not in _sensitive_warned
+    )
+    if sensitive:
+        _sensitive_warned.update(sensitive)
+        _log.warning(
+            "apps_env_allowlist exposes credential-like environment variables "
+            "to app YAML: %s. Narrow the allowlist (avoid broad prefixes such "
+            "as HARNESS_*) or move app credentials into the secrets store.",
+            ", ".join(sensitive),
+        )
+    return visible
 
 
 def _validate_config(cfg: dict) -> None:

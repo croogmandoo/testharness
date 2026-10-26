@@ -3,8 +3,8 @@ import shutil
 import yaml
 from pathlib import Path
 from urllib.parse import urlsplit
-from harness.config import _ENV_REF
-from harness.loader import load_apps
+from harness.config import ConfigError, _ENV_REF
+from harness.loader import load_apps, resolve_base_url
 
 
 class AppManagerError(Exception):
@@ -34,33 +34,64 @@ def is_http_url(value) -> bool:
     return parts.scheme.lower() in ("http", "https") and bool(parts.netloc)
 
 
-def _check_url(field: str, value) -> None:
-    # A whole-value `$VAR` reference is resolved later (secrets store /
-    # allowlisted env); the rendered link goes through the `safe_url` filter.
-    if isinstance(value, str) and _ENV_REF.match(value.strip()):
+def _check_url(field: str, value, allow_refs: bool, redact: bool) -> None:
+    # Unresolved definitions (write time): a whole-value `$VAR` reference is
+    # allowed — it is checked again after resolution, before any run.
+    if allow_refs and isinstance(value, str) and _ENV_REF.match(value.strip()):
         return
     if not is_http_url(value):
+        # Resolved values may come from secrets — don't echo them.
+        shown = "" if redact else f", got {value!r}"
         raise AppValidationError(
-            f"{field} must be an http(s) URL with a host, got {value!r}"
+            f"{field} must be an http(s) URL with a host{shown}"
         )
 
 
-def validate_app_urls(app_def: dict) -> None:
+def validate_app_urls(app_def: dict, *, allow_refs: bool = True,
+                      redact: bool = False) -> None:
     """Validate ``url`` and every ``environments.*`` value as http(s) URLs.
+
+    ``allow_refs=True`` (raw YAML being written) accepts whole-value ``$VAR``
+    references; pass ``False`` after resolution, right before a run, so a
+    secret like ``file:///etc/passwd`` cannot become the base URL.
+    ``redact=True`` keeps the (possibly secret-derived) value out of the
+    error message.
 
     Raises :class:`AppValidationError` on the first invalid value.
     """
     if not isinstance(app_def, dict):
         raise AppValidationError("app definition must be a mapping")
     if "url" in app_def:
-        _check_url("url", app_def["url"])
+        _check_url("url", app_def["url"], allow_refs, redact)
     envs = app_def.get("environments")
     if envs is None:
         return
     if not isinstance(envs, dict):
         raise AppValidationError("environments must be a mapping of name -> URL")
     for name, value in envs.items():
-        _check_url(f"environments.{name}", value)
+        _check_url(f"environments.{name}", value, allow_refs, redact)
+
+
+def resolve_safe_base_url(app_def: dict, environment: str) -> str:
+    """Validate a *resolved* app definition's URLs and return the base URL
+    for ``environment``.
+
+    Run right before execution (local run or remote dispatch): ``$VAR``
+    URLs are only checked syntactically at write time, so a secret set to
+    ``file:///etc/passwd`` must be caught here. Raises ``ConfigError`` with
+    a message that never contains the resolved value.
+    """
+    try:
+        validate_app_urls(app_def, allow_refs=False, redact=True)
+    except AppValidationError as exc:
+        raise ConfigError(f"app {app_def.get('app', '?')!r}: {exc}") from None
+    base_url = resolve_base_url(app_def, environment)
+    if not is_http_url(base_url):
+        raise ConfigError(
+            f"app {app_def.get('app', '?')!r}: base URL for environment "
+            f"{environment!r} must be an http(s) URL with a host"
+        )
+    return base_url
 
 
 def slugify_app_name(name: str) -> str:

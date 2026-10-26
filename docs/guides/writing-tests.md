@@ -745,15 +745,24 @@ this order:
    # config.yaml
    apps_env_allowlist:
      - MYAPP_BASE_URL
-     - "HARNESS_APP_*"
+     - "MYAPP_*"
    ```
 
 App definitions can be edited by the `runner` role, so they can **not** read
 arbitrary process environment by default — otherwise any app could exfiltrate
 server secrets such as `$HARNESS_API_KEY` or cloud credentials. With no
 allowlist (the default), app YAML resolves from the secrets store only.
-`apps_env_allowlist: ["*"]` restores the old "any env var" behaviour and logs a
-warning; avoid it outside single-user setups.
+`apps_env_allowlist: ["*"]` (or any wildcard-only pattern) restores the old
+"any env var" behaviour and logs a warning; avoid it outside single-user
+setups. Keep entries narrow — do **not** use broad prefixes such as
+`HARNESS_*`, which also match server credentials like the worker's
+`HARNESS_API_KEY`. The harness logs a warning naming any allowlisted variable
+that looks like a credential (`*KEY*`, `*SECRET*`, `*PASSWORD*`, `*TOKEN*`).
+
+URLs (`url:` and `environments.*`) must be `http://` or `https://`. A
+whole-value `$VAR` URL is accepted when the app is saved and checked again
+after resolution, right before each run or dispatch; a non-http(s) value
+fails the run with a setup error.
 
 If a referenced variable is neither a secret nor allowlisted, the run fails
 with a `ConfigError` that says to add it as a secret or list it in

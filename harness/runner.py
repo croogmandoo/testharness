@@ -94,10 +94,32 @@ async def _execute_test(test_def: dict, run_id: str, app: str, environment: str,
             break
     return result
 
+def _record_setup_error(app_def: dict, environment: str, triggered_by: str,
+                        db: Database, run_id: Optional[str], message: str) -> str:
+    """Record a run that could not start (unresolvable ``$VAR``, unsafe URL)
+    as status ``error`` with one explanatory result, instead of raising."""
+    app_name = app_def.get("app") or "?"
+    _log.error("run setup failed for %s/%s: %s", app_name, environment, message)
+    now = datetime.now(timezone.utc).isoformat()
+    if run_id:
+        run = Run(id=run_id, app=app_name, environment=environment,
+                  triggered_by=triggered_by)
+    else:
+        run = Run(app=app_name, environment=environment, triggered_by=triggered_by)
+        db.insert_run(run)
+    db.insert_test_result(TestResult(
+        run_id=run.id, app=app_name, environment=environment,
+        test_name="(run setup)", status="error",
+        error_msg=f"Run setup failed: {message}", finished_at=now,
+    ))
+    db.update_run_status(run.id, "error", started_at=now, finished_at=now)
+    return run.id
+
 async def run_app(app_def: dict, environment: str, triggered_by: str,
                   db: Database, config: dict, run_id: str = None,
                   secrets_store=None) -> str:
-    from harness.config import app_environ, resolve_env_vars
+    from harness.app_manager import resolve_safe_base_url
+    from harness.config import ConfigError, app_environ, resolve_env_vars
     extra_vars = secrets_store.get_all_decrypted() if secrets_store is not None else {}
 
     # Tier-2: collect names that subsequent tests will `extract:` so the
@@ -111,10 +133,18 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
         for _capture_name in (_td.get("extract") or {}).keys():
             capture_seeds[_capture_name] = "$" + _capture_name
             has_extracts = True
-    app_def = resolve_env_vars(
-        app_def, strict=True, extra_vars={**extra_vars, **capture_seeds},
-        environ=app_environ(config),
-    )
+    try:
+        resolved_app = resolve_env_vars(
+            app_def, strict=True, extra_vars={**extra_vars, **capture_seeds},
+            environ=app_environ(config),
+        )
+        # Re-validate URLs after $VAR substitution (secrets can hold any
+        # scheme) and before anything navigates to them.
+        base_url = resolve_safe_base_url(resolved_app, environment)
+    except ConfigError as exc:
+        return _record_setup_error(app_def, environment, triggered_by, db,
+                                   run_id, str(exc))
+    app_def = resolved_app
     if run_id:
         run = Run(id=run_id, app=app_def["app"], environment=environment, triggered_by=triggered_by)
     else:
@@ -122,7 +152,6 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
         db.insert_run(run)
     db.update_run_status(run.id, "running",
                          started_at=datetime.now(timezone.utc).isoformat())
-    base_url = resolve_base_url(app_def, environment)
     browser_cfg = config.get("browser", {})
     alerts_cfg = config.get("alerts", {})
     ssl_ctx = get_ssl_context(db)

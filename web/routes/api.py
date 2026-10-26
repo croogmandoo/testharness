@@ -1,6 +1,8 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Any, Optional
+from harness.config import ConfigError
 from harness.models import Run
 from harness.runner import run_app
 from harness.app_manager import get_known_vars
@@ -66,10 +68,18 @@ async def trigger_run(req: RunRequest, background_tasks: BackgroundTasks,
                 )
             continue  # skip already-running apps in "run all" mode
         if should_dispatch_remotely(app_def):
-            run_id = queue_remote_run(
-                db, app_def, req.environment, req.triggered_by,
-                secrets_store=get_secrets_store(), config=config,
-            )
+            try:
+                run_id = queue_remote_run(
+                    db, app_def, req.environment, req.triggered_by,
+                    secrets_store=get_secrets_store(), config=config,
+                )
+            except ConfigError as exc:
+                # Unresolvable $VAR or unsafe resolved URL — nothing queued.
+                if req.app:
+                    raise HTTPException(status_code=422, detail=str(exc))
+                logging.getLogger(__name__).error(
+                    "run-all: not dispatching %s: %s", app_def["app"], exc)
+                continue
             queued.append(run_id)
             continue
         run = Run(app=app_def["app"], environment=req.environment, triggered_by=req.triggered_by)
