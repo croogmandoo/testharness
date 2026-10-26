@@ -73,7 +73,9 @@ On the **central**:
 - Harness master at commit `42b821f` (2026-05-13) or later.
 - Reachable from each worker over HTTPS. (Plain HTTP works in dev, but
   the API key travels as Bearer — don't.)
-- A user account with role `runner` (or any role; admin not required).
+- A user account with role `runner` (or `admin`). Keys owned by any other
+  role (`read_only`, `reporting`) get 403 on every `/api/runner/*`
+  endpoint, whatever their scope.
 - For mTLS: a client CA bundle (PEM) trusted by uvicorn.
 
 On each **worker host**:
@@ -91,14 +93,17 @@ On each **worker host**:
 
 Every worker authenticates as itself, with its own API key. **Do not
 share one key across workers** — you'll be unable to revoke a single
-compromised host.
+compromised host. Worker endpoints accept API keys only; a browser session
+cookie gets 401.
 
-1. As the `runner` user (or any user; admin not required), visit
-   `/api-keys`.
+1. As the `runner` user (or an admin), visit `/api-keys`.
 2. **Name**: descriptive, e.g. `eu-worker-1`.
 3. **Expires**: `Never` is fine for long-lived infra; pick a date if
    policy requires rotation.
-4. **Scopes**: enter exactly `worker:pull,worker:results`.
+4. **Scopes**: enter exactly `worker:pull,worker:results`. A blank field
+   creates a `read`-only key, which can't act as a worker. Only the
+   `admin` and `runner` roles can grant `worker:pull`, `worker:results`
+   or `*`, and only `admin` can grant `admin`.
 5. Click *Create Key*. The plaintext `hth_…` token is shown **once**.
    Copy it somewhere safe (or straight into the worker env).
 
@@ -115,6 +120,47 @@ compromised host.
 A leaked `worker:pull,worker:results` key can claim jobs and push results.
 It cannot read run history, list apps, manage users, change config, or
 even read its own apps' YAML. That asymmetry is the whole point.
+
+### Runner names are bound to keys
+
+The first `register` for a worker name binds that name to the API key that
+sent it. From then on:
+
+- `poll`, `jobs` and `heartbeat` for that name only work with the bound
+  key. Any other key gets `403 … not bound to this API key; re-register
+  with this key`.
+- `results` is only accepted for a job assigned to a runner bound to the
+  caller's key. Otherwise the response is 403.
+- A `register` for the name from a different key gets `409 runner name
+  already bound to another API key`, unless the bound key is revoked,
+  expired or deleted, or belongs to the same user. Those cases rebind the
+  name and audit-log `runner.rebind`.
+
+**Rotating a worker's key:** create the new key as the same user, put it in
+`HARNESS_API_KEY` and restart the worker. Its register rebinds the name.
+Revoke the old key afterwards.
+
+**Moving a name to another user's key:** an admin clicks **Remove** on
+`/admin/runners` (see [`admin-runners.md`](admin-runners.md#rebinding-a-runner-name)),
+then restarts the worker with the new key.
+
+### Upgrade note: role, binding and default scope
+
+Central builds with runner-endpoint authorization change three things:
+
+1. **Worker service accounts must have role `runner` (or `admin`).** A
+   worker whose key belongs to a `read_only` or `reporting` user now gets
+   403 on register. Change the user's role on `/users`; the key
+   keeps working.
+2. **Runner names are bound to keys.** Rows registered before the upgrade
+   are bound on their next register. Rows with no key (registered through
+   a browser session) return 403 on poll and heartbeat until the worker
+   re-registers. If two keys from different users share one runner name,
+   the first to register keeps it and the other gets 409. Give each worker
+   its own name.
+3. **New keys default to `read`.** Scripts that create keys with a blank
+   scope and expect worker access must pass `worker:pull,worker:results`.
+   Existing `*` keys keep working, subject to the role check in (1).
 
 ---
 
@@ -421,6 +467,10 @@ queue elsewhere, walk the dispatch checklist in order:
    visible in the central log as
    `require_scope: api_key … denied — needs 'worker:pull'`.
 
+6. **Key binding.** If the worker's key changed without a re-register,
+   poll returns `403 … not bound to this API key`. Restart the worker so
+   it registers again.
+
 The **stale** badge is purely informational — it doesn't block dispatch.
 Plan the upgrade at your convenience.
 
@@ -559,6 +609,13 @@ Check the worker log first.
 - **`403 require_scope: needs 'worker:results'`** — the API key has
   the wrong scopes. Create a new one with `worker:pull,worker:results`
   and update `HARNESS_API_KEY`.
+- **`403 runner endpoints require a user with role 'admin' or 'runner'`**
+  — the key belongs to a user with another role. Change the user's role
+  or create the key as a `runner` user.
+- **`409 runner name already bound to another API key`** — another
+  user's key registered this name first. Pick a different
+  `HARNESS_WORKER_NAME`, or have an admin remove the runner on
+  `/admin/runners` and restart the worker.
 - **`Connection refused` / `Name or service not known`** — the worker
   can't reach `HARNESS_URL`. Check DNS and firewall.
 - **`certificate verify failed`** — the central's TLS cert is signed by
