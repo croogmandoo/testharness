@@ -44,8 +44,18 @@
                 {%- else %} beacon-unknown{% endif %}"></span>
               <span class="app-tile-name">{{ row.app }}</span>
             </div>
+            {% if row.history %}
+            <div class="tile-sparkline" title="Last {{ row.history|length }} runs (oldest left)">
+              {% for run in row.history %}
+              <span class="spark-dot spark-dot--{{ run.status }}"></span>
+              {% endfor %}
+            </div>
+            {% endif %}
             <div class="app-tile-meta">
               <span class="app-tile-score">{{ row.passing }}/{{ row.total }} passing</span>
+              {% if row.uptime_pct is not none %}
+              <span class="app-tile-uptime">{{ row.uptime_pct }}% uptime</span>
+              {% endif %}
               {% if row.failing %}
               <span class="text-fail">{{ row.failing }} failing</span>
               {% endif %}

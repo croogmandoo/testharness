@@ -1,9 +1,9 @@
 # Web Testing Harness Session Handoff & Operational Runbook
 
-**Generated:** 2026-10-26T15:53:00-04:00  
+**Generated:** 2026-10-26T16:30:00-04:00  
 **Branch:** `croogmandoo/main` (Base: `security-hardening` @ `2e0ef10`)  
 **Workspace:** `/home/craig/orca/workspaces/testharness/main`  
-**Test Suite:** **797 / 797 tests passing** (100% green, ~38s)
+**Test Suite:** **806 / 806 tests passing** (100% green, ~37s)
 
 ---
 
@@ -19,7 +19,7 @@
 
 ---
 
-## 2. Recent Work & Security Hardening Accomplishments
+## 2. Recent Work & Hardening Accomplishments
 
 1. **Session & Authentication Hardening (WP6)**:
    - Implemented versioned, cryptographically secure session tokens stored in `data/auth.db`.
@@ -28,14 +28,22 @@
 2. **Cryptographic Key & Secret File Protection**:
    - `data/secret.key` is written atomically with `os.open` and explicit `0600` POSIX file permissions.
    - Guarded against empty or truncated key files.
-3. **Docker Compose & Container Runtime Verification (Task 1)**:
+3. **Docker Compose & Container Runtime Verification**:
    - Replaced BuildKit-only `COPY --chmod=0755` with `RUN chmod 0755` in `Dockerfile` for universal builder compatibility.
    - Made `.env` in `docker-compose.yml` optional (`required: false`) so compose works cleanly before `.env` creation.
    - Verified image build, container boot on port 9552, healthy status check, and UID 10001 (`harness`) privilege drop via `entrypoint.sh`.
-4. **Custom CA Pipeline & Chromium SPKI Pinning**:
-   - Custom administrative root CAs injected into Playwright sessions via `--ignore-certificate-errors-spki-list` rather than insecure global certificate bypass flags.
-5. **Test Suite Expansion**:
-   - Maintained **797 passing unit and integration tests** covering auth, session revocation, runner chaining, CA certificate database, and API engines.
+4. **Public Status Page Sparklines & Uptime Display**:
+   - Enhanced `web/routes/status.py` and `web/templates/status.html` to compute per-app run history and uptime percentage (e.g. `100.0% uptime`).
+   - Integrated tile sparkline indicators (`spark-dot--pass`, `spark-dot--fail`) on the public status page matching the dashboard design.
+   - Added synthetic seeding script [scripts/seed_demo_data.py](file:///home/craig/orca/workspaces/testharness/main/scripts/seed_demo_data.py) to generate test data across multiple apps.
+5. **Alert Dispatch Channel Failure Hardening**:
+   - Added mock failure simulations for Teams, Slack, Discord, Outbound Webhook, and SMTP in [tests/test_alerts.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_alerts.py).
+   - Verified network timeouts and connection errors are logged cleanly without halting execution or interrupting other channels.
+6. **Worker Concurrency Limit Hardening**:
+   - Hardened `worker/worker.py`'s `poll_loop` so saturated workers (`remaining <= 0`) await in-flight task completion (`asyncio.wait(FIRST_COMPLETED)`) rather than polling central with a forced `capacity >= 1`.
+   - Prevents memory bloat and job hoarding under high test volume.
+7. **Test Suite Expansion**:
+   - Expanded to **806 passing unit and integration tests** (100% green, 0 failures, 0 regressions).
 
 ---
 
@@ -50,16 +58,16 @@
 
 ## 4. Prioritized Next Actions (Top 5)
 
-1. **[Synthetic Seed Data & Status Page Verification]**:
-   - Generate sample synthetic monitor runs to verify public status page (`/status`) sparklines and uptime percentage displays.
-2. **[Alert Dispatch Channel Testing]**:
-   - Add mock webhook / Discord / Slack alert dispatcher tests under failure simulation.
-3. **[Worker Dispatch Queue Hardening]**:
-   - Review worker concurrency limits in `worker/` and `harness/scheduler.py` under high test volume.
-4. **[Upstream Merge Review]**:
-   - Review differences between `security-hardening` and `origin/master` to prepare a clean pull request.
-5. **[Production Hardening Checklist]**:
-   - Review production deployment documentation and reverse proxy TLS termination examples.
+1. **[Upstream Merge Review & Clean PR]**:
+   - Prepare and submit a clean pull request from `croogmandoo/main` to `origin/master` (verified zero merge conflicts, fast-forward compatible).
+2. **[Production Hardening Checklist]**:
+   - Review production deployment documentation and reverse proxy TLS termination examples (e.g. Caddy/Nginx reverse proxy with HTTPS).
+3. **[API Contract & OpenAPI Documentation]**:
+   - Verify OpenAPI specs (`/docs`, `/openapi.json`) for all `/api/v1/` endpoints.
+4. **[Continuous Integration Validation]**:
+   - Run full CI security checks including `pip-audit` against `requirements.lock`.
+5. **[Remote Worker End-to-End Smoke Test]**:
+   - Run `v2-smoke-compose.yml` to exercise live remote worker job dispatch and screenshot artifact uploads.
 
 ---
 
@@ -68,6 +76,6 @@
 ```text
 I am resuming work on Web Testing Harness (testharness).
 Please read docs/HANDOFF.md, docs/OVERVIEW.md, and docs/STANDARDS.md to understand the current architecture and state.
-All 797 tests are passing in .venv/bin/pytest.
-Our immediate first priority is Task 2: Synthetic Seed Data & Status Page Verification.
+All 806 tests are passing in .venv/bin/pytest.
+Our immediate first priority is Task 1: Upstream Merge Review & Clean PR to origin/master.
 ```

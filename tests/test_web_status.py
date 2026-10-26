@@ -126,3 +126,51 @@ def test_status_page_skipped_by_first_run_middleware(tmp_path):
     with TestClient(app) as c:
         r = c.get("/status")
     assert r.status_code == 200
+
+
+def test_status_page_shows_sparklines_and_uptime(db, tmp_path):
+    """Status page displays tile sparklines and uptime percentage."""
+    from harness.models import TestResult
+    apps_dir = tmp_path / "apps"
+    apps_dir.mkdir()
+    (apps_dir / "a.yaml").write_text(yaml.dump({
+        "app": "MyApp",
+        "environments": {"production": "https://x"},
+        "tests": [],
+    }))
+    db.upsert_app_state(AppState(
+        app="MyApp", environment="production", test_name="t",
+        state="passing", since="2026-05-01T10:00:00+00:00",
+    ))
+    # 3 passing runs and 1 failing run -> 75.0% uptime
+    for i in range(4):
+        run = Run(id=f"run-{i}", app="MyApp", environment="production",
+                  triggered_by="schedule", status="complete",
+                  finished_at=f"2026-05-01T10:0{i}:00+00:00")
+        db.insert_run(run)
+        db.update_run_status(run.id, "complete", finished_at=f"2026-05-01T10:0{i}:00+00:00")
+        status = "fail" if i == 0 else "pass"
+        db.insert_test_result(TestResult(
+            run_id=run.id, app="MyApp", environment="production", test_name="t",
+            status=status, finished_at=f"2026-05-01T10:0{i}:00+00:00",
+        ))
+
+    with _client(db, apps_dir) as c:
+        body = c.get("/status").text
+    assert "tile-sparkline" in body
+    assert "spark-dot--pass" in body
+    assert "spark-dot--fail" in body
+    assert "75.0% uptime" in body
+
+
+def test_seed_synthetic_data(tmp_path):
+    """Seed script populates runs, test results, and app state."""
+    from scripts.seed_demo_data import seed_synthetic_data
+    db_path = str(tmp_path / "seed.db")
+    res = seed_synthetic_data(db_path=db_path, environment="staging", runs_per_app=3, apps=["App1", "App2"])
+    assert res["runs"] == 6
+    assert res["results"] == 12
+    db = Database(db_path)
+    summary = db.get_app_summary("staging")
+    assert len(summary) == 2
+

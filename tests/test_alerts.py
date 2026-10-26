@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from harness.alerts import dispatch_alerts, format_alert_message
@@ -197,3 +198,144 @@ def test_alerts_module_has_no_get_event_loop_call():
                 "asyncio.get_event_loop() was removed in Python 3.14; "
                 "use asyncio.to_thread() or asyncio.get_running_loop() instead."
             )
+
+
+@pytest.mark.asyncio
+async def test_teams_webhook_failure_does_not_crash(caplog):
+    """Teams webhook network/HTTP failure is caught and logged."""
+    import logging
+    from harness.alerts import dispatch_alerts
+    from harness.types import AlertType
+
+    alerts = [(AlertType.FAIL, "myapp", "production", "login", "Timeout")]
+    cfg = {"teams": {"webhook_url": "https://teams.example.com/fail"}}
+
+    with patch("harness.alerts._send_teams", side_effect=httpx.ConnectError("Connection refused")):
+        with caplog.at_level(logging.WARNING):
+            await dispatch_alerts(alerts, cfg)
+
+    assert "Teams webhook failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_slack_webhook_failure_does_not_crash(caplog):
+    """Slack webhook timeout is caught and logged."""
+    import logging
+    from harness.alerts import dispatch_alerts
+    from harness.types import AlertType
+
+    alerts = [(AlertType.FAIL, "myapp", "production", "login", "Timeout")]
+    cfg = {"slack": {"webhook_url": "https://hooks.slack.com/fail"}}
+
+    with patch("harness.alerts._send_slack", side_effect=httpx.TimeoutException("Read timed out")):
+        with caplog.at_level(logging.WARNING):
+            await dispatch_alerts(alerts, cfg)
+
+    assert "Slack error" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_discord_webhook_failure_does_not_crash(caplog):
+    """Discord webhook error is caught and logged."""
+    import logging
+    from harness.alerts import dispatch_alerts
+    from harness.types import AlertType
+
+    alerts = [(AlertType.FAIL, "myapp", "production", "login", "Timeout")]
+    cfg = {"discord": {"webhook_url": "https://discord.com/api/fail"}}
+
+    with patch("harness.alerts._send_discord", side_effect=RuntimeError("Discord rate limited")):
+        with caplog.at_level(logging.WARNING):
+            await dispatch_alerts(alerts, cfg)
+
+    assert "Discord error" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_email_dispatch_failure_does_not_crash(caplog):
+    """Email smtplib failure is caught and logged."""
+    import logging
+    import smtplib
+    from harness.alerts import dispatch_alerts
+    from harness.types import AlertType
+
+    alerts = [(AlertType.FAIL, "myapp", "production", "login", "Timeout")]
+    cfg = {
+        "email": {
+            "from": "harness@example.com",
+            "to": ["ops@example.com"],
+            "smtp_host": "smtp.example.com",
+            "username": "u",
+            "password": "p",
+        }
+    }
+
+    with patch("harness.alerts._send_email", side_effect=smtplib.SMTPAuthenticationError(535, b"Auth failed")):
+        with caplog.at_level(logging.ERROR):
+            await dispatch_alerts(alerts, cfg)
+
+    assert "Email failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_run_webhook_failure_does_not_crash(caplog):
+    """Outbound run webhook network failure is caught and logged."""
+    import logging
+    from harness.alerts import dispatch_run_webhook
+
+    with patch("httpx.AsyncClient") as mock_cls:
+        mock_instance = AsyncMock()
+        mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+        mock_instance.__aexit__ = AsyncMock(return_value=False)
+        mock_instance.post = AsyncMock(side_effect=httpx.ConnectTimeout("Connect timeout"))
+        mock_cls.return_value = mock_instance
+
+        with caplog.at_level(logging.ERROR):
+            await dispatch_run_webhook(
+                "run1", "App", "prod", "complete", "api", "2026-04-17T00:00:00Z",
+                [], {"url": "https://ci.example.com/fail"}
+            )
+
+    assert "Outbound webhook error" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_multi_channel_partial_failure_continues_delivery():
+    """Failure in one channel (e.g. Teams/Slack) does not prevent delivery to other channels."""
+    from harness.alerts import dispatch_alerts
+    from harness.types import AlertType
+
+    alerts = [(AlertType.FAIL, "myapp", "production", "login", "Timeout")]
+    cfg = {
+        "teams": {"webhook_url": "https://teams.example.com/fail"},
+        "slack": {"webhook_url": "https://hooks.slack.com/fail"},
+        "discord": {"webhook_url": "https://discord.com/api/ok"},
+        "email": {
+            "from": "harness@example.com",
+            "to": ["ops@example.com"],
+            "smtp_host": "smtp.example.com",
+            "username": "u",
+            "password": "p",
+        }
+    }
+
+    discord_sent = []
+    email_sent = []
+
+    async def mock_discord(url, text):
+        discord_sent.append((url, text))
+
+    def mock_email(cfg, subject, body):
+        email_sent.append((subject, body))
+
+    with patch("harness.alerts._send_teams", side_effect=httpx.ConnectError("down")), \
+         patch("harness.alerts._send_slack", side_effect=httpx.TimeoutException("timeout")), \
+         patch("harness.alerts._send_discord", side_effect=mock_discord), \
+         patch("harness.alerts._send_email", side_effect=mock_email):
+        await dispatch_alerts(alerts, cfg)
+
+    assert len(discord_sent) == 1
+    assert discord_sent[0][0] == "https://discord.com/api/ok"
+    assert len(email_sent) == 1
+    assert "FAILED" in email_sent[0][0]
+

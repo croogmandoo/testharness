@@ -467,6 +467,7 @@ select.input, select.search {
   font-family: var(--font-mono);
 }
 .app-tile-score { color: var(--text-2); font-weight: 500; }
+.app-tile-uptime { color: var(--text-3); font-weight: 500; }
 .app-tile-actions { display: flex; gap: var(--space-1); margin-top: var(--space-1); }
 
 /* ── CARD ───────────────────────────────────────────────────────────────── */
