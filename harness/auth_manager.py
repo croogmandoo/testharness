@@ -50,8 +50,12 @@ def _is_safe_ldap_username(username: str) -> bool:
     """Reject usernames that could change the bind identity or that no
     directory account would legitimately carry. ``@`` and ``\\`` would let
     the caller pick a different UPN/domain for the bind; control characters
-    (including NUL) have no business in a login name."""
+    (including NUL) have no business in a login name. Surrounding whitespace
+    is ignored by LDAP matching but not by our user table, so it would mint a
+    separate local row for the same directory account."""
     if not username or len(username) > _LDAP_USERNAME_MAX_LEN:
+        return False
+    if username != username.strip():
         return False
     if "@" in username or "\\" in username:
         return False

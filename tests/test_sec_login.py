@@ -202,6 +202,7 @@ def test_ldap_empty_password_never_binds(password):
 
 @pytest.mark.parametrize("username", [
     "bob@evil.com", "EVIL\\bob", "bob\x00", "bob\nx", "", "a" * 257,
+    "bob ", " bob",
 ])
 def test_ldap_rejects_unsafe_usernames(username):
     from harness.auth_manager import ldap_authenticate
