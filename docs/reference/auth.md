@@ -70,8 +70,8 @@ first-run: _FirstRunMiddleware
 
 ### `verify_local_password(username, password, db)`
 
-- Looks up the user by username; returns `None` if not found, not local, or not active.
-- Verifies the password with `bcrypt.checkpw` (direct `import bcrypt` — see note below).
+- Looks up the user by username; returns `None` if not found, not local, not active, or without a password hash. In those cases it still runs `bcrypt.checkpw` against a module-level dummy hash (default cost, generated lazily), so response time doesn't reveal whether a username exists.
+- Verifies the password with `bcrypt.checkpw` (direct `import bcrypt` — see note below); the per-account lockout is evaluated after the hash for the same reason.
 - Returns the full user dict on success.
 
 ### `ldap_authenticate(username, password, ldap_cfg)`
@@ -125,6 +125,9 @@ Secrets deletion (`POST /secrets/{name}/delete`) is restricted to `admin` only; 
 
 **LDAP auth (fallback):**
 `POST /auth/login` → `verify_local_password()` returns `None` + `auth.ldap.enabled` is true → `ldap_authenticate()` → `db.upsert_ldap_user()` → set `session` cookie → redirect `/`
+
+**Login throttling:**
+`web/ratelimit.py` keeps in-memory sliding windows per client IP (`request.client.host`). `POST /auth/login` returns **429** with a `Retry-After` header once an IP has recorded 20 failed logins in the last 300 seconds; only failures count, and while the IP is limited even a correct password is refused. `POST /setup` allows 10 submissions per IP per 300 seconds. The windows are per process and reset on restart. Behind a reverse proxy all clients share the proxy's IP unless uvicorn is configured to trust `X-Forwarded-For` (`forwarded_allow_ips`). This sits on top of the per-account lockout (10 failures → 15-minute lock on local accounts).
 
 **GitHub OAuth:**
 `GET /auth/oauth/github/login` → GitHub → `GET /auth/oauth/github/callback`. The callback rejects (400) a token response that is not HTTP 200 with a string `access_token`, and a `/user` response that is not HTTP 200 with an integer `id` and a `login` matching `^[A-Za-z0-9-]{1,39}$`. It then resolves the account in this order:

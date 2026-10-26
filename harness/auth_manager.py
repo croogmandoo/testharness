@@ -5,27 +5,42 @@ from ldap3.utils.conv import escape_filter_chars
 _LDAP_USERNAME_MAX_LEN = 256
 
 
+_dummy_hash: Optional[bytes] = None
+
+
+def _get_dummy_hash() -> bytes:
+    """A throwaway bcrypt hash (default cost) used to spend the same time on
+    unknown/ineligible users as on real ones, so response timing does not
+    reveal which usernames exist."""
+    global _dummy_hash
+    if _dummy_hash is None:
+        import bcrypt as _bcrypt
+        _dummy_hash = _bcrypt.hashpw(b"harness-dummy-password", _bcrypt.gensalt())
+    return _dummy_hash
+
+
 def verify_local_password(username: str, password: str, db) -> Optional[dict]:
     import bcrypt as _bcrypt
-    user = db.get_user_by_username(username)
-    if user is None:
-        return None
-    if user.get("auth_provider") != "local":
-        return None
-    if not user.get("is_active"):
-        return None
-    if not user.get("password_hash"):
-        return None
-    # Check account lockout
     from datetime import datetime, timezone
-    locked_until = user.get("locked_until")
-    if locked_until:
-        if datetime.fromisoformat(locked_until) > datetime.now(timezone.utc):
-            return None  # Still locked
-        # Lock expired — let the password check proceed (reset happens on success)
     pw_bytes = password.encode("utf-8")
+    user = db.get_user_by_username(username)
+    eligible = (
+        user is not None
+        and user.get("auth_provider") == "local"
+        and bool(user.get("is_active"))
+        and bool(user.get("password_hash"))
+    )
+    if not eligible:
+        _bcrypt.checkpw(pw_bytes, _get_dummy_hash())
+        return None
     hash_bytes = user["password_hash"].encode("utf-8") if isinstance(user["password_hash"], str) else user["password_hash"]
-    if not _bcrypt.checkpw(pw_bytes, hash_bytes):
+    ok = _bcrypt.checkpw(pw_bytes, hash_bytes)
+    # Check account lockout (after the hash so a locked account costs the same)
+    locked_until = user.get("locked_until")
+    if locked_until and datetime.fromisoformat(locked_until) > datetime.now(timezone.utc):
+        return None  # Still locked
+    # An expired lock lets the password check stand (reset happens on success)
+    if not ok:
         return None
     return user
 

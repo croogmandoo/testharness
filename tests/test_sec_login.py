@@ -332,3 +332,81 @@ def test_github_login_requests_read_org_only_with_orgs(db, apps_dir):
         return c.get("/auth/oauth/github/login").headers["location"]
     assert "read%3Aorg" not in _loc({})
     assert "read%3Aorg" in _loc({"allowed_orgs": ["acme"]})
+
+
+# ── #10 throttling and constant-time lookup ──────────────────────────────────
+
+@pytest.fixture
+def login_client(db, apps_dir):
+    app = create_app(db=db, config={
+        "environments": {"production": {"label": "Production"}},
+        "auth": {"session_hours": 8, "secure_cookie": False},
+    }, apps_dir=str(apps_dir))
+    from web.csrf import verify_csrf
+    app.dependency_overrides[verify_csrf] = lambda: None
+    return TestClient(app, follow_redirects=False)
+
+
+def test_21st_failed_login_from_one_ip_is_429(db, login_client, monkeypatch):
+    # Skip real bcrypt work to keep the test fast.
+    monkeypatch.setattr("bcrypt.checkpw", lambda pw, h: False)
+    for i in range(20):
+        r = login_client.post("/auth/login",
+                              data={"username": f"nobody{i}", "password": "x"})
+        assert r.status_code == 401
+    r = login_client.post("/auth/login", data={"username": "nobody", "password": "x"})
+    assert r.status_code == 429
+    assert int(r.headers["Retry-After"]) >= 1
+    assert "session" not in r.cookies
+
+
+def test_throttled_ip_cannot_log_in_even_with_correct_password(db, login_client):
+    from web.ratelimit import login_limiter
+    _local_user(db, "alice", pw="right-password")
+    for _ in range(20):
+        login_limiter.hit("testclient")
+    r = login_client.post("/auth/login",
+                          data={"username": "alice", "password": "right-password"})
+    assert r.status_code == 429
+
+
+def test_successful_logins_are_not_counted(db, login_client):
+    _local_user(db, "alice", pw="right-password")
+    for _ in range(25):
+        r = login_client.post("/auth/login",
+                              data={"username": "alice", "password": "right-password"})
+        assert r.status_code == 303
+
+
+def test_sliding_window_expires_old_events():
+    from web.ratelimit import SlidingWindowLimiter
+    now = [1000.0]
+    lim = SlidingWindowLimiter(3, 60, clock=lambda: now[0])
+    for _ in range(3):
+        lim.hit("ip")
+    assert lim.is_limited("ip")
+    assert not lim.is_limited("other-ip")
+    assert 1 <= lim.retry_after("ip") <= 61
+    now[0] += 61
+    assert not lim.is_limited("ip")
+    assert lim.retry_after("ip") == 0
+
+
+@pytest.mark.parametrize("setup", ["missing", "ldap", "inactive", "no_hash"])
+def test_unknown_or_ineligible_user_still_runs_bcrypt(db, monkeypatch, setup):
+    import bcrypt as _bcrypt
+    from harness.auth_manager import verify_local_password, _get_dummy_hash
+    _get_dummy_hash()  # generate outside the counted window
+    if setup == "ldap":
+        db.upsert_ldap_user("bob", "Bob", None, "read_only")
+    elif setup == "inactive":
+        _local_user(db, "bob", is_active=0)
+    elif setup == "no_hash":
+        uid = _local_user(db, "bob")
+        db.update_user(uid, password_hash=None)
+    calls = []
+    real = _bcrypt.checkpw
+    monkeypatch.setattr("bcrypt.checkpw",
+                        lambda pw, h: calls.append(h) or real(pw, h))
+    assert verify_local_password("bob", "whatever", db) is None
+    assert len(calls) == 1

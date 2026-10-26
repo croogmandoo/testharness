@@ -122,9 +122,19 @@ async def login_post(
     from web.main import get_db, get_config
     from harness.auth_manager import verify_local_password, ldap_authenticate
     from web.auth import _make_token
+    from web.ratelimit import login_limiter, client_ip
 
     db = get_db()
     config = get_config()
+
+    ip = client_ip(request)
+    if login_limiter.is_limited(ip):
+        ctx = {**_nav_ctx(request),
+               "error": "Too many failed sign-in attempts. Try again later."}
+        return templates.TemplateResponse(
+            request, "login.html", ctx, status_code=429,
+            headers={"Retry-After": str(login_limiter.retry_after(ip))},
+        )
 
     user = verify_local_password(username, password, db)
 
@@ -161,6 +171,7 @@ async def login_post(
                     user = None
 
     if user is None:
+        login_limiter.hit(ip)
         ctx = {**_nav_ctx(request), "error": "Invalid username or password."}
         return templates.TemplateResponse(request, "login.html", ctx, status_code=401)
 
