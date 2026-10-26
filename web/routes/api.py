@@ -68,7 +68,7 @@ async def trigger_run(req: RunRequest, background_tasks: BackgroundTasks,
         if should_dispatch_remotely(app_def):
             run_id = queue_remote_run(
                 db, app_def, req.environment, req.triggered_by,
-                secrets_store=get_secrets_store(),
+                secrets_store=get_secrets_store(), config=config,
             )
             queued.append(run_id)
             continue

@@ -97,7 +97,7 @@ async def _execute_test(test_def: dict, run_id: str, app: str, environment: str,
 async def run_app(app_def: dict, environment: str, triggered_by: str,
                   db: Database, config: dict, run_id: str = None,
                   secrets_store=None) -> str:
-    from harness.config import resolve_env_vars
+    from harness.config import app_environ, resolve_env_vars
     extra_vars = secrets_store.get_all_decrypted() if secrets_store is not None else {}
 
     # Tier-2: collect names that subsequent tests will `extract:` so the
@@ -112,7 +112,8 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
             capture_seeds[_capture_name] = "$" + _capture_name
             has_extracts = True
     app_def = resolve_env_vars(
-        app_def, strict=True, extra_vars={**extra_vars, **capture_seeds}
+        app_def, strict=True, extra_vars={**extra_vars, **capture_seeds},
+        environ=app_environ(config),
     )
     if run_id:
         run = Run(id=run_id, app=app_def["app"], environment=environment, triggered_by=triggered_by)
@@ -139,7 +140,10 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
         results = []
         for td in test_defs:
             try:
-                resolved_td = resolve_env_vars(td, strict=True, extra_vars=captures)
+                # environ={}: per-test pass only fills in captures; process
+                # env must not leak in via `$NAME` left over from the app pass.
+                resolved_td = resolve_env_vars(td, strict=True, extra_vars=captures,
+                                               environ={})
                 tr = await _execute_test(
                     resolved_td, run.id, run.app, environment, base_url,
                     ssl_ctx, browser_cfg, db=db,

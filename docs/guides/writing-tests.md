@@ -179,7 +179,7 @@ and key/value pairs inside a JSON response body.
 #### Headers
 
 Add custom HTTP headers to any API request using the `headers` field, which accepts a map of header names to values.
-Header values support `$VAR_NAME` substitution, making it easy to inject secrets (like API keys or auth tokens).
+Header values support `$VAR_NAME` substitution, making it easy to inject secrets (like API keys or auth tokens) from the secrets store (see [Environment Variables](#5-environment-variables)).
 
 ```yaml
 - name: "Call protected endpoint"
@@ -508,7 +508,7 @@ Clears the field first, then types the value.
     field: textarea[name=notes]
     value: "Multi-line notes go here"
 
-# Use environment variables for secrets
+# Use secrets ($VAR from the secrets store) for credentials
 - fill:
     field: input[type=password]
     value: $ADMIN_PASSWORD
@@ -733,9 +733,36 @@ The diff is skipped gracefully when:
 
 ## 5. Environment Variables
 
-Any YAML string value that starts with `$` is resolved from the process
-environment at startup. If the variable is not set, the harness refuses to
-start and logs a `ConfigError`.
+Any YAML string value that is (or contains) a `$VAR` reference is resolved in
+this order:
+
+1. **The secrets store** (`/secrets` in the UI) — the recommended place for
+   every credential, token and per-app URL.
+2. **Process environment, but only names allowlisted** in `config.yaml` via
+   `apps_env_allowlist` (exact names or `fnmatch` globs):
+
+   ```yaml
+   # config.yaml
+   apps_env_allowlist:
+     - MYAPP_BASE_URL
+     - "HARNESS_APP_*"
+   ```
+
+App definitions can be edited by the `runner` role, so they can **not** read
+arbitrary process environment by default — otherwise any app could exfiltrate
+server secrets such as `$HARNESS_API_KEY` or cloud credentials. With no
+allowlist (the default), app YAML resolves from the secrets store only.
+`apps_env_allowlist: ["*"]` restores the old "any env var" behaviour and logs a
+warning; avoid it outside single-user setups.
+
+If a referenced variable is neither a secret nor allowlisted, the run fails
+with a `ConfigError` that says to add it as a secret or list it in
+`apps_env_allowlist`. At startup the harness logs a warning for every `$VAR`
+that exists in the process env but is no longer visible to app YAML, to help
+with migration.
+
+`config.yaml` itself is unaffected: its `$VAR` references (webhook URLs, SMTP
+passwords, ...) still resolve from the full process environment.
 
 ### Per-environment secrets
 
@@ -752,14 +779,15 @@ tests:
           value: $SONARR_PASSWORD#staging   # uses SONARR_PASSWORD#staging if set, else SONARR_PASSWORD
 ```
 
-Set the scoped variable in your `.env` file or environment:
+Create both secrets in the secrets store (or allowlist both names if you keep
+them in the environment):
 
-```bash
-SONARR_PASSWORD=global-password
-SONARR_PASSWORD#staging=staging-only-password
+```
+SONARR_PASSWORD          = global-password
+SONARR_PASSWORD#staging  = staging-only-password
 ```
 
-If neither `$VAR#env` nor `$VAR` is set, the harness raises a `ConfigError` at startup.
+If neither `$VAR#env` nor `$VAR` resolves, the run fails with a `ConfigError`.
 
 ```yaml
 url: $MYAPP_BASE_URL
@@ -780,15 +808,19 @@ tests:
           value: $MYAPP_PASSWORD
 ```
 
-Put secrets in a `.env` file (already in `.gitignore`) or set them in your
-shell/CI environment:
+Store these as secrets (`/secrets`). If you prefer to keep some of them in a
+`.env` file or the shell/CI environment, list them in `apps_env_allowlist`:
 
 ```
 # .env
 MYAPP_BASE_URL=https://myapp.example.com
 MYAPP_USERNAME=testuser
 MYAPP_PASSWORD=supersecret
-TEAMS_WEBHOOK_URL=https://...
+```
+
+```yaml
+# config.yaml
+apps_env_allowlist: ["MYAPP_*"]
 ```
 
 ---

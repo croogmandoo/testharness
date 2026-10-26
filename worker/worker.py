@@ -601,7 +601,10 @@ async def execute_job(
     for test_def in app_def.get("tests", []):
         # Worker-side capture chaining mirrors harness.runner._execute_test
         from harness.config import resolve_env_vars
-        resolved_td = resolve_env_vars(test_def, strict=True, extra_vars=captures)
+        # environ={}: only captures are substituted here. The worker's own
+        # env (HARNESS_API_KEY, ...) must never be reachable from app YAML.
+        resolved_td = resolve_env_vars(test_def, strict=True, extra_vars=captures,
+                                       environ={})
         ttype = resolved_td.get("type", "availability")
         max_retries = int(resolved_td.get("retry", 0))
         timeout_ms = browser_cfg.get("timeout_ms", 30000)
