@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Any
 
 from harness.db._runners import RunnerBindConflict
 from web.auth import require_scope
@@ -133,6 +133,17 @@ class RunnerPollRequest(BaseModel):
     capacity: int = 1
 
 
+class RunnerJobDescriptor(BaseModel):
+    job_id: str
+    run_id: str
+    environment: str
+    app_def: dict[str, Any]
+
+
+class RunnerPollResponse(BaseModel):
+    jobs: list[RunnerJobDescriptor] = []
+
+
 class RunnerStepLog(BaseModel):
     step: str
     status: str
@@ -165,6 +176,14 @@ class RunnerResultsRequest(BaseModel):
     # Optional artifact uploads — base64-encoded image bytes keyed by step
     # name. Each entry is capped at MAX_SCREENSHOT_BYTES on the server.
     screenshots: list[RunnerScreenshot] = []
+
+
+class RunnerResultsResponse(BaseModel):
+    ok: bool = True
+    screenshots_saved: int = 0
+    run_id: str
+    status: str
+    tests_recorded: int
 
 
 class RunnerHeartbeatRequest(BaseModel):
@@ -316,7 +335,7 @@ def _version_skew_warning_minors(config: Optional[dict]) -> int:
         return DEFAULT_WARNING_MINORS
 
 
-@router.post("/poll")
+@router.post("/poll", response_model=RunnerPollResponse)
 async def runner_poll(
     req: RunnerPollRequest,
     worker: tuple = Depends(require_worker("worker:pull")),
@@ -374,7 +393,7 @@ async def runner_poll(
     return {"jobs": jobs}
 
 
-@router.post("/results")
+@router.post("/results", response_model=RunnerResultsResponse)
 async def runner_results(
     req: RunnerResultsRequest,
     worker: tuple = Depends(require_worker("worker:results")),

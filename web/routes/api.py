@@ -18,7 +18,26 @@ class RunRequest(BaseModel):
     triggered_by: str = "api"
 
 
-@router.post("/runs", status_code=202)
+class RunResponse(BaseModel):
+    run_id: Optional[str] = None
+    run_ids: list[str] = []
+    apps: list[str] = []
+
+
+class AppMutationResponse(BaseModel):
+    app: str
+    file: str
+
+
+class AppArchiveResponse(BaseModel):
+    archived: str
+
+
+class VarsResponse(BaseModel):
+    vars: list[str] = []
+
+
+@router.post("/runs", status_code=202, response_model=RunResponse)
 async def trigger_run(req: RunRequest, background_tasks: BackgroundTasks,
                       current_user: dict = Depends(require_role("admin", "runner"))):
     from web.main import get_db, get_config, get_apps, get_secrets_store
@@ -110,7 +129,7 @@ async def list_apps(environment: str = "production",
     return db.get_app_summary(environment)
 
 
-@router.get("/vars")
+@router.get("/vars", response_model=VarsResponse)
 async def list_vars(current_user: dict = Depends(get_current_user)):
     """Return all $VAR names referenced in app YAML files. Never returns values."""
     from web.main import get_apps_dir
@@ -132,7 +151,7 @@ class AppDefRequest(BaseModel):
     app_def: dict[str, Any]
 
 
-@router.post("/apps", status_code=201)
+@router.post("/apps", status_code=201, response_model=AppMutationResponse)
 async def create_app_def(req: AppDefRequest,
                          current_user: dict = Depends(require_role("admin", "runner"))):
     from web.main import get_apps_dir, reload_apps
@@ -150,7 +169,7 @@ async def create_app_def(req: AppDefRequest,
     return {"app": req.app_def.get("app", ""), "file": str(path)}
 
 
-@router.put("/apps/{app_name}", status_code=200)
+@router.put("/apps/{app_name}", status_code=200, response_model=AppMutationResponse)
 async def update_app_def(app_name: str, req: AppDefRequest,
                          current_user: dict = Depends(require_role("admin", "runner"))):
     from web.main import get_apps_dir, reload_apps
@@ -173,7 +192,7 @@ async def update_app_def(app_name: str, req: AppDefRequest,
     return {"app": app_name, "file": str(path)}
 
 
-@router.delete("/apps/{app_name}", status_code=200)
+@router.delete("/apps/{app_name}", status_code=200, response_model=AppArchiveResponse)
 async def archive_app_def(app_name: str,
                           current_user: dict = Depends(require_role("admin", "runner"))):
     from web.main import get_apps_dir, reload_apps
@@ -189,7 +208,7 @@ async def archive_app_def(app_name: str,
     return {"archived": str(path)}
 
 
-@router.post("/apps/{app_name}/restore", status_code=200)
+@router.post("/apps/{app_name}/restore", status_code=200, response_model=AppMutationResponse)
 async def restore_app_def(app_name: str,
                           current_user: dict = Depends(require_role("admin", "runner"))):
     from web.main import get_apps_dir, reload_apps
