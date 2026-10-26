@@ -99,3 +99,57 @@ def test_ldap_login_active_user_succeeds(db, apps_dir, monkeypatch):
     assert r.status_code == 303
     assert "session" in r.cookies
     assert db.get_user_by_username("carol")["auth_provider"] == "ldap"
+
+
+# ── #8 LDAP injection / unauthenticated bind ─────────────────────────────────
+
+def _mock_ldap_conn():
+    conn = MagicMock()
+    conn.bind.return_value = True
+    conn.search.return_value = True
+    conn.entries = [MagicMock(**{
+        "displayName.value": "X", "mail.value": None, "memberOf.values": [],
+    })]
+    return conn
+
+
+def test_ldap_search_filter_is_escaped():
+    from harness.auth_manager import ldap_authenticate
+    conn = _mock_ldap_conn()
+    with patch("harness.auth_manager.Connection", return_value=conn), \
+         patch("harness.auth_manager.Server"):
+        ldap_authenticate("*)(uid=*", "pw", LDAP_CFG)
+    search_filter = conn.search.call_args.kwargs["search_filter"]
+    assert search_filter == r"(sAMAccountName=\2a\29\28uid=\2a)"
+
+
+@pytest.mark.parametrize("password", ["", "   ", "\t"])
+def test_ldap_empty_password_never_binds(password):
+    from harness.auth_manager import ldap_authenticate
+    conn = _mock_ldap_conn()
+    with patch("harness.auth_manager.Connection", return_value=conn) as ctor, \
+         patch("harness.auth_manager.Server"):
+        assert ldap_authenticate("bob", password, LDAP_CFG) is None
+    ctor.assert_not_called()
+    conn.bind.assert_not_called()
+
+
+@pytest.mark.parametrize("username", [
+    "bob@evil.com", "EVIL\\bob", "bob\x00", "bob\nx", "", "a" * 257,
+])
+def test_ldap_rejects_unsafe_usernames(username):
+    from harness.auth_manager import ldap_authenticate
+    conn = _mock_ldap_conn()
+    with patch("harness.auth_manager.Connection", return_value=conn) as ctor, \
+         patch("harness.auth_manager.Server"):
+        assert ldap_authenticate(username, "pw", LDAP_CFG) is None
+    ctor.assert_not_called()
+
+
+def test_ldap_bind_name_uses_domain_from_base_dn():
+    from harness.auth_manager import ldap_authenticate
+    conn = _mock_ldap_conn()
+    with patch("harness.auth_manager.Connection", return_value=conn) as ctor, \
+         patch("harness.auth_manager.Server"):
+        assert ldap_authenticate("bob", "pw", LDAP_CFG) is not None
+    assert ctor.call_args.kwargs["user"] == "bob@corp.com"

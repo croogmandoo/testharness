@@ -76,7 +76,10 @@ first-run: _FirstRunMiddleware
 
 ### `ldap_authenticate(username, password, ldap_cfg)`
 
+- Returns `None` straight away (no bind attempted) when the password is empty or whitespace-only, since a simple bind with an empty password is an unauthenticated bind on many directories.
+- Rejects usernames containing `@`, `\`, NUL or other control characters, or longer than 256 characters, so the caller cannot choose a different bind domain.
 - Derives the bind UPN as `username@domain` from the `base_dn` DC components.
+- Escapes the username with `ldap3.utils.conv.escape_filter_chars` before substituting it into `auth.ldap.user_search_filter`.
 - Binds to the configured LDAP server using `ldap3.Connection`.
 - Searches for the user entry and reads `displayName`, `mail`, and the group attribute (default `memberOf`).
 - Maps group DNs to harness roles via `auth.ldap.role_map`; falls back to `auth.ldap.default_role`.

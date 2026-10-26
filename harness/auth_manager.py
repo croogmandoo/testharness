@@ -1,5 +1,8 @@
 from typing import Optional
 from ldap3 import Server, Connection, ALL, SUBTREE
+from ldap3.utils.conv import escape_filter_chars
+
+_LDAP_USERNAME_MAX_LEN = 256
 
 
 def verify_local_password(username: str, password: str, db) -> Optional[dict]:
@@ -27,7 +30,26 @@ def verify_local_password(username: str, password: str, db) -> Optional[dict]:
     return user
 
 
+def _is_safe_ldap_username(username: str) -> bool:
+    """Reject usernames that could change the bind identity or that no
+    directory account would legitimately carry. ``@`` and ``\\`` would let
+    the caller pick a different UPN/domain for the bind; control characters
+    (including NUL) have no business in a login name."""
+    if not username or len(username) > _LDAP_USERNAME_MAX_LEN:
+        return False
+    if "@" in username or "\\" in username:
+        return False
+    return not any(ord(ch) < 32 or ord(ch) == 127 for ch in username)
+
+
 def ldap_authenticate(username: str, password: str, ldap_cfg: dict) -> Optional[dict]:
+    # An empty password turns a simple bind into an unauthenticated bind,
+    # which many directories accept — never let that count as a login.
+    if not password or not password.strip():
+        return None
+    if not _is_safe_ldap_username(username):
+        return None
+
     dc_parts = [
         p.split("=")[1]
         for p in ldap_cfg["base_dn"].split(",")
@@ -45,7 +67,8 @@ def ldap_authenticate(username: str, password: str, ldap_cfg: dict) -> Optional[
         group_attr = ldap_cfg.get("group_attribute", "memberOf")
         conn.search(
             search_base=ldap_cfg["base_dn"],
-            search_filter=ldap_cfg["user_search_filter"].format(username=username),
+            search_filter=ldap_cfg["user_search_filter"].format(
+                username=escape_filter_chars(username)),
             search_scope=SUBTREE,
             attributes=["displayName", "mail", group_attr],
         )
