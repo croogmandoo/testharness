@@ -101,6 +101,28 @@ class RunnersMixin:
             result.append(r)
         return result
 
+    def check_runner_binding(self, name: str, api_key_id: str) -> str:
+        """Compare a runner's bound API key with ``api_key_id``.
+
+        Returns ``"ok"`` when the runner is bound to that key, ``"unbound"``
+        when the row is missing or has no key (``api_key_id IS NULL``), and
+        ``"conflict"`` when it's bound to a different key. Callers decide
+        what each outcome means for their endpoint — see web/routes/runner.py.
+        """
+        runner = self.get_runner_by_name(name)
+        bound = (runner or {}).get("api_key_id")
+        if not bound:
+            return "unbound"
+        return "ok" if bound == api_key_id else "conflict"
+
+    def get_runner_bound_key(self, name: str) -> Optional[dict]:
+        """Return the api_keys row the runner is bound to, or None when the
+        runner is missing, unbound, or its key row has been deleted."""
+        runner = self.get_runner_by_name(name)
+        if not runner or not runner.get("api_key_id"):
+            return None
+        return self.get_api_key_by_id(runner["api_key_id"])
+
     def touch_runner_heartbeat(self, name: str, timestamp: str) -> None:
         with self._connect() as conn:
             conn.execute(

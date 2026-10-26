@@ -24,6 +24,12 @@ from web.auth import require_scope
 router = APIRouter(prefix="/api/runner")
 _log = logging.getLogger("harness.runner_api")
 
+# Hard cap on how long the server will hold a long-poll connection open.
+# Longer than this and intermediate proxies / cloud LBs start killing the
+# connection silently.
+_MAX_LONG_POLL_WAIT_SECONDS = 60
+
+
 # Roles allowed to act as a worker. The runner role can already edit app YAML
 # (and so read any secret through an app), so this grants nothing new.
 _WORKER_ROLES = ("admin", "runner")
@@ -59,10 +65,35 @@ def require_worker(scope: str):
         return user, api_key
     return _dep
 
-# Hard cap on how long the server will hold a long-poll connection open.
-# Longer than this and intermediate proxies / cloud LBs start killing the
-# connection silently.
-_MAX_LONG_POLL_WAIT_SECONDS = 60
+
+def _require_bound(db, name: str, api_key: dict) -> None:
+    """403 unless runner ``name`` is bound to the caller's API key. Used by
+    /poll, /jobs and /heartbeat after the 404 check. An unbound row (legacy,
+    or registered before name↔key binding existed) is refused too — the
+    worker re-registers to claim it."""
+    if db.check_runner_binding(name, api_key["id"]) != "ok":
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"runner {name!r} is not bound to this API key; "
+                "re-register with this key"
+            ),
+        )
+
+
+def _bound_key_releasable(bound_key: Optional[dict], user: dict) -> bool:
+    """True when a runner bound to ``bound_key`` may be rebound by ``user``:
+    the old key is gone, revoked or expired, or belongs to the same user
+    (key rotation for one service account)."""
+    if bound_key is None or not bound_key.get("is_active"):
+        return True
+    if bound_key.get("expires_at"):
+        expires = datetime.fromisoformat(bound_key["expires_at"])
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires < datetime.now(timezone.utc):
+            return True
+    return bound_key.get("user_id") == user["id"]
 
 
 # ── Schemas ─────────────────────────────────────────────────────────────────
@@ -157,6 +188,12 @@ async def runner_register(
     """Worker announces itself on startup. Idempotent: re-registering with
     the same name updates tags/capabilities/version and resets last_seen_at.
 
+    The first register binds the runner name to the caller's API key; later
+    poll/jobs/heartbeat/results calls must use that key. Registering a name
+    bound to another key is refused (409) unless that key is revoked,
+    expired or deleted, or belongs to the same user — otherwise an admin
+    must delete the runner first.
+
     On register we also classify the worker's version against central:
     same major + minor within N → ok; same major + minor far behind → stale
     (badge on /admin/runners); different major → incompatible (the dispatch
@@ -176,6 +213,25 @@ async def runner_register(
         raise HTTPException(status_code=422, detail="name must be non-empty")
 
     api_key_id = api_key["id"]
+    name = req.name.strip()
+
+    # Bind check happens here, not in upsert_runner: the upsert overwrites
+    # api_key_id unconditionally, which is exactly what a rebind needs.
+    existing = db.get_runner_by_name(name)
+    binding = db.check_runner_binding(name, api_key_id)
+    if binding == "conflict":
+        if not _bound_key_releasable(db.get_runner_bound_key(name), current_user):
+            _log.warning(
+                "runner_register: %s refused for user %s — bound to another key",
+                name, current_user.get("username"),
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "runner name already bound to another API key; "
+                    "an admin must delete the runner to rebind"
+                ),
+            )
 
     cv = central_version()
     warning_minors = _version_skew_warning_minors(get_config())
@@ -184,7 +240,7 @@ async def runner_register(
     classification = classify_skew(req.version, cv, warning_minors=warning_minors)
 
     runner = db.upsert_runner(
-        name=req.name.strip(),
+        name=name,
         tags=req.tags,
         capabilities=req.capabilities,
         version=req.version,
@@ -201,6 +257,14 @@ async def runner_register(
             f"v={runner.get('version') or '-'} skew={classification}"
         ),
     )
+    if existing is not None and binding != "ok":
+        db.log_audit(
+            "runner.rebind",
+            user_id=current_user["id"],
+            username=current_user.get("username"),
+            target=runner["name"],
+            details=f"api_key {existing.get('api_key_id') or '-'} -> {api_key_id}",
+        )
     if notice:
         _log.warning(
             "runner_register: %s reported version=%r incompatible with central=%r",
@@ -249,10 +313,12 @@ async def runner_poll(
     """
     from web.main import get_db
     from harness.version_skew import is_major_incompatible, central_version
+    _, api_key = worker
     db = get_db()
     runner = db.get_runner_by_name(req.name)
     if runner is None:
         raise HTTPException(status_code=404, detail=f"runner {req.name!r} not registered")
+    _require_bound(db, req.name, api_key)
     if runner.get("status") == "draining":
         # Draining workers receive no new jobs, but we still touch heartbeat
         db.touch_runner_heartbeat(req.name, datetime.now(timezone.utc).isoformat())
@@ -293,7 +359,8 @@ async def runner_results(
     req: RunnerResultsRequest,
     worker: tuple = Depends(require_worker("worker:results")),
 ):
-    """Worker submits completed test results for a job it owns.
+    """Worker submits completed test results for a job it owns — i.e. the
+    job is assigned to a runner bound to the caller's API key.
 
     Optional ``screenshots`` entries are base64-decoded and written under
     ``data/screenshots/{run_id}/{step_name}.{ext}``. Any individual screenshot
@@ -301,6 +368,7 @@ async def runner_results(
     """
     from web.main import get_db, get_config
     from harness.worker_dispatch import ingest_runner_results
+    _, api_key = worker
     db = get_db()
     job = db.get_runner_job(req.job_id)
     if job is None:
@@ -309,6 +377,14 @@ async def runner_results(
         raise HTTPException(
             status_code=409,
             detail=f"job {req.job_id} is in state {job['state']!r}, expected 'assigned'",
+        )
+    # Results carry no runner name, so ownership goes job → assigned runner
+    # → that runner's bound key.
+    owner = db.get_runner_by_name(job.get("assigned_to") or "")
+    if owner is None or owner.get("api_key_id") != api_key["id"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"job {req.job_id} is not assigned to a runner bound to this API key",
         )
 
     # Pre-flight: size-check every base64 screenshot before doing any work.
@@ -433,10 +509,12 @@ async def runner_heartbeat(
         incompatibility_notice,
         is_version_stale,
     )
+    _, api_key = worker
     db = get_db()
     runner = db.get_runner_by_name(req.name)
     if runner is None:
         raise HTTPException(status_code=404, detail=f"runner {req.name!r} not registered")
+    _require_bound(db, req.name, api_key)
 
     db.touch_runner_heartbeat(req.name, datetime.now(timezone.utc).isoformat())
 
@@ -514,10 +592,12 @@ async def runner_jobs_long_poll(
     from web.main import get_db
     from harness.worker_dispatch import get_job_queued_event
 
+    _, api_key = worker
     db = get_db()
     runner = db.get_runner_by_name(name)
     if runner is None:
         raise HTTPException(status_code=404, detail=f"runner {name!r} not registered")
+    _require_bound(db, name, api_key)
 
     # Clamp wait into [0, 60] — beyond that, intermediate proxies kill it.
     wait = max(0, min(int(wait), _MAX_LONG_POLL_WAIT_SECONDS))

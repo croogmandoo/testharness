@@ -175,3 +175,140 @@ def test_legacy_wildcard_key_of_non_worker_role_rejected(client, db, role):
     r = client.post("/api/runner/heartbeat", headers=_bearer(key),
                     json={"name": "eu-worker-1"})
     assert r.status_code == 403
+
+
+# ── Runner name ↔ API key binding ───────────────────────────────────────────
+
+def test_other_users_key_cannot_hijack_bound_runner(client, db):
+    a_uid = _user(db, "svc-a", "runner")
+    a_key_id, a_key = _key(db, a_uid)
+    b_uid = _user(db, "svc-b", "runner")
+    _, b_key = _key(db, b_uid)
+    assert _register(client, a_key).status_code == 200
+    _queue_secret_job(db)
+
+    r = _register(client, b_key)
+    assert r.status_code == 409
+    assert "bound to another API key" in r.json()["detail"]
+    assert db.get_runner_by_name("eu-worker-1")["api_key_id"] == a_key_id
+
+    responses = [
+        client.post("/api/runner/poll", headers=_bearer(b_key),
+                    json={"name": "eu-worker-1", "capacity": 4}),
+        client.get("/api/runner/jobs", headers=_bearer(b_key),
+                   params={"name": "eu-worker-1", "wait": 0}),
+        client.post("/api/runner/heartbeat", headers=_bearer(b_key),
+                    json={"name": "eu-worker-1", "health": "unhealthy"}),
+    ]
+    for r in responses:
+        assert r.status_code == 403, r.text
+        assert "re-register" in r.json()["detail"]
+        assert _SECRET not in r.text
+    # The rejected heartbeat must not have drained A's runner.
+    assert db.get_runner_by_name("eu-worker-1")["status"] == "online"
+
+    # A still gets its job, secret included.
+    jobs = client.post("/api/runner/poll", headers=_bearer(a_key),
+                       json={"name": "eu-worker-1", "capacity": 4}).json()["jobs"]
+    assert len(jobs) == 1 and _SECRET in json.dumps(jobs)
+
+    # B can't submit results for A's job.
+    r = client.post("/api/runner/results", headers=_bearer(b_key),
+                    json=_results_payload(jobs[0]["job_id"]))
+    assert r.status_code == 403
+    assert db.get_runner_job(jobs[0]["job_id"])["state"] == "assigned"
+
+
+def test_results_for_job_assigned_to_another_runner_forbidden(client, db):
+    """Even with its own registered runner, a key can only report on jobs
+    assigned to a runner bound to it."""
+    a_uid = _user(db, "svc-a", "runner")
+    _, a_key = _key(db, a_uid)
+    b_uid = _user(db, "svc-b", "runner")
+    _, b_key = _key(db, b_uid)
+    assert _register(client, a_key, "w-a").status_code == 200
+    assert _register(client, b_key, "w-b").status_code == 200
+    job_id = _queue_assigned_job(db, "w-a")
+
+    r = client.post("/api/runner/results", headers=_bearer(b_key),
+                    json=_results_payload(job_id))
+    assert r.status_code == 403
+
+    r = client.post("/api/runner/results", headers=_bearer(a_key),
+                    json=_results_payload(job_id))
+    assert r.status_code == 200, r.text
+
+
+def test_same_user_key_rotation_rebinds(client, db):
+    uid = _user(db, "svc", "runner")
+    old_id, old_key = _key(db, uid)
+    new_id, new_key = _key(db, uid)
+    assert _register(client, old_key).status_code == 200
+
+    assert _register(client, new_key).status_code == 200
+    assert db.get_runner_by_name("eu-worker-1")["api_key_id"] == new_id
+    audit = db.list_audit_log(action="runner.rebind")
+    assert len(audit) == 1
+    assert old_id in audit[0]["details"] and new_id in audit[0]["details"]
+
+    # The old key no longer drives the runner.
+    r = client.post("/api/runner/poll", headers=_bearer(old_key),
+                    json={"name": "eu-worker-1"})
+    assert r.status_code == 403
+    r = client.post("/api/runner/poll", headers=_bearer(new_key),
+                    json={"name": "eu-worker-1"})
+    assert r.status_code == 200
+
+
+@pytest.mark.parametrize("how", ["revoked", "expired", "deleted"])
+def test_rebind_allowed_once_bound_key_is_dead(client, db, how):
+    a_uid = _user(db, "svc-a", "runner")
+    a_key_id, a_key = _key(db, a_uid)
+    b_uid = _user(db, "svc-b", "runner")
+    b_key_id, b_key = _key(db, b_uid)
+    assert _register(client, a_key).status_code == 200
+
+    if how == "revoked":
+        db.revoke_api_key(a_key_id)
+    elif how == "expired":
+        past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        with db._connect() as conn:
+            conn.execute("UPDATE api_keys SET expires_at=? WHERE id=?",
+                         (past, a_key_id))
+    else:
+        with db._connect() as conn:
+            conn.execute("DELETE FROM api_keys WHERE id=?", (a_key_id,))
+
+    assert _register(client, b_key).status_code == 200
+    assert db.get_runner_by_name("eu-worker-1")["api_key_id"] == b_key_id
+    assert db.list_audit_log(action="runner.rebind")
+
+
+def test_unbound_runner_must_reregister(client, db):
+    """Rows with no key (pre-binding, or created out of band) can't be polled
+    until a worker registers and claims them."""
+    db.upsert_runner(name="legacy", tags=[], capabilities=[])
+    uid = _user(db, "svc", "runner")
+    key_id, key = _key(db, uid)
+
+    r = client.post("/api/runner/poll", headers=_bearer(key), json={"name": "legacy"})
+    assert r.status_code == 403
+    assert "re-register" in r.json()["detail"]
+
+    assert _register(client, key, "legacy").status_code == 200
+    assert db.get_runner_by_name("legacy")["api_key_id"] == key_id
+    r = client.post("/api/runner/poll", headers=_bearer(key), json={"name": "legacy"})
+    assert r.status_code == 200
+
+
+def test_admin_delete_allows_rebind(client, db):
+    a_uid = _user(db, "svc-a", "runner")
+    _, a_key = _key(db, a_uid)
+    b_uid = _user(db, "svc-b", "runner")
+    b_key_id, b_key = _key(db, b_uid)
+    assert _register(client, a_key).status_code == 200
+    assert _register(client, b_key).status_code == 409
+
+    db.delete_runner("eu-worker-1")
+    assert _register(client, b_key).status_code == 200
+    assert db.get_runner_by_name("eu-worker-1")["api_key_id"] == b_key_id
