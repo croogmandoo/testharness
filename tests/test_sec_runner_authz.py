@@ -141,6 +141,45 @@ def _create_key_via_form(client, **data):
     return client.post("/api-keys", data={"name": "k", "csrf_token": tok, **data})
 
 
+# ── PoC regression ──────────────────────────────────────────────────────────
+
+def test_readonly_user_cannot_steal_secrets_via_fake_runner(client, db):
+    """Original PoC: a read_only user mints a key from /api-keys, registers
+    as the worker an admin's app is pinned to, polls, and reads the
+    resolved secret out of the job descriptor."""
+    _user(db, "admin", "admin")
+    _queue_secret_job(db, "eu-worker-1")
+    _user(db, "intern", "read_only")
+
+    _login(client, "intern")
+    r = _create_key_via_form(client)
+    assert r.status_code == 303
+    key = r.cookies.get("flash_new_key") or client.cookies.get("flash_new_key")
+    assert key and key.startswith("hth_")
+    intern = db.get_user_by_username("intern")
+    (row,) = db.list_api_keys_for_user(intern["id"])
+    assert json.loads(row["scope"]) == ["read"]
+
+    worker = TestClient(client.app)
+    h = _bearer(key)
+    assert worker.post("/api/runner/register", headers=h,
+                       json={"name": "eu-worker-1"}).status_code == 403
+    r = worker.post("/api/runner/poll", headers=h,
+                    json={"name": "eu-worker-1", "capacity": 4})
+    assert r.status_code in (403, 404)
+    assert _SECRET not in r.text
+
+
+def test_readonly_user_cannot_request_wildcard_scope(client, db):
+    _user(db, "intern", "read_only")
+    _login(client, "intern")
+    for scope in ("*", "worker:pull", "worker:results", "admin"):
+        r = _create_key_via_form(client, scope=scope)
+        assert r.status_code == 403, scope
+    intern = db.get_user_by_username("intern")
+    assert db.list_api_keys_for_user(intern["id"]) == []
+
+
 # ── Role and auth-method gate ───────────────────────────────────────────────
 
 def test_session_cookie_rejected_on_register(client, db):

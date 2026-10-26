@@ -25,16 +25,31 @@ _EXPIRY_MAP = {
 }
 
 
+# Scope for keys created with a blank scope field. Read-only on purpose: the
+# old wildcard default let any user mint a key that could act as a worker.
+_DEFAULT_SCOPES = ["read"]
+
+# Scopes only some roles may grant. Worker scopes (and the wildcard, which
+# includes them) unlock /api/runner/*, whose job descriptors carry resolved
+# secrets. Scopes not listed here can be granted by anyone.
+_SCOPE_ROLES = {
+    "*": ("admin", "runner"),
+    "worker:pull": ("admin", "runner"),
+    "worker:results": ("admin", "runner"),
+    "admin": ("admin",),
+}
+
+
 def _parse_scope_input(raw: str) -> list[str]:
     """Normalise the comma/space-separated scope field from the form. Empty
-    input → wildcard ``["*"]`` (no narrowing). Unknown scopes raise 422 so
+    input → ``_DEFAULT_SCOPES`` (read-only). Unknown scopes raise 422 so
     typos surface immediately."""
     if not raw or not raw.strip():
-        return ["*"]
+        return list(_DEFAULT_SCOPES)
     tokens = [t.strip() for t in raw.replace("\n", ",").split(",")]
     scopes = [t for t in tokens if t]
     if not scopes:
-        return ["*"]
+        return list(_DEFAULT_SCOPES)
     unknown = [s for s in scopes if s not in KNOWN_SCOPES]
     if unknown:
         raise HTTPException(
@@ -43,6 +58,17 @@ def _parse_scope_input(raw: str) -> list[str]:
                    f"Valid: {', '.join(sorted(KNOWN_SCOPES))}",
         )
     return sorted(set(scopes))
+
+
+def _check_scope_grants(scopes: list[str], role: str) -> None:
+    """403 if ``role`` may not grant one of ``scopes`` (see ``_SCOPE_ROLES``)."""
+    denied = [s for s in scopes if role not in _SCOPE_ROLES.get(s, (role,))]
+    if denied:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Your role ({role}) cannot create keys with scope(s): "
+                   f"{', '.join(denied)}",
+        )
 
 
 def _ctx(request: Request, current_user: dict, **extra) -> dict:
@@ -107,6 +133,7 @@ async def api_keys_create(
         raise HTTPException(status_code=422, detail=f"Invalid expiry option.")
 
     scopes = _parse_scope_input(scope)
+    _check_scope_grants(scopes, current_user["role"])
 
     days = _EXPIRY_MAP.get(expiry_days)
     expires_at: Optional[str] = None

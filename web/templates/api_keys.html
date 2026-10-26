@@ -38,12 +38,15 @@
       </div>
     </div>
     <div class="mb-4">
-      <label class="label">Scopes <span class="text-secondary text-sm">(comma-separated; blank = all)</span></label>
+      <label class="label">Scopes <span class="text-secondary text-sm">(comma-separated; blank = read)</span></label>
       <input class="input" name="scope"
-             placeholder="e.g. worker:pull,worker:results — or leave blank for full access">
+             placeholder="e.g. worker:pull,worker:results — or leave blank for read-only">
       <p class="text-secondary text-sm mt-1">
         Valid: <code>worker:pull</code>, <code>worker:results</code>,
-        <code>read</code>, <code>admin</code>, <code>*</code>
+        <code>read</code>, <code>admin</code>, <code>*</code>.
+        For a remote worker use <code>worker:pull,worker:results</code>.
+        Worker scopes and <code>*</code> need the admin or runner role;
+        <code>admin</code> needs the admin role.
       </p>
     </div>
     <button type="submit" class="btn btn-primary">Create Key</button>
