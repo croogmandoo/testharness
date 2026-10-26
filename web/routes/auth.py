@@ -146,6 +146,15 @@ async def login_post(
                     ldap_info["email"],
                     ldap_info["role"],
                 )
+                if user is None:
+                    # Username is taken by a local/GitHub account; never
+                    # bind the directory identity to it.
+                    db.log_audit("auth.ldap_conflict",
+                                 username=ldap_info["username"],
+                                 target=ldap_info["username"],
+                                 details="username belongs to a non-LDAP account")
+                elif not user.get("is_active"):
+                    user = None
 
     if user is None:
         ctx = {**_nav_ctx(request), "error": "Invalid username or password."}

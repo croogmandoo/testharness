@@ -123,6 +123,9 @@ Secrets deletion (`POST /secrets/{name}/delete`) is restricted to `admin` only; 
 **LDAP auth (fallback):**
 `POST /auth/login` → `verify_local_password()` returns `None` + `auth.ldap.enabled` is true → `ldap_authenticate()` → `db.upsert_ldap_user()` → set `session` cookie → redirect `/`
 
+**LDAP / local account collision:**
+`upsert_ldap_user()` only ever creates or updates rows whose `auth_provider` is `ldap`. If the directory username matches an existing local or GitHub account, the upsert returns `None`, the row is left untouched, the login fails with the generic 401, and an `auth.ldap_conflict` audit event is written. Rename one of the accounts to resolve the clash. An LDAP user whose row has `is_active = 0` is also refused with 401, even when the directory bind succeeds.
+
 **LDAP role override:**
 If `users.role_override = 1` for an LDAP user, their role is not updated from LDAP group membership on subsequent logins — the locally-set role is preserved.
 
@@ -182,6 +185,7 @@ can review entries at `/admin/audit` (filterable by user, action, limit).
 | `api_key.create` | `POST /api-keys` | `prefix=<key_prefix>` |
 | `api_key.revoke` | `POST /api-keys/{id}/revoke` | — |
 | `db.backup` | `GET /admin/backup` | Temp filename |
+| `auth.ldap_conflict` | `POST /auth/login` | LDAP username collides with a non-LDAP account |
 
 ### Schema
 

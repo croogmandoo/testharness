@@ -3,9 +3,12 @@
 Methods call ``self._connect()`` — mix into a class that provides it
 (see ``harness.db._base.Database``).
 """
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
+
+_log = logging.getLogger("harness.db.users")
 
 
 class UsersMixin:
@@ -100,10 +103,21 @@ class UsersMixin:
             )
 
     def upsert_ldap_user(self, username: str, display_name: str,
-                         email: Optional[str], role: str) -> dict:
+                         email: Optional[str], role: str) -> Optional[dict]:
         """Create or update an LDAP user. Skips role update if role_override=1.
-        Returns the up-to-date user dict (no password_hash)."""
+        Returns the up-to-date user dict (no password_hash).
+
+        Returns ``None`` without touching the row when ``username`` already
+        belongs to a non-LDAP account (local, GitHub, ...). An LDAP login
+        must never be able to assume a same-named account from another
+        identity provider."""
         existing = self.get_user_by_username(username)
+        if existing is not None and existing.get("auth_provider") != "ldap":
+            _log.warning(
+                "LDAP login for %r refused: username belongs to a %r account",
+                username, existing.get("auth_provider"),
+            )
+            return None
         if existing is None:
             new_id = str(uuid.uuid4())
             self.insert_user({
