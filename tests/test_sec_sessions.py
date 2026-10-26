@@ -393,3 +393,61 @@ def test_existing_key_is_never_overwritten(tmp_path, monkeypatch):
 
     monkeypatch.setattr(secrets_store.os.path, "exists", racing_exists)
     assert secrets_store._load_or_create_key(str(path)) == theirs
+
+
+@pytest.fixture
+def fast_key_retry(monkeypatch):
+    from harness import secrets_store
+    monkeypatch.setattr(secrets_store, "_KEY_READ_TIMEOUT", 0.1)
+    monkeypatch.setattr(secrets_store, "_KEY_READ_INTERVAL", 0.01)
+
+
+@pytest.mark.parametrize("content", [b"", b"   \n", b"c2hvcnQ=", b"!!not base64!!"])
+def test_invalid_key_file_raises_clear_error(tmp_path, db, fast_key_retry, content):
+    from harness.secrets_store import SecretsStore
+    path = tmp_path / "secret.key"
+    path.write_bytes(content)
+    with pytest.raises(RuntimeError, match="empty or corrupt"):
+        SecretsStore(db, key_path=str(path))
+    assert path.read_bytes() == content  # never silently replaced
+
+
+def test_read_waits_for_key_still_being_written(tmp_path, monkeypatch):
+    import base64
+    from harness import secrets_store
+    path = tmp_path / "secret.key"
+    path.write_bytes(b"")
+    key = b"\x05" * 32
+    real_sleep = secrets_store.time.sleep
+
+    def finish_write(seconds):
+        path.write_bytes(base64.urlsafe_b64encode(key))
+        real_sleep(0)
+
+    monkeypatch.setattr(secrets_store.time, "sleep", finish_write)
+    assert secrets_store._read_key(str(path)) == key
+
+
+def test_key_creation_leaves_no_temp_files(tmp_path):
+    from harness import secrets_store
+    raw = secrets_store._load_or_create_key(str(tmp_path / "secret.key"))
+    assert len(raw) == 32
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["secret.key"]
+    assert secrets_store._load_or_create_key(str(tmp_path / "secret.key")) == raw
+
+
+def test_key_creation_falls_back_without_hardlinks(tmp_path, monkeypatch):
+    import os
+    import stat
+    from harness import secrets_store
+
+    def no_link(src, dst):
+        raise OSError(1, "Operation not permitted")
+
+    monkeypatch.setattr(secrets_store.os, "link", no_link)
+    path = tmp_path / "secret.key"
+    raw = secrets_store._load_or_create_key(str(path))
+    assert secrets_store._read_key(str(path)) == raw
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["secret.key"]
+    if os.name == "posix":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600

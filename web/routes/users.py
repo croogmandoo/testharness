@@ -152,10 +152,11 @@ async def users_update(
     if not target_user:
         raise HTTPException(status_code=404)
     error = None
+    min_len = min_password_length()
     if role not in VALID_ROLES:
         error = "Invalid role."
-    elif password and len(password) < min_password_length():
-        error = f"Password must be at least {min_password_length()} characters."
+    elif password and len(password) < min_len:
+        error = f"Password must be at least {min_len} characters."
     if error:
         form_user = {k: v for k, v in target_user.items() if k != "password_hash"}
         form_user.update(display_name=display_name, email=email,
