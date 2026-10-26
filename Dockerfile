@@ -41,8 +41,16 @@ WORKDIR /app
 # Playwright browsers to a shared, world-readable location.  Doing the
 # install as root means apt deps via --with-deps work; the path lets the
 # runtime harness user execute the browser without re-downloading.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install from the resolved lock when present (same pattern as ci.yml) so
+# the image gets the audited, pinned dependency set; fall back to
+# requirements.txt if the lock has been removed. The trailing glob keeps the
+# COPY valid when requirements.lock is absent.
+COPY requirements.txt requirements.lock* ./
+RUN if [ -f requirements.lock ]; then \
+        pip install --no-cache-dir -r requirements.lock; \
+    else \
+        pip install --no-cache-dir -r requirements.txt; \
+    fi
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 RUN playwright install chromium --with-deps \
     && chmod -R a+rX /opt/playwright
