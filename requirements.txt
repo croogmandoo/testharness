@@ -10,7 +10,7 @@ starlette>=0.47.2
 pytest>=8.3.5,<9
 pytest-asyncio>=0.25.0,<1
 pytest-httpx>=0.34.0
-anyio==4.3.0
+anyio==4.14.2
 Pillow>=10.3.0
 reportlab==4.2.5
 python-docx==1.1.2

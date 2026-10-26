@@ -10,7 +10,7 @@
 # CI installs from this file (see .github/workflows/ci.yml).
 annotated-doc==0.0.4
 annotated-types==0.7.0
-anyio==4.3.0
+anyio==4.14.2
 APScheduler==3.11.2
 azure-core==1.41.0
 azure-identity==1.25.3
