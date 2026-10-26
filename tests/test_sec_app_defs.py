@@ -2,6 +2,7 @@
 
 #4: app YAML must not resolve arbitrary process env — only the secrets store
     and names allowlisted via ``apps_env_allowlist``.
+#5: app/environment URLs must be http(s); templates render others as "#".
 """
 import logging
 
@@ -173,3 +174,39 @@ def test_secrets_page_env_status_uses_allowlist(tmp_path, monkeypatch):
     monkeypatch.setattr(wm, "_config", {"apps_dir": str(d),
                                         "apps_env_allowlist": ["HARNESS_APP_*"]})
     assert dict(_env_vars()) == {"HOME": False, "HARNESS_APP_X": True}
+
+
+# ── #5: safe_url template filter ────────────────────────────────────────────
+
+@pytest.mark.parametrize("value,expected", [
+    ("https://example.com/a?b=1", "https://example.com/a?b=1"),
+    ("http://localhost:8080", "http://localhost:8080"),
+    ("javascript:alert(1)", "#"),
+    ("  JavaScript:alert(1)", "#"),
+    ("java\nscript:alert(1)", "#"),
+    ("data:text/html;base64,PHNjcmlwdD4=", "#"),
+    ("vbscript:msgbox", "#"),
+    ("$UNRESOLVED_URL", "#"),
+    ("", "#"),
+    (None, "#"),
+])
+def test_safe_url_filter(value, expected):
+    from web.templating import safe_url
+    assert safe_url(value) == expected
+
+
+def test_safe_url_registered_on_templates():
+    from web.templating import make_templates
+    t = make_templates()
+    out = t.env.from_string('<a href="{{ u | safe_url }}">').render(u="javascript:x")
+    assert out == '<a href="#">'
+
+
+def test_load_apps_warns_but_keeps_app_with_bad_url(tmp_path, caplog):
+    d = tmp_path / "apps"
+    d.mkdir()
+    (d / "evil.yaml").write_text(yaml.dump({"app": "evil", "url": "javascript:alert(1)"}))
+    with caplog.at_level(logging.WARNING, logger="harness.loader"):
+        apps = load_apps(str(d))
+    assert [a["app"] for a in apps] == ["evil"]
+    assert any("http(s)" in r.getMessage() for r in caplog.records)

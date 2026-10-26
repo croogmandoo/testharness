@@ -201,3 +201,55 @@ def test_get_known_vars_missing_dir(tmp_path):
     """Returns empty list when apps_dir does not exist."""
     result = get_known_vars(apps_dir=str(tmp_path / "nonexistent"))
     assert result == []
+
+
+# --- URL validation (security: no javascript:/data: app URLs) ---
+
+from harness.app_manager import AppValidationError, validate_app_urls, is_http_url
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.com", "http://localhost:8080/x", "HTTPS://EXAMPLE.COM",
+])
+def test_is_http_url_accepts_http_and_https(url):
+    assert is_http_url(url)
+
+
+@pytest.mark.parametrize("url", [
+    "javascript:alert(1)", " javascript:alert(1)", "java\tscript:alert(1)",
+    "JaVaScRiPt:alert(1)", "data:text/html,<script>1</script>",
+    "vbscript:x", "https://", "//evil.example", "/relative", "", None, 42,
+    "\x01javascript:alert(1)",
+])
+def test_is_http_url_rejects_other_values(url):
+    assert not is_http_url(url)
+
+
+def test_write_app_rejects_javascript_url(tmp_path):
+    with pytest.raises(AppValidationError):
+        write_app({"app": "x", "url": "javascript:alert(1)"}, apps_dir=str(tmp_path))
+    assert not list(tmp_path.glob("*.yaml"))
+
+
+def test_write_app_rejects_bad_environment_url(tmp_path):
+    app_def = {"app": "x", "url": "https://ok.example",
+               "environments": {"staging": "data:text/html,hi"}}
+    with pytest.raises(AppValidationError, match="environments.staging"):
+        write_app(app_def, apps_dir=str(tmp_path))
+
+
+def test_update_app_rejects_javascript_url(tmp_path):
+    write_app({"app": "x", "url": "https://ok.example"}, apps_dir=str(tmp_path))
+    with pytest.raises(AppValidationError):
+        update_app("x", {"app": "x", "url": "javascript:alert(1)"}, apps_dir=str(tmp_path))
+    assert "ok.example" in read_app_raw("x", apps_dir=str(tmp_path))
+
+
+def test_validate_app_urls_allows_var_references():
+    validate_app_urls({"app": "x", "url": "$MYAPP_URL",
+                       "environments": {"staging": "$MYAPP_URL#staging",
+                                        "prod": "https://$HOST_NAME"}})
+
+
+def test_app_validation_error_is_app_manager_error():
+    assert issubclass(AppValidationError, AppManagerError)

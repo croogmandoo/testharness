@@ -74,6 +74,8 @@ def load_apps(apps_dir: str = "apps", extra_vars: dict | None = None,
     ``harness.config.app_environ(config)``. Unlike ``resolve_env_vars``,
     ``None`` here means ``{}`` (no process env), never ``os.environ``.
     """
+    from harness.app_manager import AppValidationError, validate_app_urls
+
     _extra = extra_vars or {}
     _environ = {} if environ is None else environ
     paths = sorted(
@@ -87,6 +89,11 @@ def load_apps(apps_dir: str = "apps", extra_vars: dict | None = None,
         _warn_unallowlisted_env_refs(raw, path, _extra, _environ)
         resolved = resolve_env_vars(raw, strict=False, extra_vars=extra_vars,
                                     environ=_environ)
+        try:
+            validate_app_urls(resolved)
+        except AppValidationError as exc:
+            # Don't hide the app — the UI renders unsafe URLs as "#".
+            _log.warning("app %s: %s", path, exc)
         resolved["_source"] = path
         resolved["_type"] = "yaml"
         apps.append(resolved)

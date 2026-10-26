@@ -58,6 +58,17 @@ def _asset_version() -> str:
             return "dev"
 
 
+def safe_url(value) -> str:
+    """Jinja filter: return ``value`` if it is an http(s) URL, else ``"#"``.
+
+    Autoescaping stops attribute break-out but not ``javascript:`` /
+    ``data:`` hrefs, so every href built from user-controlled URLs (app
+    ``url:`` values) must go through this filter.
+    """
+    from harness.app_manager import is_http_url
+    return value if is_http_url(value) else "#"
+
+
 def make_templates() -> Jinja2Templates:
     """Build a Jinja2Templates with project-wide globals applied.
 
@@ -68,4 +79,5 @@ def make_templates() -> Jinja2Templates:
     """
     tmpl = Jinja2Templates(directory=_TEMPLATES_DIR)
     tmpl.env.globals["asset_version"] = _asset_version()
+    tmpl.env.filters["safe_url"] = safe_url
     return tmpl

@@ -129,6 +129,8 @@ async def create_app_def(req: AppDefRequest,
     import harness.app_manager as mgr
     try:
         path = mgr.write_app(req.app_def, apps_dir=get_apps_dir())
+    except mgr.AppValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except mgr.AppManagerError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     try:
@@ -150,6 +152,8 @@ async def update_app_def(app_name: str, req: AppDefRequest,
         )
     try:
         path = mgr.update_app(app_name, req.app_def, apps_dir=get_apps_dir())
+    except mgr.AppValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except mgr.AppManagerError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     try:
