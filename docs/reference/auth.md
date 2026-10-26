@@ -80,6 +80,7 @@ first-run: _FirstRunMiddleware
 - Rejects usernames containing `@`, `\`, NUL or other control characters, or longer than 256 characters, so the caller cannot choose a different bind domain.
 - Derives the bind UPN as `username@domain` from the `base_dn` DC components.
 - Escapes the username with `ldap3.utils.conv.escape_filter_chars` before substituting it into `auth.ldap.user_search_filter`.
+- Returns the account name as the directory spells it, lower-cased: the value of `auth.ldap.username_attribute`, or, when that is unset, of the attribute the search filter compares with `{username}` (e.g. `sAMAccountName`, `uid`). Falls back to the typed name, lower-cased.
 - Binds to the configured LDAP server using `ldap3.Connection`.
 - Searches for the user entry and reads `displayName`, `mail`, and the group attribute (default `memberOf`).
 - Maps group DNs to harness roles via `auth.ldap.role_map`; falls back to `auth.ldap.default_role`.
@@ -127,19 +128,19 @@ Secrets deletion (`POST /secrets/{name}/delete`) is restricted to `admin` only; 
 `POST /auth/login` → `verify_local_password()` returns `None` + `auth.ldap.enabled` is true → `ldap_authenticate()` → `db.upsert_ldap_user()` → set `session` cookie → redirect `/`
 
 **Login throttling:**
-`web/ratelimit.py` keeps in-memory sliding windows per client IP (`request.client.host`). `POST /auth/login` returns **429** with a `Retry-After` header once an IP has recorded 20 failed logins in the last 300 seconds; only failures count, and while the IP is limited even a correct password is refused. `POST /setup` allows 10 submissions per IP per 300 seconds. The windows are per process and reset on restart. Behind a reverse proxy all clients share the proxy's IP unless uvicorn is configured to trust `X-Forwarded-For` (`forwarded_allow_ips`). This sits on top of the per-account lockout (10 failures → 15-minute lock on local accounts).
+`web/ratelimit.py` keeps in-memory sliding windows per client IP (`request.client.host`). `POST /auth/login` returns **429** with a `Retry-After` header once an IP has recorded 20 failed logins in the last 300 seconds; only failures count, and while the IP is limited even a correct password is refused. `POST /setup` allows 10 submissions per IP per 300 seconds. The windows are per process and reset on restart; each limiter tracks at most 10,000 IPs, sweeping expired entries and then evicting the stalest one when full. Behind a reverse proxy all clients share the proxy's IP unless uvicorn is configured to trust `X-Forwarded-For` (`forwarded_allow_ips`). This sits on top of the per-account lockout (10 failures → 15-minute lock on local accounts).
 
 **GitHub OAuth:**
 `GET /auth/oauth/github/login` → GitHub → `GET /auth/oauth/github/callback`. The callback rejects (400) a token response that is not HTTP 200 with a string `access_token`, and a `/user` response that is not HTTP 200 with an integer `id` and a `login` matching `^[A-Za-z0-9-]{1,39}$`. It then resolves the account in this order:
 
 1. A row whose `oauth_provider_id` equals the GitHub numeric id (must be `is_active`).
-2. A row named `github:<login>` — bound to the GitHub id only if its `auth_provider` is `github` and its `oauth_provider_id` is still empty (an admin-pre-provisioned account). A `github:<login>` row already linked to a *different* id, or one owned by another provider, is refused with 403. This blocks a renamed or recycled GitHub login from inheriting someone else's account.
-3. Otherwise a new user is created with `auth.github.default_role` — but only if the login is in `auth.github.allowed_users` (case-insensitive), the user belongs to one of `auth.github.allowed_orgs` (checked via `GET /user/orgs`; the authorize URL then requests the `read:org` scope), or `auth.github.auto_provision: true`. Otherwise 403.
+2. A row named `github:<login>` (matched case-insensitively; new rows are stored lower-cased) — bound to the GitHub id only if its `auth_provider` is `github` and its `oauth_provider_id` is still empty (an admin-pre-provisioned account). A `github:<login>` row already linked to a *different* id, or one owned by another provider, is refused with 403. This blocks a renamed or recycled GitHub login from inheriting someone else's account. Note that when no allowlist is configured, a pre-provisioned row binds to whichever GitHub account first signs in while owning that login.
+3. Otherwise a new user is created with `auth.github.default_role` — but only if the login is in `auth.github.allowed_users` (case-insensitive), the user belongs to one of `auth.github.allowed_orgs` (checked per org via `GET /user/memberships/orgs/{org}`, which must report `state: active`; the authorize URL then requests the `read:org` scope), or `auth.github.auto_provision: true`. Otherwise 403.
 
-When `allowed_users` or `allowed_orgs` is set, it is enforced on **every** GitHub login, not just at account creation, so removing someone from the org (or the list) cuts off their access at their next login. `auto_provision: true` without any allowlist lets any GitHub account sign in and logs a warning on the first callback. The GitHub session cookie has the same `Max-Age`, `SameSite=lax` and `Secure` settings as the local-login cookie.
+When `allowed_users` or `allowed_orgs` is set, it is enforced on **every** GitHub login, not just at account creation, so removing someone from the org (or the list) cuts off their access at their next login. `auto_provision: true` without any allowlist lets any GitHub account sign in and logs a warning on the first callback. If GitHub cannot be reached (timeout or network error) the callback returns 502. The GitHub session cookie has the same `Max-Age`, `SameSite=lax` and `Secure` settings as the local-login cookie.
 
 **LDAP / local account collision:**
-`upsert_ldap_user()` only ever creates or updates rows whose `auth_provider` is `ldap`. If the directory username matches an existing local or GitHub account, the upsert returns `None`, the row is left untouched, the login fails with the generic 401, and an `auth.ldap_conflict` audit event is written. Rename one of the accounts to resolve the clash. An LDAP user whose row has `is_active = 0` is also refused with 401, even when the directory bind succeeds.
+`upsert_ldap_user()` matches usernames case-insensitively (as directories do) and stores new LDAP rows lower-cased, so `BOB` resolves to the existing `bob` row and keeps its `is_active` and `role_override`. It only ever creates or updates rows whose `auth_provider` is `ldap`. If the directory username matches an existing local or GitHub account in any letter case, the upsert returns `None`, the row is left untouched, the login fails with the generic 401, and an `auth.ldap_conflict` audit event is written. Rename one of the accounts to resolve the clash. An LDAP user whose row has `is_active = 0` is also refused with 401, even when the directory bind succeeds.
 
 **LDAP role override:**
 If `users.role_override = 1` for an LDAP user, their role is not updated from LDAP group membership on subsequent logins — the locally-set role is preserved.
@@ -150,7 +151,7 @@ If `users.role_override = 1` for an LDAP user, their role is not updated from LD
 Until the first account exists, anyone who can reach the server could claim admin through `/setup`. To close that race, `POST /setup` requires a **setup token** (form field `setup_token`, compared with `secrets.compare_digest`; a missing or wrong token returns 403):
 
 - If the `HARNESS_SETUP_TOKEN` environment variable is set, its value is the token.
-- Otherwise the server generates a random per-process token (`secrets.token_urlsafe(24)`) and logs it once at WARNING as `First-run setup token: <token>` the first time `/setup` is requested while there are no users. A restart generates a new one.
+- Otherwise the server generates a random per-process token (`secrets.token_urlsafe(24)`) and logs it once at WARNING as `First-run setup token: <token>` the first time `/setup` is requested while there are no users. A restart generates a new one, and so does each worker process: if you run more than one worker process, set `HARNESS_SETUP_TOKEN` so every process accepts the same token.
 
 `/setup` submissions are also limited to 10 per client IP per 5 minutes (429 after that). Once any user exists, `/setup` returns 404 as before.
 
@@ -183,6 +184,7 @@ Relevant keys in `config.yaml`:
 | `auth.ldap.group_attribute` | `memberOf` | Attribute containing group DNs |
 | `auth.ldap.role_map` | `{}` | Map of group DN → harness role |
 | `auth.ldap.default_role` | `read_only` | Role assigned when no group DN matches |
+| `auth.ldap.username_attribute` | from filter | Directory attribute holding the canonical login name |
 
 ---
 

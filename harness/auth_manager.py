@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 from ldap3 import Server, Connection, ALL, SUBTREE
 from ldap3.utils.conv import escape_filter_chars
@@ -80,16 +81,21 @@ def ldap_authenticate(username: str, password: str, ldap_cfg: dict) -> Optional[
         if not conn.bind():
             return None
         group_attr = ldap_cfg.get("group_attribute", "memberOf")
+        name_attr = _username_attribute(ldap_cfg)
+        attributes = ["displayName", "mail", group_attr]
+        if name_attr:
+            attributes.append(name_attr)
         conn.search(
             search_base=ldap_cfg["base_dn"],
             search_filter=ldap_cfg["user_search_filter"].format(
                 username=escape_filter_chars(username)),
             search_scope=SUBTREE,
-            attributes=["displayName", "mail", group_attr],
+            attributes=attributes,
         )
         if not conn.entries:
             return None
         entry = conn.entries[0]
+        username = _canonical_username(entry, name_attr, username)
         display_name = _safe_attr(entry, "displayName") or username
         email = _safe_attr(entry, "mail")
         groups = _safe_list_attr(entry, group_attr)
@@ -106,6 +112,34 @@ def ldap_authenticate(username: str, password: str, ldap_cfg: dict) -> Optional[
             conn.unbind()
         except Exception:
             pass
+
+
+_FILTER_ATTR_RE = re.compile(r"\(\s*([A-Za-z][A-Za-z0-9-]*)\s*=\s*\{username\}\s*\)")
+
+
+def _username_attribute(ldap_cfg: dict) -> Optional[str]:
+    """The directory attribute holding the login name: ``username_attribute``
+    if configured, else the attribute ``user_search_filter`` matches
+    ``{username}`` against (e.g. ``sAMAccountName`` or ``uid``)."""
+    configured = ldap_cfg.get("username_attribute")
+    if configured:
+        return configured
+    m = _FILTER_ATTR_RE.search(ldap_cfg.get("user_search_filter", ""))
+    return m.group(1) if m else None
+
+
+def _canonical_username(entry, name_attr: Optional[str], typed: str) -> str:
+    """Lower-cased account name as the directory spells it, falling back to
+    what the user typed. Directories match names case-insensitively, so
+    "BOB" and "bob" must resolve to the same local row."""
+    if name_attr:
+        try:
+            val = getattr(entry, name_attr).value
+        except Exception:
+            val = None
+        if isinstance(val, str) and _is_safe_ldap_username(val):
+            return val.lower()
+    return typed.lower()
 
 
 def _safe_attr(entry, attr: str) -> Optional[str]:

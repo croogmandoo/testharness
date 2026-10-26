@@ -18,9 +18,11 @@ class SlidingWindowLimiter:
     """Allow at most ``max_events`` events per key in any ``window_seconds``."""
 
     def __init__(self, max_events: int, window_seconds: float,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic,
+                 max_keys: int = 10_000):
         self.max_events = max_events
         self.window_seconds = window_seconds
+        self.max_keys = max_keys
         self._clock = clock
         self._events: Dict[str, Deque[float]] = {}
         self._lock = threading.Lock()
@@ -36,12 +38,31 @@ class SlidingWindowLimiter:
             del self._events[key]
         return q
 
+    def _sweep(self, now: float) -> None:
+        """Drop every key whose events have all expired."""
+        for k in list(self._events):
+            self._prune(k, now)
+
     def hit(self, key: str) -> None:
-        """Record one event for ``key``."""
+        """Record one event for ``key``.
+
+        Memory stays bounded at ``max_keys`` tracked keys: when a new key
+        would exceed it, expired keys are swept first and, failing that, the
+        key with the stalest latest event is evicted."""
         with self._lock:
             now = self._clock()
             self._prune(key, now)
+            if key not in self._events and len(self._events) >= self.max_keys:
+                self._sweep(now)
+                # Make room for the new key if the sweep freed nothing.
+                if len(self._events) >= self.max_keys:
+                    stalest = min(self._events, key=lambda k: self._events[k][-1])
+                    del self._events[stalest]
             self._events.setdefault(key, deque()).append(now)
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._events)
 
     def is_limited(self, key: str) -> bool:
         """True once ``key`` has ``max_events`` events inside the window."""

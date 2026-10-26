@@ -53,6 +53,18 @@ class UsersMixin:
             ).fetchone()
             return dict(row) if row else None
 
+    def get_users_by_username_ci(self, username: str) -> list:
+        """All rows whose username equals ``username`` ignoring ASCII case,
+        oldest first. Used by external identity providers, whose login
+        names are case-insensitive, so "BOB" can't dodge the row for "bob"."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM users WHERE username = ? COLLATE NOCASE "
+                "ORDER BY created_at, id",
+                (username,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def get_user_by_id(self, user_id: str) -> Optional[dict]:
         with self._connect() as conn:
             row = conn.execute(
@@ -121,22 +133,28 @@ class UsersMixin:
         """Create or update an LDAP user. Skips role update if role_override=1.
         Returns the up-to-date user dict (no password_hash).
 
-        Returns ``None`` without touching the row when ``username`` already
-        belongs to a non-LDAP account (local, GitHub, ...). An LDAP login
-        must never be able to assume a same-named account from another
+        The username match is case-insensitive (directories are), so "BOB"
+        resolves to the existing "bob" row and inherits its is_active and
+        role_override instead of getting a fresh account. New rows are stored
+        lower-cased.
+
+        Returns ``None`` without touching any row when ``username`` matches a
+        non-LDAP account (local, GitHub, ...) in any letter case. An LDAP
+        login must never be able to assume a same-named account from another
         identity provider."""
-        existing = self.get_user_by_username(username)
-        if existing is not None and existing.get("auth_provider") != "ldap":
+        matches = self.get_users_by_username_ci(username)
+        foreign = [m for m in matches if m.get("auth_provider") != "ldap"]
+        if foreign:
             _log.warning(
                 "LDAP login for %r refused: username belongs to a %r account",
-                username, existing.get("auth_provider"),
+                username, foreign[0].get("auth_provider"),
             )
             return None
-        if existing is None:
-            new_id = str(uuid.uuid4())
+        if not matches:
+            user_id = str(uuid.uuid4())
             self.insert_user({
-                "id": new_id,
-                "username": username,
+                "id": user_id,
+                "username": username.lower(),
                 "display_name": display_name,
                 "email": email,
                 "password_hash": None,
@@ -148,10 +166,14 @@ class UsersMixin:
                 "last_login_at": None,
             })
         else:
+            # Prefer an exact-case row; otherwise the oldest one.
+            existing = next((m for m in matches if m["username"] == username),
+                            matches[0])
+            user_id = existing["id"]
             updates: dict = {"display_name": display_name, "email": email}
             if not existing.get("role_override"):
                 updates["role"] = role
-            self.update_user(existing["id"], **updates)
-        user = self.get_user_by_username(username)
+            self.update_user(user_id, **updates)
+        user = self.get_user_by_id(user_id)
         user.pop("password_hash", None)
         return user

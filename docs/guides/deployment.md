@@ -39,7 +39,9 @@ docker logs harness 2>&1 | grep "setup token"
 # → ... WARNING ... First-run setup token: 3q2-...
 ```
 
-or choose your own by setting `HARNESS_SETUP_TOKEN` in `.env` before the first start. The generated token changes on every restart until the admin account exists.
+or choose your own by setting `HARNESS_SETUP_TOKEN` in `.env` before the first start. The generated token changes on every restart until the admin account exists, and differs per process, so set `HARNESS_SETUP_TOKEN` if you run more than one worker process.
+
+With no `allowed_users`/`allowed_orgs` configured, a pre-provisioned `github:<login>` account binds to whichever GitHub account first signs in while owning that login.
 
 ---
 

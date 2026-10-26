@@ -101,6 +101,72 @@ def test_ldap_login_active_user_succeeds(db, apps_dir, monkeypatch):
     assert db.get_user_by_username("carol")["auth_provider"] == "ldap"
 
 
+def _ldap_as_typed(username, password, ldap_cfg):
+    """Fake directory that echoes the typed name in whatever case, but
+    (like AD) treats it case-insensitively — i.e. no canonicalisation."""
+    return {"username": username, "display_name": "Directory User",
+            "email": None, "role": "admin"}
+
+
+def test_ldap_disabled_user_cannot_return_with_different_case(db, apps_dir, monkeypatch):
+    u = db.upsert_ldap_user("bob", "Bob", None, "read_only")
+    db.update_user(u["id"], is_active=0)
+    monkeypatch.setattr("harness.auth_manager.ldap_authenticate", _ldap_as_typed)
+    c = _ldap_client(db, apps_dir)
+    r = c.post("/auth/login", data={"username": "BOB", "password": "pw"})
+    assert r.status_code == 401
+    assert "session" not in r.cookies
+    assert len(db.get_users_by_username_ci("bob")) == 1
+
+
+def test_ldap_case_variant_keeps_role_override(db):
+    u = db.upsert_ldap_user("bob", "Bob", None, "read_only")
+    db.update_user(u["id"], role="read_only", role_override=1)
+    again = db.upsert_ldap_user("BOB", "Bob", None, "admin")
+    assert again["id"] == u["id"]
+    assert again["role"] == "read_only"
+
+
+def test_ldap_case_variant_of_local_admin_is_conflict(db, apps_dir, monkeypatch):
+    admin_id = _local_user(db, "admin", "admin", pw="real-admin-pw")
+    monkeypatch.setattr("harness.auth_manager.ldap_authenticate", _ldap_as_typed)
+    c = _ldap_client(db, apps_dir)
+    r = c.post("/auth/login", data={"username": "Admin", "password": "ad-pw"})
+    assert r.status_code == 401
+    assert "session" not in r.cookies
+    assert [m["id"] for m in db.get_users_by_username_ci("admin")] == [admin_id]
+    assert "auth.ldap_conflict" in [e["action"] for e in db.list_audit_log()]
+
+
+def test_ldap_new_users_stored_lowercase(db):
+    u = db.upsert_ldap_user("Dave", "Dave", None, "read_only")
+    assert u["username"] == "dave"
+
+
+def test_ldap_authenticate_returns_directory_name_lowercased():
+    from harness.auth_manager import ldap_authenticate
+    conn = MagicMock()
+    conn.bind.return_value = True
+    conn.entries = [MagicMock(**{
+        "displayName.value": "Bob", "mail.value": None,
+        "memberOf.values": [], "sAMAccountName.value": "Bob.Smith",
+    })]
+    with patch("harness.auth_manager.Connection", return_value=conn), \
+         patch("harness.auth_manager.Server"):
+        info = ldap_authenticate("BOB.SMITH", "pw", LDAP_CFG)
+    assert info["username"] == "bob.smith"
+    assert "sAMAccountName" in conn.search.call_args.kwargs["attributes"]
+
+
+def test_ldap_username_attribute_follows_search_filter():
+    from harness.auth_manager import _username_attribute
+    assert _username_attribute(LDAP_CFG) == "sAMAccountName"
+    assert _username_attribute(
+        {"user_search_filter": "(&(objectClass=person)(uid={username}))"}) == "uid"
+    assert _username_attribute(
+        {"user_search_filter": "(uid={username})", "username_attribute": "cn"}) == "cn"
+
+
 # ── #8 LDAP injection / unauthenticated bind ─────────────────────────────────
 
 def _mock_ldap_conn():
@@ -168,8 +234,11 @@ GH_USER = {"id": 777, "login": "octo", "name": "Octo Cat", "email": "o@x.io"}
 
 
 def _github_callback(db, apps_dir, github_cfg, *, token=None, user=None,
-                     orgs=None):
-    """Drive /auth/oauth/github/callback with mocked GitHub responses."""
+                     memberships=None, state="st"):
+    """Drive /auth/oauth/github/callback with mocked GitHub responses.
+
+    ``token``/``user`` may be a response mock or an exception to raise;
+    ``memberships`` maps org name -> membership response (default 404)."""
     from unittest.mock import AsyncMock
     config = {
         "environments": {"production": {"label": "Production"}},
@@ -182,19 +251,30 @@ def _github_callback(db, apps_dir, github_cfg, *, token=None, user=None,
 
     token = token if token is not None else _resp(200, {"access_token": "gho_x"})
     user = user if user is not None else _resp(200, GH_USER)
-    orgs = orgs if orgs is not None else _resp(200, [])
+    memberships = memberships or {}
+
+    async def _post(url, **kw):
+        if isinstance(token, Exception):
+            raise token
+        return token
 
     async def _get(url, **kw):
-        return orgs if "/user/orgs" in url else user
+        prefix = "https://api.github.com/user/memberships/orgs/"
+        if url.startswith(prefix):
+            return memberships.get(url[len(prefix):], _resp(404, {}))
+        if isinstance(user, Exception):
+            raise user
+        return user
 
     with patch("web.routes.auth.httpx") as mock_httpx:
         mc = AsyncMock()
         mc.__aenter__ = AsyncMock(return_value=mc)
         mc.__aexit__ = AsyncMock(return_value=False)
-        mc.post = AsyncMock(return_value=token)
+        mc.post = AsyncMock(side_effect=_post)
         mc.get = AsyncMock(side_effect=_get)
         mock_httpx.AsyncClient.return_value = mc
-        r = c.get("/auth/oauth/github/callback?code=abc&state=st")
+        r = c.get("/auth/oauth/github/callback",
+                  params={"code": "abc", "state": state})
     return r, mc
 
 
@@ -234,17 +314,72 @@ def test_github_auto_provision_creates_user(db, apps_dir):
 
 def test_github_org_membership_allows_login(db, apps_dir):
     r, mc = _github_callback(
-        db, apps_dir, {"allowed_orgs": ["acme"]},
-        orgs=_resp(200, [{"login": "other"}, {"login": "ACME"}]),
+        db, apps_dir, {"allowed_orgs": ["other", "ACME"]},
+        memberships={"acme": _resp(200, {"state": "active"})},
     )
     assert r.status_code == 302
-    assert any("/user/orgs" in call.args[0] for call in mc.get.call_args_list)
+    urls = [call.args[0] for call in mc.get.call_args_list]
+    assert "https://api.github.com/user/memberships/orgs/acme" in urls
 
 
-def test_github_not_in_org_is_403(db, apps_dir):
+@pytest.mark.parametrize("membership", [
+    _resp(404, {"message": "Not Found"}),
+    _resp(200, {"state": "pending"}),
+    _resp(200, ["active"]),
+])
+def test_github_not_active_org_member_is_403(db, apps_dir, membership):
     r, _ = _github_callback(db, apps_dir, {"allowed_orgs": ["acme"]},
-                            orgs=_resp(200, [{"login": "other"}]))
+                            memberships={"acme": membership})
     assert r.status_code == 403
+
+
+def test_github_org_lookup_network_error_is_502(db, apps_dir):
+    import httpx
+    from unittest.mock import AsyncMock
+    with patch("web.routes.auth._github_user_in_orgs",
+               AsyncMock(side_effect=httpx.ConnectTimeout("timed out"))):
+        r, _ = _github_callback(db, apps_dir, {"allowed_orgs": ["acme"]})
+    assert r.status_code == 502
+
+
+@pytest.mark.parametrize("where", ["token", "user"])
+def test_github_network_error_is_502(db, apps_dir, where):
+    import httpx
+    err = httpx.ReadTimeout("timed out")
+    kw = {"token": err} if where == "token" else {"user": err}
+    r, _ = _github_callback(db, apps_dir, {"auto_provision": True}, **kw)
+    assert r.status_code == 502
+    assert "session" not in r.cookies
+
+
+def test_github_non_ascii_state_is_400_not_500(db, apps_dir):
+    r, _ = _github_callback(db, apps_dir, {"auto_provision": True},
+                            state="st\u00e9\u2603")
+    assert r.status_code == 400
+
+
+def test_github_new_user_stored_lowercase(db, apps_dir):
+    r, _ = _github_callback(db, apps_dir, {"auto_provision": True},
+                            user=_resp(200, {**GH_USER, "login": "OctoCat"}))
+    assert r.status_code == 302
+    u = db.get_user_by_oauth_provider_id("github", "777")
+    assert u["username"] == "github:octocat"
+    assert u["display_name"] == "Octo Cat"
+
+
+def test_github_mixed_case_preprovisioned_row_gets_bound(db, apps_dir):
+    uid = _github_row(db, "Octo", None)
+    r, _ = _github_callback(db, apps_dir, {})
+    assert r.status_code == 302
+    assert db.get_user_by_id(uid)["oauth_provider_id"] == "777"
+
+
+def test_github_case_variant_cannot_take_over_linked_row(db, apps_dir):
+    victim = _github_row(db, "octo", "111")
+    r, _ = _github_callback(db, apps_dir, {"auto_provision": True},
+                            user=_resp(200, {**GH_USER, "login": "OCTO"}))
+    assert r.status_code == 403
+    assert db.get_user_by_id(victim)["oauth_provider_id"] == "111"
 
 
 def test_github_allowlist_enforced_for_existing_linked_user(db, apps_dir):
@@ -390,6 +525,25 @@ def test_sliding_window_expires_old_events():
     now[0] += 61
     assert not lim.is_limited("ip")
     assert lim.retry_after("ip") == 0
+
+
+def test_limiter_key_count_is_bounded():
+    from web.ratelimit import SlidingWindowLimiter
+    now = [0.0]
+    lim = SlidingWindowLimiter(5, 60, clock=lambda: now[0], max_keys=100)
+    for i in range(100):
+        lim.hit(f"10.0.0.{i}")
+    assert len(lim) == 100
+    # All expired: the next new key triggers a sweep.
+    now[0] += 61
+    lim.hit("new-ip")
+    assert len(lim) == 1
+    # All live: the stalest key is evicted to make room.
+    for i in range(150):
+        now[0] += 0.01
+        lim.hit(f"live-{i}")
+    assert len(lim) == 100
+    assert lim.is_limited("live-149") is False
 
 
 @pytest.mark.parametrize("setup", ["missing", "ldap", "inactive", "no_hash"])

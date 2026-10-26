@@ -4,6 +4,7 @@ import uuid
 import os
 import secrets as _secrets
 import httpx
+from httpx import HTTPError as _HTTPError
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
 
@@ -258,27 +259,31 @@ def _github_allowlist(github_cfg: dict) -> tuple:
 
 
 async def _github_user_in_orgs(access_token: str, allowed_orgs: set) -> bool:
-    """True if the token's user belongs to any of ``allowed_orgs``.
-    Any GitHub error or malformed response counts as "not a member"."""
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
+    """True if the token's user is an *active* member of any ``allowed_orgs``.
+
+    Asks GitHub about each configured org directly
+    (``GET /user/memberships/orgs/{org}``) rather than paging through the
+    user's org list. A non-200 or malformed answer means "not a member";
+    network errors propagate as ``httpx.HTTPError``."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        for org in sorted(allowed_orgs):
+            if not _GITHUB_LOGIN_RE.match(org):
+                continue  # not a valid org name; can't match anything
             resp = await client.get(
-                "https://api.github.com/user/orgs?per_page=100",
+                f"https://api.github.com/user/memberships/orgs/{org}",
                 headers={
                     "Authorization": f"Bearer {access_token}",
                     "Accept": "application/vnd.github.v3+json",
                 },
             )
-        if resp.status_code != 200:
-            return False
-        orgs = resp.json()
-    except Exception:
-        return False
-    if not isinstance(orgs, list):
-        return False
-    for org in orgs:
-        if isinstance(org, dict) and str(org.get("login", "")).lower() in allowed_orgs:
-            return True
+            if resp.status_code != 200:
+                continue
+            try:
+                membership = resp.json()
+            except ValueError:
+                continue
+            if isinstance(membership, dict) and membership.get("state") == "active":
+                return True
     return False
 
 
@@ -310,7 +315,9 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
     from web.auth import make_session_token, get_auth_config
 
     stored_state = request.cookies.get("oauth_state", "")
-    if not stored_state or not _secrets.compare_digest(stored_state, state):
+    if not stored_state or not _secrets.compare_digest(
+        stored_state.encode("utf-8"), state.encode("utf-8")
+    ):
         raise HTTPException(status_code=400, detail="Invalid OAuth state parameter")
 
     config = get_config()
@@ -332,12 +339,16 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
         )
 
     # ── Exchange the code for an access token ────────────────────────────────
-    async with httpx.AsyncClient(timeout=15) as client:
-        token_resp = await client.post(
-            "https://github.com/login/oauth/access_token",
-            json={"client_id": client_id, "client_secret": client_secret, "code": code},
-            headers={"Accept": "application/json"},
-        )
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            token_resp = await client.post(
+                "https://github.com/login/oauth/access_token",
+                json={"client_id": client_id, "client_secret": client_secret, "code": code},
+                headers={"Accept": "application/json"},
+            )
+    except _HTTPError as exc:
+        _log.warning("GitHub token exchange failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Could not reach GitHub")
     try:
         token_data = token_resp.json() if token_resp.status_code == 200 else None
     except ValueError:
@@ -347,14 +358,18 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
         raise HTTPException(status_code=400, detail="GitHub OAuth failed — no access token")
 
     # ── Fetch and validate the GitHub identity ───────────────────────────────
-    async with httpx.AsyncClient(timeout=15) as client:
-        user_resp = await client.get(
-            "https://api.github.com/user",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/vnd.github.v3+json",
-            },
-        )
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            user_resp = await client.get(
+                "https://api.github.com/user",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json",
+                },
+            )
+    except _HTTPError as exc:
+        _log.warning("GitHub user lookup failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Could not reach GitHub")
     try:
         github_user = user_resp.json() if user_resp.status_code == 200 else None
     except ValueError:
@@ -370,7 +385,8 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
 
     login = github_user["login"]
     github_id = str(github_user["id"])
-    username = f"github:{login}"
+    # GitHub logins are case-insensitive; store and match them lower-cased.
+    username = f"github:{login.lower()}"
     name = github_user.get("name")
     display_name = name if isinstance(name, str) and name else login
     email = github_user.get("email") if isinstance(github_user.get("email"), str) else None
@@ -380,7 +396,11 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
     if allowlist_configured:
         allowed = login.lower() in allowed_users
         if not allowed and allowed_orgs:
-            allowed = await _github_user_in_orgs(access_token, allowed_orgs)
+            try:
+                allowed = await _github_user_in_orgs(access_token, allowed_orgs)
+            except _HTTPError as exc:
+                _log.warning("GitHub org membership lookup failed: %s", exc)
+                raise HTTPException(status_code=502, detail="Could not reach GitHub")
         if not allowed:
             _log.warning("GitHub login %r refused: not in allowed_users/allowed_orgs", login)
             raise HTTPException(status_code=403, detail="GitHub account is not allowed")
@@ -394,12 +414,15 @@ async def github_oauth_callback(request: Request, code: str = "", state: str = "
         user = existing
         db.update_user_last_login(user["id"], now)
     else:
-        existing_by_name = db.get_user_by_username(username)
-        if existing_by_name:
+        matches = db.get_users_by_username_ci(username)
+        if matches:
             # Only a pre-provisioned GitHub row that has never been linked may
             # be bound to this GitHub id. A row already linked to a different
             # id means the login was renamed/recycled on GitHub — refuse it.
-            if (existing_by_name.get("auth_provider") != "github"
+            # So is an ambiguous match (several rows differing only in case).
+            existing_by_name = matches[0]
+            if (len(matches) > 1
+                    or existing_by_name.get("auth_provider") != "github"
                     or existing_by_name.get("oauth_provider_id")):
                 _log.warning(
                     "GitHub login %r (id %s) refused: username belongs to another identity",
