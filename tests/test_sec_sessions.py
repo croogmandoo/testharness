@@ -338,3 +338,58 @@ def test_checked_active_box_wins_over_hidden_zero(admin_client, db):
     })
     assert resp.status_code == 303
     assert db.get_user_by_id(bob["id"])["is_active"] == 1
+
+
+# ── data/secret.key permissions ───────────────────────────────────────────────
+
+posix_only = pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX modes")
+
+
+@posix_only
+def test_new_key_file_is_0600(tmp_path, db):
+    import os
+    import stat
+    from harness.secrets_store import SecretsStore
+    path = tmp_path / "data" / "secret.key"
+    old_umask = os.umask(0o022)
+    try:
+        SecretsStore(db, key_path=str(path))
+    finally:
+        os.umask(old_umask)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+@posix_only
+def test_loose_key_file_is_tightened_and_still_loads(tmp_path, db, caplog):
+    import os
+    import stat
+    from harness.secrets_store import SecretsStore
+    path = tmp_path / "secret.key"
+    first = SecretsStore(db, key_path=str(path))
+    first.set("TOKEN", "abc")
+    os.chmod(path, 0o644)
+    with caplog.at_level("WARNING", logger="harness.secrets_store"):
+        second = SecretsStore(db, key_path=str(path))
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert "tightened" in caplog.text
+    assert second.get("TOKEN") == "abc"
+    assert second.session_signing_key == first.session_signing_key
+
+
+def test_existing_key_is_never_overwritten(tmp_path, monkeypatch):
+    """If another process creates the key between the exists() check and the
+    O_EXCL open, the existing key is loaded rather than replaced."""
+    import base64
+    from harness import secrets_store
+    path = tmp_path / "secret.key"
+    theirs = b"\x07" * 32
+    real_exists = secrets_store.os.path.exists
+
+    def racing_exists(p):
+        if p == str(path) and not real_exists(p):
+            path.write_bytes(base64.urlsafe_b64encode(theirs))
+            return False
+        return real_exists(p)
+
+    monkeypatch.setattr(secrets_store.os.path, "exists", racing_exists)
+    assert secrets_store._load_or_create_key(str(path)) == theirs

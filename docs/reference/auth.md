@@ -60,6 +60,8 @@ first-run: _FirstRunMiddleware
 2. **Session key derivation** — a separate 32-byte key is derived from the same root key file (info label `harness-sessions-v1`) and exposed as `.session_signing_key` for use by `web/auth.py`.
 3. **`inject_to_env()`** — called at startup to populate `os.environ` with all stored secrets so app YAML `$VAR` references resolve correctly.
 
+The key file is created with mode `0600` (atomically, with `O_EXCL`, so a key another process just wrote is loaded rather than overwritten). On POSIX systems an existing key file readable or writable by group/other is tightened to `0600` at startup, with a warning in the log.
+
 **The `data/secret.key` file must be preserved across deployments and migrations.** A lost or replaced key file makes all stored secrets unrecoverable and invalidates all active sessions.
 
 ---

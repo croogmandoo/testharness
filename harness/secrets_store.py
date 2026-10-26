@@ -5,13 +5,17 @@ Two keys are derived from the key file via HKDF:
   - Fernet key for encrypting secret values
   - Session signing key exposed as .session_signing_key for web/auth.py
 """
-import os
 import base64
+import logging
+import os
+import stat
 from typing import Optional
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
+
+_log = logging.getLogger(__name__)
 
 
 def _hkdf(raw_key: bytes, info: bytes) -> bytes:
@@ -23,15 +27,44 @@ def _hkdf(raw_key: bytes, info: bytes) -> bytes:
     ).derive(raw_key)
 
 
+def _tighten_key_permissions(key_path: str) -> None:
+    """Best-effort: drop group/other access from an existing key file.
+
+    Key files created before 0600 creation was enforced inherit the umask
+    (often 0644). POSIX only; failures are logged, never fatal."""
+    if os.name != "posix":
+        return
+    try:
+        mode = stat.S_IMODE(os.stat(key_path).st_mode)
+        if mode & 0o077:
+            os.chmod(key_path, 0o600)
+            _log.warning(
+                "%s had permissions %o; tightened to 600", key_path, mode,
+            )
+    except OSError as exc:
+        _log.warning("Could not check/tighten permissions on %s: %s", key_path, exc)
+
+
+def _read_key(key_path: str) -> bytes:
+    _tighten_key_permissions(key_path)
+    with open(key_path, "rb") as f:
+        return base64.urlsafe_b64decode(f.read().strip())
+
+
 def _load_or_create_key(key_path: str) -> bytes:
     if os.path.exists(key_path):
-        with open(key_path, "rb") as f:
-            return base64.urlsafe_b64decode(f.read().strip())
+        return _read_key(key_path)
     parent = os.path.dirname(key_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
     raw = os.urandom(32)
-    with open(key_path, "wb") as f:
+    # O_EXCL: never clobber a key another process created meanwhile, and the
+    # 0600 mode applies from the first byte (no chmod-after-write window).
+    try:
+        fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return _read_key(key_path)
+    with os.fdopen(fd, "wb") as f:
         f.write(base64.urlsafe_b64encode(raw))
     return raw
 
