@@ -78,7 +78,7 @@ You can customize the outgoing webhook JSON structure to match any internal even
 ```yaml
 alerts:
   webhook:
-    url: "https://events.internal.corp/synthetics"
+    url: "https://events.example.com/synthetics"
     headers:
       X-Service-Name: "testharness"
     template: |

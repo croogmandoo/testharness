@@ -368,10 +368,10 @@ testharness/
 ## Running the test suite
 
 ```bash
-pytest                            # 377 tests, ~30 seconds
+.venv/bin/pytest                  # 880+ tests, ~40 seconds
 ```
 
-Pytest defaults: see `pytest.ini`.  Browser-engine tests use mocks (no
+Pytest defaults: see `pytest.ini`. Browser-engine tests use mocks (no
 real Playwright launch); the screenshot-diff test uses a tiny generated
 PNG.
 
@@ -379,6 +379,7 @@ PNG.
 
 ## Documentation
 
+- **[System Architecture](docs/OVERVIEW.md)** — component map and execution lifecycles
 - **[Writing tests](docs/guides/writing-tests.md)** — full step reference,
   variable chaining, SLO, retry, sequential mode
 - **[Alerting](docs/guides/alerting.md)** — channels, maintenance windows,
@@ -394,6 +395,16 @@ PNG.
 
 ---
 
+## 🛡️ Project Status & Support Disclaimer
+
+> **Note on Maintenance:** This is a personal tool built to solve synthetic monitoring and automated testing challenges in homelab and self-hosted environments. It is shared publicly in the spirit of open source.
+>
+> - **Issues & Discussions:** Feel free to open issues or share ideas.
+> - **Pull Requests:** PRs that fix bugs, improve documentation, or clean up edge cases are warmly welcomed.
+> - **Support Expectations:** Active development and SLA-level support are not guaranteed. If this tool helps your workflow or sparks an idea, that's awesome!
+
+---
+
 ## License
 
-See `LICENSE`.
+MIT License. See [LICENSE](LICENSE).

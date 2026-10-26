@@ -28,7 +28,7 @@ This plan tackles the five non-obvious gaps identified in a fresh codebase audit
 
 The shipped app file that tests the harness against itself uses `http://localhost:8000` — the harness actually serves on `9552`. Any user running the example app fails immediately.
 
-**Change:** `localhost:8000` → `localhost:9552` (both occurrences: `url:` and `environments.local:`).
+**Change:** `localhost:8000` → `localhost:9552` (both occurrences: `url:` and `environments['local']:`).
 
 **Status:** ✅ Done.
 

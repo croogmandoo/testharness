@@ -1,13 +1,32 @@
+# Secrets and Credentials
 .env
-.venv/
+*.key
+*.pem
+
+# Databases and Runtime Data
 data/
+*.db
+*.sqlite3
+
+# Python & Virtual Environments
+.venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# IDE & Editor Configurations
+.idea/
+.vscode/
+.obsidian/
+
+# AI Agent Scratch & Local State
+.gemini/
+.claude/
+.agents/
 .superpowers/
 graphify-out/cache/
 harness-task-*.xml
 .worktrees/
-.claude/settings.local.json
-.obsidian/
-.claude/worktrees/

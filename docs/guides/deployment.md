@@ -495,7 +495,7 @@ scrape_configs:
   - job_name: harness
     metrics_path: /metrics
     static_configs:
-      - targets: ['harness.internal:9552']
+      - targets: ['localhost:9552']
     bearer_token_file: /etc/prometheus/harness-token   # if metrics.bearer_token set
 ```
 

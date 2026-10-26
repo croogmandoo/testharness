@@ -128,7 +128,7 @@ Given this app definition with a missing secret:
 ```yaml
 # apps/my-system.yaml
 app: "My System"
-url: "https://system.local"
+url: "https://system.example.com"
 tests:
   - name: "Login flow"
     type: browser

@@ -2,7 +2,7 @@
 
 **Generated:** 2026-10-26T19:05:00-04:00  
 **Branch:** `master` (synchronized with `origin/master`)  
-**Workspace:** `/home/craig/orca/workspaces/testharness/main`  
+**Workspace:** `testharness`  
 **Test Suite:** **882 / 882 tests passing** (100% green, ~42s)
 
 ---
@@ -18,54 +18,54 @@
 - **Primary Dependencies**: FastAPI, Uvicorn, Playwright, SQLite3, Jinja2, Pytest, Pillow, ReportLab, Cryptography, APScheduler
 - **GitHub Task Tracking**: Issues #8 through #21 and #23 closed and verified on `croogmandoo/testharness`.
 - **Linear Project**: `Web Testing Harness (testharness)` on `Croogmando-homelab` (`CRO-47`, `CRO-49`).
-- **Observability Assets**: Prometheus alerting rules in [deploy/prometheus/alerts.yml](file:///home/craig/orca/workspaces/testharness/main/deploy/prometheus/alerts.yml) and Grafana dashboard in [deploy/grafana/dashboard.json](file:///home/craig/orca/workspaces/testharness/main/deploy/grafana/dashboard.json).
+- **Observability Assets**: Prometheus alerting rules in [deploy/prometheus/alerts.yml](deploy/prometheus/alerts.yml) and Grafana dashboard in [deploy/grafana/dashboard.json](deploy/grafana/dashboard.json).
 
 ---
 
 ## 2. Recent Work & Hardening Accomplishments
 
 1. **Notification Groups Management & Targeted App Alert Routing (Issue #23 - CLOSED)**:
-   - Added [harness/db/_notification_groups.py](file:///home/craig/orca/workspaces/testharness/main/harness/db/_notification_groups.py) with `NotificationGroupsMixin` supporting group creation, listing, updating, deletion, and email address resolution (`resolve_emails_for_groups`).
-   - Integrated into [harness/db/_base.py](file:///home/craig/orca/workspaces/testharness/main/harness/db/_base.py) with automatic schema migration (`notification_groups` table with unique name index).
-   - Added full REST API endpoints in [web/routes/api.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/api.py) (`GET`, `POST`, `PUT`, `DELETE /api/notification-groups`) with RBAC enforcement (`admin`, `runner`), input validation, and audit logging.
-   - Built Admin UI in [web/routes/admin_notifications.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/admin_notifications.py) and [web/templates/admin_notifications.html](file:///home/craig/orca/workspaces/testharness/main/web/templates/admin_notifications.html) with group creation, email badges, edit dialogs, delete confirmations, and assigned app cross-referencing.
-   - Integrated notification group selection into application forms ([web/templates/app_form.html](file:///home/craig/orca/workspaces/testharness/main/web/templates/app_form.html), [web/routes/apps.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/apps.py)) allowing one or more groups to be assigned to an application.
-   - Enhanced alert engine in [harness/alerts.py](file:///home/craig/orca/workspaces/testharness/main/harness/alerts.py), [harness/runner.py](file:///home/craig/orca/workspaces/testharness/main/harness/runner.py), and [harness/worker_dispatch.py](file:///home/craig/orca/workspaces/testharness/main/harness/worker_dispatch.py) to resolve assigned groups, deduplicate recipient emails, and dynamically route alert emails to assigned groups with seamless fallback to global SMTP settings.
-   - Verified 14 comprehensive unit and integration tests in [tests/test_notification_groups.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_notification_groups.py).
+   - Added [harness/db/_notification_groups.py](harness/db/_notification_groups.py) with `NotificationGroupsMixin` supporting group creation, listing, updating, deletion, and email address resolution (`resolve_emails_for_groups`).
+   - Integrated into [harness/db/_base.py](harness/db/_base.py) with automatic schema migration (`notification_groups` table with unique name index).
+   - Added full REST API endpoints in [web/routes/api.py](web/routes/api.py) (`GET`, `POST`, `PUT`, `DELETE /api/notification-groups`) with RBAC enforcement (`admin`, `runner`), input validation, and audit logging.
+   - Built Admin UI in [web/routes/admin_notifications.py](web/routes/admin_notifications.py) and [web/templates/admin_notifications.html](web/templates/admin_notifications.html) with group creation, email badges, edit dialogs, delete confirmations, and assigned app cross-referencing.
+   - Integrated notification group selection into application forms ([web/templates/app_form.html](web/templates/app_form.html), [web/routes/apps.py](web/routes/apps.py)) allowing one or more groups to be assigned to an application.
+   - Enhanced alert engine in [harness/alerts.py](harness/alerts.py), [harness/runner.py](harness/runner.py), and [harness/worker_dispatch.py](harness/worker_dispatch.py) to resolve assigned groups, deduplicate recipient emails, and dynamically route alert emails to assigned groups with seamless fallback to global SMTP settings.
+   - Verified 14 comprehensive unit and integration tests in [tests/test_notification_groups.py](tests/test_notification_groups.py).
 
 2. **Prometheus Alerting Rules & Grafana Dashboard**:
-   - Added [deploy/prometheus/alerts.yml](file:///home/craig/orca/workspaces/testharness/main/deploy/prometheus/alerts.yml) with production Prometheus alerts (`HarnessTestFailing`, `HarnessHighFailureRate`, `HarnessAppStale`, `HarnessSlowTestExecution`, `HarnessRunnerHeartbeatMissing`).
-   - Added [deploy/grafana/dashboard.json](file:///home/craig/orca/workspaces/testharness/main/deploy/grafana/dashboard.json) with fleet health stats, test duration percentiles, app status timeline matrix, run volume bar charts, and staleness monitoring.
-   - Added `harness_runner_last_seen_timestamp_seconds` heartbeat gauge to [web/routes/metrics.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/metrics.py), tested in [tests/test_web_metrics.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_web_metrics.py).
+   - Added [deploy/prometheus/alerts.yml](deploy/prometheus/alerts.yml) with production Prometheus alerts (`HarnessTestFailing`, `HarnessHighFailureRate`, `HarnessAppStale`, `HarnessSlowTestExecution`, `HarnessRunnerHeartbeatMissing`).
+   - Added [deploy/grafana/dashboard.json](deploy/grafana/dashboard.json) with fleet health stats, test duration percentiles, app status timeline matrix, run volume bar charts, and staleness monitoring.
+   - Added `harness_runner_last_seen_timestamp_seconds` heartbeat gauge to [web/routes/metrics.py](web/routes/metrics.py), tested in [tests/test_web_metrics.py](tests/test_web_metrics.py).
 
 3. **Multi-Environment Selector & Persistent Cookie Filtering (Issue #20 - CLOSED)**:
-   - Added interactive environment selector chips (`.env-chips`, `.env-chip`) to the dashboard header in [web/templates/dashboard.html](file:///home/craig/orca/workspaces/testharness/main/web/templates/dashboard.html) and breadcrumb bar in [web/templates/detail.html](file:///home/craig/orca/workspaces/testharness/main/web/templates/detail.html).
-   - Added persistent cookie resolution (`selected_environment`) in [web/routes/dashboard.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/dashboard.py), persisting chosen environments across dashboard views and app details.
-   - Tested in [tests/test_web_environment_filter.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_web_environment_filter.py).
+   - Added interactive environment selector chips (`.env-chips`, `.env-chip`) to the dashboard header in [web/templates/dashboard.html](web/templates/dashboard.html) and breadcrumb bar in [web/templates/detail.html](web/templates/detail.html).
+   - Added persistent cookie resolution (`selected_environment`) in [web/routes/dashboard.py](web/routes/dashboard.py), persisting chosen environments across dashboard views and app details.
+   - Tested in [tests/test_web_environment_filter.py](tests/test_web_environment_filter.py).
 
 4. **Custom Webhook Payload Templating & Incident Webhook Dispatch (Issue #21 - CLOSED)**:
-   - Added Jinja2 template rendering (`_render_webhook_payload`) in [harness/alerts.py](file:///home/craig/orca/workspaces/testharness/main/harness/alerts.py) for outbound run webhooks and incident alerts.
+   - Added Jinja2 template rendering (`_render_webhook_payload`) in [harness/alerts.py](harness/alerts.py) for outbound run webhooks and incident alerts.
    - Added pre-packaged formats for PagerDuty Events API v2 (`format: "pagerduty"`) and Opsgenie Alerts API (`format: "opsgenie"`).
    - Added support for custom headers (`headers: {...}`) and HMAC-SHA256 payload signing (`X-Harness-Signature`).
    - Enabled incident alert webhooks in `dispatch_alerts()` supporting both single webhook dicts and lists of webhook endpoints.
-   - Tested in [tests/test_alerts_templating.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_alerts_templating.py).
+   - Tested in [tests/test_alerts_templating.py](tests/test_alerts_templating.py).
 
 5. **TLS Certificate Expiration & Security Headers Prober (Issue #17 - CLOSED)**:
-   - Added [harness/tls_engine.py](file:///home/craig/orca/workspaces/testharness/main/harness/tls_engine.py) implementing `run_tls_test` and `inspect_cert_sync` using Python `ssl` and `socket`.
+   - Added [harness/tls_engine.py](harness/tls_engine.py) implementing `run_tls_test` and `inspect_cert_sync` using Python `ssl` and `socket`.
    - Validates TLS certificate expiration date against configurable threshold (`min_days_valid`, default 30 days).
    - Verifies Subject Alternative Names (SANs) match the target hostname and checks negotiated TLS protocol against `min_tls_version` (e.g. `TLSv1.2` or `TLSv1.3`).
    - Checks security headers (`Strict-Transport-Security`, `X-Content-Type-Options`, `Content-Security-Policy`) over HTTPS responses.
-   - Tested in [tests/test_tls_engine.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_tls_engine.py).
+   - Tested in [tests/test_tls_engine.py](tests/test_tls_engine.py).
 
-5. **Visual Regression Diff Viewer & Baseline Approval Workflow (Issue #18 - CLOSED)**:
-   - Added `generate_diff_image` in [harness/screenshot_diff.py](file:///home/craig/orca/workspaces/testharness/main/harness/screenshot_diff.py) generating a high-contrast magenta (`#FF007F`) visual heatmap overlay on a dimmed grayscale background.
-   - Added `POST /api/visual/approve` endpoint in [web/routes/api.py](file:///home/craig/orca/workspaces/testharness/main/web/routes/api.py) requiring `admin` or `runner` role.
-   - Added "Approve as New Baseline" UI button in [web/templates/detail.html](file:///home/craig/orca/workspaces/testharness/main/web/templates/detail.html).
-   - Tested in [tests/test_visual_approval.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_visual_approval.py).
+6. **Visual Regression Diff Viewer & Baseline Approval Workflow (Issue #18 - CLOSED)**:
+   - Added `generate_diff_image` in [harness/screenshot_diff.py](harness/screenshot_diff.py) generating a high-contrast magenta (`#FF007F`) visual heatmap overlay on a dimmed grayscale background.
+   - Added `POST /api/visual/approve` endpoint in [web/routes/api.py](web/routes/api.py) requiring `admin` or `runner` role.
+   - Added "Approve as New Baseline" UI button in [web/templates/detail.html](web/templates/detail.html).
+   - Tested in [tests/test_visual_approval.py](tests/test_visual_approval.py).
 
-6. **Core Web Vitals & Frontend Performance Timing Metrics (Issue #19 - CLOSED)**:
-   - Added `extract_web_vitals` in [harness/browser.py](file:///home/craig/orca/workspaces/testharness/main/harness/browser.py) querying the Navigation Timing API and PerformanceObserver (TTFB, DOMContentLoaded, Load Time, FCP, LCP, CLS).
-   - Tested in [tests/test_browser_performance.py](file:///home/craig/orca/workspaces/testharness/main/tests/test_browser_performance.py).
+7. **Core Web Vitals & Frontend Performance Timing Metrics (Issue #19 - CLOSED)**:
+   - Added `extract_web_vitals` in [harness/browser.py](harness/browser.py) querying the Navigation Timing API and PerformanceObserver (TTFB, DOMContentLoaded, Load Time, FCP, LCP, CLS).
+   - Tested in [tests/test_browser_performance.py](tests/test_browser_performance.py).
 
 7. **Test Suite Milestone**:
    - Reached **882 passing unit and integration tests** (100% green, 0 failures, 0 regressions).

@@ -1,6 +1,6 @@
 app: radarr
 environments:
-  Production: https://radarr.croogmandoo.xyz
+  production: https://radarr.example.com
 tests:
 - name: '1'
   steps:
@@ -15,4 +15,4 @@ tests:
   - wait_for_selector: .PageSidebar-sidebarContainer-aQa5n
   - assert_text: Wanted
   type: browser
-url: https://radarr.croogmandoo.xyz
+url: https://radarr.example.com
