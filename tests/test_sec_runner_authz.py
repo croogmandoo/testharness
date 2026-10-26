@@ -351,3 +351,97 @@ def test_admin_delete_allows_rebind(client, db):
     db.delete_runner("eu-worker-1")
     assert _register(client, b_key).status_code == 200
     assert db.get_runner_by_name("eu-worker-1")["api_key_id"] == b_key_id
+
+
+def test_delete_requeues_assigned_jobs_so_new_owner_cannot_report(client, db):
+    """Jobs A claimed go back to the queue when an admin deletes the runner,
+    so B (re-registering the name) can't post results for them."""
+    a_uid = _user(db, "svc-a", "runner")
+    _, a_key = _key(db, a_uid)
+    b_uid = _user(db, "svc-b", "runner")
+    _, b_key = _key(db, b_uid)
+    assert _register(client, a_key).status_code == 200
+    job_id = _queue_assigned_job(db, "eu-worker-1")
+
+    assert db.delete_runner("eu-worker-1") == 1
+    job = db.get_runner_job(job_id)
+    assert job["state"] == "queued" and job["assigned_to"] is None
+
+    assert _register(client, b_key).status_code == 200
+    r = client.post("/api/runner/results", headers=_bearer(b_key),
+                    json=_results_payload(job_id))
+    assert r.status_code in (403, 409)
+    assert db.get_runner_job(job_id)["state"] == "queued"
+
+
+# ── Races ───────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("how", ["revoked", "rebound"])
+def test_long_poll_rechecks_key_before_claiming(client, db, monkeypatch, how):
+    """Key revoked (or runner rebound) after the up-front check but before
+    the claim: the long-poll must refuse instead of handing out the job."""
+    uid = _user(db, "svc", "runner")
+    key_id, key = _key(db, uid)
+    assert _register(client, key).status_code == 200
+    _queue_secret_job(db)
+
+    # touch_runner_heartbeat runs between the binding check and the claim
+    # loop — use it as the hook to change state mid-request.
+    real_touch = db.touch_runner_heartbeat
+
+    def touch_then_invalidate(name, ts):
+        real_touch(name, ts)
+        if how == "revoked":
+            db.revoke_api_key(key_id)
+        else:
+            other_id, _ = _key(db, _user(db, "svc-b", "runner"))
+            with db._connect() as conn:
+                conn.execute("UPDATE runners SET api_key_id=? WHERE name=?",
+                             (other_id, name))
+
+    monkeypatch.setattr(db, "touch_runner_heartbeat", touch_then_invalidate)
+    r = client.get("/api/runner/jobs", headers=_bearer(key),
+                   params={"name": "eu-worker-1", "wait": 0})
+    assert r.status_code == 403
+    assert _SECRET not in r.text
+    with db._connect() as conn:
+        (state,) = conn.execute("SELECT state FROM runner_jobs").fetchone()
+    assert state == "queued"
+
+
+def test_register_conflict_when_binding_changes_after_check(db):
+    """The conditional write refuses if another process bound the row
+    between the route's check and the upsert."""
+    from harness.db._runners import RunnerBindConflict
+    db.upsert_runner(name="w", tags=[], capabilities=[], api_key_id="key-a")
+    with pytest.raises(RunnerBindConflict):
+        db.upsert_runner(name="w", tags=[], capabilities=[],
+                         api_key_id="key-b", expected_api_key_id=None)
+    assert db.get_runner_by_name("w")["api_key_id"] == "key-a"
+    # Expected binding still in place → write goes through.
+    db.upsert_runner(name="w", tags=[], capabilities=[],
+                     api_key_id="key-b", expected_api_key_id="key-a")
+    assert db.get_runner_by_name("w")["api_key_id"] == "key-b"
+
+
+def test_register_conflict_when_insert_loses_race(db, monkeypatch):
+    """Two registers both see no row; the second INSERT hits UNIQUE(name)."""
+    from harness.db._runners import RunnerBindConflict
+    db.upsert_runner(name="w", tags=[], capabilities=[], api_key_id="key-a")
+    monkeypatch.setattr(db, "get_runner_by_name", lambda name: None)
+    with pytest.raises(RunnerBindConflict):
+        db.upsert_runner(name="w", tags=[], capabilities=[],
+                         api_key_id="key-b", expected_api_key_id=None)
+
+
+def test_register_route_maps_bind_race_to_409(client, db, monkeypatch):
+    uid = _user(db, "svc", "runner")
+    _, key = _key(db, uid)
+    from harness.db._runners import RunnerBindConflict
+
+    def lose_race(**kwargs):
+        raise RunnerBindConflict(kwargs["name"])
+
+    monkeypatch.setattr(db, "upsert_runner", lose_race)
+    r = _register(client, key)
+    assert r.status_code == 409

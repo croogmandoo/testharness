@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from typing import Optional
 
+from harness.db._runners import RunnerBindConflict
 from web.auth import require_scope
 
 router = APIRouter(prefix="/api/runner")
@@ -81,18 +82,25 @@ def _require_bound(db, name: str, api_key: dict) -> None:
         )
 
 
+def _key_usable(key: Optional[dict]) -> bool:
+    """True when an api_keys row exists, is active and hasn't expired."""
+    if key is None or not key.get("is_active"):
+        return False
+    if key.get("expires_at"):
+        expires = datetime.fromisoformat(key["expires_at"])
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires < datetime.now(timezone.utc):
+            return False
+    return True
+
+
 def _bound_key_releasable(bound_key: Optional[dict], user: dict) -> bool:
     """True when a runner bound to ``bound_key`` may be rebound by ``user``:
     the old key is gone, revoked or expired, or belongs to the same user
     (key rotation for one service account)."""
-    if bound_key is None or not bound_key.get("is_active"):
+    if not _key_usable(bound_key):
         return True
-    if bound_key.get("expires_at"):
-        expires = datetime.fromisoformat(bound_key["expires_at"])
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        if expires < datetime.now(timezone.utc):
-            return True
     return bound_key.get("user_id") == user["id"]
 
 
@@ -239,14 +247,26 @@ async def runner_register(
     notice = incompatibility_notice(req.version, cv)
     classification = classify_skew(req.version, cv, warning_minors=warning_minors)
 
-    runner = db.upsert_runner(
-        name=name,
-        tags=req.tags,
-        capabilities=req.capabilities,
-        version=req.version,
-        api_key_id=api_key_id,
-        version_stale=1 if stale else 0,
-    )
+    try:
+        runner = db.upsert_runner(
+            name=name,
+            tags=req.tags,
+            capabilities=req.capabilities,
+            version=req.version,
+            api_key_id=api_key_id,
+            version_stale=1 if stale else 0,
+            # Only write if the binding is still what we just checked — a
+            # concurrent register (another process) may have bound it since.
+            expected_api_key_id=(existing or {}).get("api_key_id"),
+        )
+    except RunnerBindConflict:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "runner name already bound to another API key; "
+                "an admin must delete the runner to rebind"
+            ),
+        )
     db.log_audit(
         "runner.register",
         user_id=current_user["id"],
@@ -625,6 +645,18 @@ async def runner_jobs_long_poll(
     event = get_job_queued_event()
 
     while True:
+        # The wait can last up to a minute: re-check that the key is still
+        # live and still bound before every claim, so a key revoked (or a
+        # runner rebound) mid-wait can't pick up a job.
+        if (not _key_usable(db.get_api_key_by_id(api_key["id"]))
+                or db.check_runner_binding(name, api_key["id"]) != "ok"):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "API key revoked or runner no longer bound to it; "
+                    "re-register with a valid key"
+                ),
+            )
         claimed = db.claim_runner_jobs(
             worker_name=name,
             worker_tags=runner.get("tags") or [],

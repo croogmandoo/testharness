@@ -166,7 +166,7 @@ registration races.
 |---|---|---|---|
 | **Drain** | `POST /admin/runners/{name}/drain` | Sets `runners.status='draining'`. Dispatch stops sending new jobs. In-flight jobs are allowed to finish. | `runner.drain` |
 | **Resume** | `POST /admin/runners/{name}/resume` | Sets `runners.status='online'`. Dispatch resumes immediately. | `runner.resume` |
-| **Remove** | `POST /admin/runners/{name}/delete` | Deletes the `runners` row. The worker process is unaffected until its next register/heartbeat, at which point it 404s and should exit. **In-flight jobs assigned to this worker become stranded** — the reaper will requeue them after `worker.job_timeout_seconds`. | `runner.delete` |
+| **Remove** | `POST /admin/runners/{name}/delete` | Deletes the `runners` row. The worker process is unaffected until its next register/heartbeat, at which point it 404s and should exit. **In-flight jobs assigned to this worker go straight back to `queued`** (no retry bump) so another worker, or whoever re-registers the name, claims them afresh; results the old worker posts for them are refused (409 or 403). The audit details record `requeued=N`. | `runner.delete` |
 
 The Drain ↔ Resume buttons swap based on current state. Remove is always
 present and always confirms via a JS dialog. Revoke the worker's API key
