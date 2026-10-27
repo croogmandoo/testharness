@@ -268,7 +268,9 @@ async def run_browser_test(run_id: str, app: str, environment: str,
             recorder = URLRecorder(page, base_url)
             await recorder.start()
         page.set_default_timeout(timeout_ms)
-        steps = test_def.get("steps", [])
+        steps = list(test_def.get("steps", []))
+        if not steps and record_url_steps:
+            steps = [{"navigate": "/"}]
         slug = slugify_test_name(test_def["name"])
         failed = False
         for i, step in enumerate(steps):

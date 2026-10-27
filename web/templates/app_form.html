@@ -267,7 +267,17 @@ function validateSimple(obj) {
   for (const t of obj.tests) {
     if (!t.name) { showBanner('Each test must have a name'); ok = false; break; }
     if (!t.type) { showBanner('Each test must have a type'); ok = false; break; }
-    if (t.type === 'browser' && (!t.steps || t.steps.length === 0)) { showBanner('Browser tests must have at least one step'); ok = false; break; }
+    if (t.type === 'browser') {
+      if (!t.steps || t.steps.length === 0) {
+        if (t.record_url_steps) {
+          t.steps = [{ navigate: '/' }];
+        } else {
+          showBanner('Browser tests must have at least one step');
+          ok = false;
+          break;
+        }
+      }
+    }
     if (t.type === 'api' && !t.endpoint) { showBanner('API tests must have an endpoint'); ok = false; break; }
   }
   return ok;
@@ -418,6 +428,9 @@ function makeBrowserFields() {
   const ab = _el('button', { cls: 'btn btn-sm mt-1', attrs: { type: 'button' }, text: '+ Add Step' });
   ab.addEventListener('click', function() { addStepRow(ab); });
   d.appendChild(sc); d.appendChild(ab);
+  addStepRow(ab);
+  const firstInput = sc.querySelector('.step-value');
+  if (firstInput) firstInput.value = '/';
   return d;
 }
 

@@ -243,3 +243,49 @@ async def test_run_browser_test_without_record_url_steps(monkeypatch):
     assert result.status == "pass"
     assert len(result.step_log) == 1
     assert result.step_log[0].step == "navigate /login"
+
+
+@pytest.mark.asyncio
+async def test_run_browser_test_with_empty_steps_defaults_to_root_when_recording(monkeypatch):
+    fake_page = MockPage()
+
+    async def fake_goto(url):
+        fake_page.main_frame.url = url
+        fake_page.emit_navigation(fake_page.main_frame)
+
+    fake_page.goto.side_effect = fake_goto
+
+    fake_browser = AsyncMock()
+    fake_browser.new_page.return_value = fake_page
+    fake_chromium = AsyncMock()
+    fake_chromium.launch.return_value = fake_browser
+
+    fake_pw = AsyncMock()
+    fake_pw.chromium = fake_chromium
+
+    class FakeAsyncPlaywright:
+        async def __aenter__(self):
+            return fake_pw
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    monkeypatch.setattr("harness.browser.async_playwright", lambda: FakeAsyncPlaywright())
+
+    test_def = {
+        "name": "Empty Steps Recording Test",
+        "steps": [],
+    }
+
+    result = await run_browser_test(
+        run_id="run-empty",
+        app="demo",
+        environment="prod",
+        base_url="https://example.com",
+        test_def=test_def,
+        record_url_steps=True,
+    )
+
+    assert result.status == "pass"
+    fake_page.goto.assert_called_once_with("https://example.com/")
+    assert result.step_log[0].step == "navigate /"
