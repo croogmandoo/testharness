@@ -29,6 +29,7 @@ class FakePage:
         self.mouse = MagicMock()
         self.mouse.click = AsyncMock()
         self.fill = AsyncMock()
+        self.set_extra_http_headers = AsyncMock()
         self.evaluate = AsyncMock(return_value={"selector": "button#submit", "tag": "button"})
 
     def on(self, event, handler):
@@ -181,3 +182,12 @@ async def test_journey_api_endpoints(mock_playwright_stack, client):
     stop_data = stop_res.json()
     assert stop_data["status"] == "complete"
     assert isinstance(stop_data["steps"], list)
+
+
+@pytest.mark.asyncio
+async def test_journey_session_with_headers(mock_playwright_stack):
+    stack = mock_playwright_stack
+    session = JourneySession("sess-hdr", "https://example.com")
+    await session.start("https://example.com/api", headers={"Authorization": "Bearer tok"})
+    stack["page"].set_extra_http_headers.assert_called_once_with({"Authorization": "Bearer tok"})
+    await session.close()

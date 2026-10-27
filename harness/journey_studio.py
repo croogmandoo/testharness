@@ -7,6 +7,7 @@ for interactive browser test recording within the testharness web UI.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 import uuid
@@ -80,7 +81,7 @@ class JourneySession:
             except Exception:
                 pass
 
-    async def start(self, initial_url: Optional[str] = None) -> None:
+    async def start(self, initial_url: Optional[str] = None, headers: Optional[Dict[str, str]] = None) -> None:
         """Launch Playwright Chromium and initialize CDP screencast."""
         if self.is_running:
             return
@@ -102,6 +103,10 @@ class JourneySession:
             ignore_https_errors=True,
         )
         self._page = await self._context.new_page()
+        if headers and hasattr(self._page, "set_extra_http_headers"):
+            res = self._page.set_extra_http_headers({str(k): str(v) for k, v in headers.items()})
+            if inspect.isawaitable(res):
+                await res
 
         # Listen for frame navigations
         def _on_nav(frame):
@@ -298,10 +303,15 @@ class JourneyStudioManager:
         self._sessions: Dict[str, JourneySession] = {}
         self._lock = asyncio.Lock()
 
-    async def create_session(self, base_url: str, initial_url: Optional[str] = None) -> JourneySession:
+    async def create_session(
+        self,
+        base_url: str,
+        initial_url: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> JourneySession:
         session_id = str(uuid.uuid4())
         session = JourneySession(session_id, base_url)
-        await session.start(initial_url=initial_url)
+        await session.start(initial_url=initial_url, headers=headers)
         async with self._lock:
             self._sessions[session_id] = session
         return session

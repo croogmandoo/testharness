@@ -78,8 +78,8 @@
                  value="{{ test.name | default('') | e }}">
           <select class="search test-type input--medium" onchange="onTypeChange(this)">
             <option value="">-- type --</option>
-            {% for t in ['availability', 'api', 'browser'] %}
-            <option value="{{ t }}" {{ 'selected' if test.type == t else '' }}>{{ t }}</option>
+            {% for t in ['availability', 'api', 'browser', 'tls'] %}
+            <option value="{{ t }}" {{ 'selected' if test.type == t else '' }}>{{ 'tls (SSL / Certificate)' if t == 'tls' else t }}</option>
             {% endfor %}
           </select>
           <button type="button" class="btn-remove" onclick="this.closest('.test-block').remove()">&#215;</button>
@@ -88,6 +88,32 @@
           <label class="field-mini">Expect Status</label>
           <input class="search field-expect-status input--narrow"
                  type="number" value="{{ test.expect_status | default(200) }}">
+        </div>
+        <div class="fields-tls" {% if test.type != 'tls' %}style="display:none;"{% endif %}>
+          <div class="app-form-row">
+            <div class="input--flex">
+              <label class="field-mini">Host / URL (optional override)</label>
+              <input class="search field-tls-host" type="text" placeholder="example.com:443"
+                     value="{{ test.host | default('') | e }}">
+            </div>
+            <div>
+              <label class="field-mini">Min Days Valid</label>
+              <input class="search field-min-days-valid input--narrow"
+                     type="number" value="{{ test.min_days_valid | default(30) }}">
+            </div>
+            <div>
+              <label class="field-mini">Min TLS Version</label>
+              <select class="search field-min-tls-version">
+                {% for v in ['TLSv1.2', 'TLSv1.3'] %}
+                <option value="{{ v }}" {{ 'selected' if test.min_tls_version == v else '' }}>{{ v }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <label class="field-mini" style="display:inline-flex; align-items:center; gap:6px; cursor:pointer; margin-top:8px;">
+            <input type="checkbox" class="field-check-security-headers" {% if test.check_security_headers is not defined or test.check_security_headers %}checked{% endif %}>
+            Check Security Headers (HSTS, CSP, X-Content-Type-Options)
+          </label>
         </div>
         <div class="fields-api" {% if test.type != 'api' %}style="display:none;"{% endif %}>
           <div class="app-form-row">
@@ -112,6 +138,18 @@
           </div>
           <label class="field-mini">Expect JSON (optional)</label>
           <textarea class="search field-expect-json input--code" rows="2">{{ test.expect_json | default('') | e }}</textarea>
+          
+          <label class="field-mini mb-1 mt-2">Headers (optional, e.g. Authorization, X-API-Key)</label>
+          <div class="headers-container">
+            {% for hk, hv in (test.headers or {}).items() %}
+            <div class="header-row app-form-row">
+              <input class="search header-key input--flex" type="text" placeholder="Header Name" value="{{ hk | e }}">
+              <input class="search header-val input--flex" type="text" placeholder="Header Value" value="{{ hv | e }}" list="var-options">
+              <button type="button" class="btn-remove" onclick="this.closest('.header-row').remove()">&#215;</button>
+            </div>
+            {% endfor %}
+          </div>
+          <button type="button" class="btn btn-sm mt-1" onclick="addHeaderRow(this)">+ Add Header</button>
         </div>
         <div class="fields-browser" {% if test.type != 'browser' %}style="display:none;"{% endif %}>
           <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
@@ -123,6 +161,18 @@
               <span style="color:#ff7b72; font-weight:bold;">⏺</span> Launch Journey Studio (Interactive)
             </button>
           </div>
+          
+          <label class="field-mini mb-1">Headers (optional, e.g. Bearer tokens, API keys)</label>
+          <div class="headers-container mb-3">
+            {% for hk, hv in (test.headers or {}).items() %}
+            <div class="header-row app-form-row">
+              <input class="search header-key input--flex" type="text" placeholder="Header Name" value="{{ hk | e }}">
+              <input class="search header-val input--flex" type="text" placeholder="Header Value" value="{{ hv | e }}" list="var-options">
+              <button type="button" class="btn-remove" onclick="this.closest('.header-row').remove()">&#215;</button>
+            </div>
+            {% endfor %}
+          </div>
+          <button type="button" class="btn btn-sm mb-3" onclick="addHeaderRow(this)">+ Add Header</button>
           <label class="field-mini mb-2">Steps</label>
           <div class="steps-container">
             {% for step in (test.steps or []) %}
@@ -233,11 +283,33 @@ function collectSimpleFormData() {
       test.expect_status = parseInt(block.querySelector('.field-expect-status').value) || 200;
       const ej = block.querySelector('.field-expect-json').value.trim();
       if (ej) test.expect_json = ej;
+      const hdrs = {};
+      block.querySelectorAll('.fields-api .header-row').forEach(function(hr) {
+        const k = hr.querySelector('.header-key').value.trim();
+        const v = hr.querySelector('.header-val').value.trim();
+        if (k) hdrs[k] = v;
+      });
+      if (Object.keys(hdrs).length > 0) test.headers = hdrs;
+    } else if (test.type === 'tls') {
+      const minDays = parseInt(block.querySelector('.field-min-days-valid').value);
+      test.min_days_valid = isNaN(minDays) ? 30 : minDays;
+      test.min_tls_version = block.querySelector('.field-min-tls-version').value;
+      const chkSec = block.querySelector('.field-check-security-headers');
+      test.check_security_headers = chkSec ? chkSec.checked : false;
+      const hostOverride = block.querySelector('.field-tls-host').value.trim();
+      if (hostOverride) test.host = hostOverride;
     } else if (test.type === 'browser') {
       const recCb = block.querySelector('.field-record-url-steps');
       if (recCb && recCb.checked) {
         test.record_url_steps = true;
       }
+      const hdrs = {};
+      block.querySelectorAll('.fields-browser .header-row').forEach(function(hr) {
+        const k = hr.querySelector('.header-key').value.trim();
+        const v = hr.querySelector('.header-val').value.trim();
+        if (k) hdrs[k] = v;
+      });
+      if (Object.keys(hdrs).length > 0) test.headers = hdrs;
       test.steps = [];
       block.querySelectorAll('.step-row').forEach(function(stepRow) {
         const action = stepRow.querySelector('.step-action').value;
@@ -370,17 +442,53 @@ function addTestBlock() {
   const nameInp = makeInput('search test-name input--flex', 'text', 'Test name');
   const typeSel = _el('select', { cls: 'search test-type input--medium' });
   typeSel.addEventListener('change', function() { onTypeChange(typeSel); });
-  [['','-- type --'],['availability','availability'],['api','api'],['browser','browser']].forEach(function(p) {
+  [['','-- type --'],['availability','availability'],['api','api'],['browser','browser'],['tls','tls (SSL / Certificate)']].forEach(function(p) {
     const o = _el('option'); o.value = p[0]; o.textContent = p[1]; typeSel.appendChild(o);
   });
   const rmBtn = makeRemoveBtn(function() { block.remove(); });
   hdr.appendChild(nameInp); hdr.appendChild(typeSel); hdr.appendChild(rmBtn);
   block.appendChild(hdr);
   block.appendChild(makeAvailFields());
+  block.appendChild(makeTlsFields());
   block.appendChild(makeApiFields());
   block.appendChild(makeBrowserFields());
   container.appendChild(block);
   applyVarDatalist();
+}
+
+function makeTlsFields() {
+  const d = _el('div', { cls: 'fields-tls' });
+  d.style.display = 'none';
+  const row = _el('div', { cls: 'app-form-row' });
+  const hw = _el('div', { cls: 'input--flex' });
+  hw.appendChild(_el('label', { cls: 'field-mini', text: 'Host / URL (optional override)' }));
+  hw.appendChild(makeInput('search field-tls-host', 'text', 'example.com:443'));
+
+  const dw = _el('div');
+  dw.appendChild(_el('label', { cls: 'field-mini', text: 'Min Days Valid' }));
+  const di = makeInput('search field-min-days-valid input--narrow', 'number', '30');
+  di.value = '30';
+  dw.appendChild(di);
+
+  const tw = _el('div');
+  tw.appendChild(_el('label', { cls: 'field-mini', text: 'Min TLS Version' }));
+  const ts = _el('select', { cls: 'search field-min-tls-version' });
+  ['TLSv1.2', 'TLSv1.3'].forEach(function(v) {
+    const o = _el('option'); o.value = v; o.textContent = v; ts.appendChild(o);
+  });
+  tw.appendChild(ts);
+
+  row.appendChild(hw); row.appendChild(dw); row.appendChild(tw);
+  d.appendChild(row);
+
+  const secLabel = _el('label', { cls: 'field-mini', style: 'display:inline-flex; align-items:center; gap:6px; cursor:pointer; margin-top:8px;' });
+  const secInput = _el('input', { cls: 'field-check-security-headers', attrs: { type: 'checkbox' } });
+  secInput.checked = true;
+  secLabel.appendChild(secInput);
+  secLabel.appendChild(document.createTextNode(' Check Security Headers (HSTS, CSP, X-Content-Type-Options)'));
+  d.appendChild(secLabel);
+
+  return d;
 }
 
 function makeAvailFields() {
@@ -417,6 +525,8 @@ function makeApiFields() {
   const jt = _el('textarea', { cls: 'search field-expect-json input--code' });
   jt.rows = 2;
   d.appendChild(jt);
+
+  d.appendChild(createHeadersBlock('Headers (optional, e.g. Authorization, X-API-Key)'));
   return d;
 }
 
@@ -436,6 +546,7 @@ function makeBrowserFields() {
   rowTop.appendChild(studioBtn);
 
   d.appendChild(rowTop);
+  d.appendChild(createHeadersBlock('Headers (optional, e.g. Bearer tokens, API keys)'));
   d.appendChild(_el('label', { cls: 'field-mini mb-2', text: 'Steps' }));
   const sc = _el('div', { cls: 'steps-container' });
   const ab = _el('button', { cls: 'btn btn-sm mt-1', attrs: { type: 'button' }, text: '+ Add Step' });
@@ -445,6 +556,29 @@ function makeBrowserFields() {
   const firstInput = sc.querySelector('.step-value');
   if (firstInput) firstInput.value = '/';
   return d;
+}
+
+function createHeadersBlock(title) {
+  const wrap = _el('div', { cls: 'headers-section mt-2 mb-3' });
+  wrap.appendChild(_el('label', { cls: 'field-mini mb-1', text: title || 'Headers (optional)' }));
+  const hc = _el('div', { cls: 'headers-container mb-1' });
+  wrap.appendChild(hc);
+  const ab = _el('button', { cls: 'btn btn-sm', attrs: { type: 'button' }, text: '+ Add Header' });
+  ab.addEventListener('click', function() { addHeaderRow(ab); });
+  wrap.appendChild(ab);
+  return wrap;
+}
+
+function addHeaderRow(btn) {
+  const container = btn.previousElementSibling;
+  const row = _el('div', { cls: 'header-row app-form-row' });
+  row.appendChild(makeInput('search header-key input--flex', 'text', 'Header Name (e.g. Authorization, X-API-Key)'));
+  const valInp = makeInput('search header-val input--flex', 'text', 'Header Value (e.g. Bearer $TOKEN)');
+  valInp.setAttribute('list', 'var-options');
+  row.appendChild(valInp);
+  row.appendChild(makeRemoveBtn(function() { row.remove(); }));
+  container.appendChild(row);
+  applyVarDatalist();
 }
 
 function createStepRow(action, val) {
@@ -505,6 +639,7 @@ function makeStepActionSelect() {
 function onTypeChange(sel) {
   const b = sel.closest('.test-block');
   b.querySelector('.fields-availability').style.display = sel.value === 'availability' ? '' : 'none';
+  if (b.querySelector('.fields-tls')) b.querySelector('.fields-tls').style.display = sel.value === 'tls' ? '' : 'none';
   b.querySelector('.fields-api').style.display = sel.value === 'api' ? '' : 'none';
   b.querySelector('.fields-browser').style.display = sel.value === 'browser' ? '' : 'none';
 }
@@ -555,7 +690,7 @@ fetch('/api/vars')
 
 function applyVarDatalist() {
   if (!document.getElementById('var-options')) return;
-  document.querySelectorAll('.step-fill-value, .step-value').forEach(function(el) {
+  document.querySelectorAll('.step-fill-value, .step-value, .header-val').forEach(function(el) {
     el.setAttribute('list', 'var-options');
   });
   document.querySelectorAll('.env-url').forEach(function(el) {
@@ -598,11 +733,24 @@ async function launchJourneyStudio(btn) {
   const modal = document.getElementById('journey-studio-modal');
   modal.showModal();
 
+  const blockHeaders = {};
+  if (studioTargetBlock) {
+    studioTargetBlock.querySelectorAll('.header-row').forEach(function(hr) {
+      const k = hr.querySelector('.header-key').value.trim();
+      const v = hr.querySelector('.header-val').value.trim();
+      if (k) blockHeaders[k] = v;
+    });
+  }
+
   try {
     const res = await fetch('/api/journey/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: initUrl, base_url: appUrl }),
+      body: JSON.stringify({
+        url: initUrl,
+        base_url: appUrl,
+        headers: Object.keys(blockHeaders).length > 0 ? blockHeaders : null,
+      }),
     });
     if (!res.ok) {
       const err = await res.json();

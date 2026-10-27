@@ -20,6 +20,7 @@ router = APIRouter(tags=["journey"])
 class StartJourneyRequest(BaseModel):
     url: str
     base_url: Optional[str] = None
+    headers: Optional[Dict[str, str]] = None
 
 
 class JourneyActionRequest(BaseModel):
@@ -44,7 +45,11 @@ async def start_journey(
         raise HTTPException(status_code=400, detail="Target URL is required")
 
     base = (req.base_url or target_url).strip()
-    session = await studio_manager.create_session(base_url=base, initial_url=target_url)
+    session = await studio_manager.create_session(
+        base_url=base,
+        initial_url=target_url,
+        headers=req.headers,
+    )
     return {
         "session_id": session.session_id,
         "base_url": session.base_url,

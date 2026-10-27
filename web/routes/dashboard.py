@@ -53,8 +53,10 @@ async def dashboard(request: Request, environment: str = None,
     # tile sparkline).  Sparkline draws oldest-first left-to-right; DB returns
     # newest-first so we reverse here.
     tag_map = {a["app"]: a.get("tags", []) for a in get_apps()}
+    cert_statuses = db.get_latest_cert_statuses(env) if hasattr(db, "get_latest_cert_statuses") else {}
     for row in summary:
         row["tags"] = tag_map.get(row["app"], [])
+        row["cert_status"] = cert_statuses.get(row["app"])
         history = db.get_app_run_history(row["app"], env, limit=7)
         row["history"] = list(reversed(history))
 
@@ -128,6 +130,32 @@ async def app_detail(request: Request, app: str, environment: str, run_id: str =
                 if t["name"] not in completed_names
             ]
 
+    # Extract certificate status for the monitored app if available
+    cert_info = None
+    import re
+    for tr in test_results:
+        for s in tr.get("step_log", []):
+            desc = s.get("step", "")
+            if "Cert expiry:" in desc:
+                m_days = re.search(r"Cert expiry:\s*([\d\.]+)\s*days remaining", desc)
+                m_exp = re.search(r"expires\s*([\d\-]+)", desc)
+                m_iss = re.search(r"issuer:\s*([^,\)]+)", desc)
+                days = float(m_days.group(1)) if m_days else None
+                cert_info = {
+                    "status": s.get("status", tr.get("status", "pass")),
+                    "days_remaining": days,
+                    "days_text": f"{int(days)}d" if days is not None else "",
+                    "expires": m_exp.group(1) if m_exp else "",
+                    "issuer": m_iss.group(1).strip() if m_iss else "",
+                    "desc": desc,
+                    "error": s.get("error") or tr.get("error_msg"),
+                }
+                break
+        if cert_info:
+            break
+    if not cert_info and hasattr(db, "get_latest_cert_statuses"):
+        cert_info = db.get_latest_cert_statuses(environment).get(app)
+
     resp = templates.TemplateResponse(request, "detail.html", {
         "app": app,
         "environment": environment,
@@ -135,6 +163,7 @@ async def app_detail(request: Request, app: str, environment: str, run_id: str =
         "runs": runs,
         "selected_run": selected_run,
         "test_results": test_results,
+        "cert_info": cert_info,
         "history": history,
         "sparkline_data": sparkline_data,
         "is_live": is_live,

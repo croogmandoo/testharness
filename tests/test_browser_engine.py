@@ -133,3 +133,46 @@ async def test_execute_wait_for_function():
     result = await execute_step(page, {"wait_for_function": expr}, "https://x.com")
     page.wait_for_function.assert_called_once_with(expr)
     assert result.status == "pass"
+
+
+@pytest.mark.asyncio
+async def test_run_browser_test_sets_extra_http_headers(monkeypatch):
+    from unittest.mock import MagicMock
+    from harness.browser import run_browser_test
+
+    fake_browser = AsyncMock()
+    fake_page = AsyncMock()
+    fake_page.set_default_timeout = MagicMock()
+    fake_page.url = "http://example.com"
+    fake_browser.new_page.return_value = fake_page
+    fake_chromium = AsyncMock()
+    fake_chromium.launch.return_value = fake_browser
+
+    fake_pw = AsyncMock()
+    fake_pw.chromium = fake_chromium
+
+    class FakeAsyncPlaywright:
+        async def __aenter__(self):
+            return fake_pw
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    monkeypatch.setattr("harness.browser.async_playwright", lambda: FakeAsyncPlaywright())
+
+    test_headers = {
+        "Authorization": "Bearer test-secret-token",
+        "X-API-Key": "my-api-key",
+    }
+    result = await run_browser_test(
+        run_id="run-h",
+        app="test-app",
+        environment="prod",
+        base_url="http://example.com",
+        test_def={"name": "headers-test", "headers": test_headers, "steps": []},
+    )
+
+    fake_page.set_extra_http_headers.assert_called_once_with({
+        "Authorization": "Bearer test-secret-token",
+        "X-API-Key": "my-api-key",
+    })
+    assert result.status == "pass"

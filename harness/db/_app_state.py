@@ -193,3 +193,47 @@ class AppStateMixin:
                 (app, environment, test_name),
             ).fetchone()
             return row["screenshot"] if row else None
+
+    def get_latest_cert_statuses(self, environment: str) -> dict:
+        """Return a mapping of app -> cert status dict from the latest test results."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT tr.app, tr.status, tr.step_log
+                FROM test_results tr
+                JOIN (
+                    SELECT app, MAX(finished_at) as max_fin
+                    FROM test_results
+                    WHERE environment=? AND step_log LIKE '%Cert expiry%'
+                    GROUP BY app
+                ) latest ON tr.app = latest.app AND tr.finished_at = latest.max_fin
+                """,
+                (environment,)
+            ).fetchall()
+            cert_map = {}
+            import json, re
+            for row in rows:
+                app = row["app"]
+                step_log_raw = row["step_log"] or "[]"
+                try:
+                    steps = json.loads(step_log_raw)
+                except Exception:
+                    steps = []
+                for s in steps:
+                    desc = s.get("step", "")
+                    if "Cert expiry:" in desc:
+                        m_days = re.search(r"Cert expiry:\s*([\d\.]+)\s*days remaining", desc)
+                        m_exp = re.search(r"expires\s*([\d\-]+)", desc)
+                        m_iss = re.search(r"issuer:\s*([^,\)]+)", desc)
+                        days = float(m_days.group(1)) if m_days else None
+                        status = s.get("status", row["status"])
+                        cert_map[app] = {
+                            "status": status,
+                            "days_remaining": days,
+                            "days_text": f"{int(days)}d" if days is not None else "",
+                            "expires": m_exp.group(1) if m_exp else "",
+                            "issuer": m_iss.group(1).strip() if m_iss else "",
+                            "desc": desc,
+                        }
+                        break
+            return cert_map

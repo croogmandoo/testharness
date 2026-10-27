@@ -57,6 +57,28 @@
   </div>
 </div>
 
+{% if cert_info %}
+<div class="cert-status-banner mb-3" style="display:flex; align-items:center; justify-content:space-between; padding:8px 14px; border-radius:6px; background: {% if cert_info.status == 'fail' or (cert_info.days_remaining is not none and cert_info.days_remaining < 14) %}rgba(248, 81, 73, 0.15); border: 1px solid rgba(248, 81, 73, 0.4); color: #ff7b72;{% elif cert_info.days_remaining is not none and cert_info.days_remaining < 30 %}rgba(210, 153, 34, 0.15); border: 1px solid rgba(210, 153, 34, 0.4); color: #d29922;{% else %}rgba(46, 160, 67, 0.15); border: 1px solid rgba(46, 160, 67, 0.4); color: #3fb950;{% endif %}">
+  <div style="display:flex; align-items:center; gap:8px;">
+    <span style="font-size:16px;">{% if cert_info.status == 'fail' or (cert_info.days_remaining is not none and cert_info.days_remaining < 14) %}⚠️{% else %}🔒{% endif %}</span>
+    <div>
+      <span style="font-weight:600; font-size:13px;">SSL/TLS Certificate:</span>
+      {% if cert_info.days_remaining is not none %}
+        <span style="font-weight:600;">{{ cert_info.days_remaining | int }} days remaining</span>
+        <span class="text-dim text-xs" style="margin-left:6px;">(Expires {{ cert_info.expires }}{% if cert_info.issuer %}, Issuer: {{ cert_info.issuer }}{% endif %})</span>
+      {% else %}
+        <span>{{ cert_info.desc or 'Certificate Inspected' }}</span>
+      {% endif %}
+    </div>
+  </div>
+  {% if cert_info.days_remaining is not none %}
+  <span class="badge" style="background:transparent; border:1px solid currentColor; font-size:11px; padding:2px 8px; border-radius:12px;">
+    {% if cert_info.days_remaining < 14 %}Expiring Soon{% elif cert_info.days_remaining < 30 %}Renew Soon{% else %}Healthy{% endif %}
+  </span>
+  {% endif %}
+</div>
+{% endif %}
+
 {% if is_live %}
 {% set total = test_results|length + pending_test_names|length %}
 {% set done  = test_results|length %}

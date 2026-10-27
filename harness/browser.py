@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 import ssl
 import time
@@ -119,7 +120,8 @@ def evaluate_performance_thresholds(metrics: dict, thresholds: dict) -> tuple[st
 
 
 async def execute_step(page: "Page", step: dict, base_url: str,
-                       screenshot_path: Optional[str] = None) -> StepResult:
+                       screenshot_path: Optional[str] = None,
+                       app: str = "", environment: str = "") -> StepResult:
     start = time.monotonic()
     def _elapsed() -> int:
         return int((time.monotonic() - start) * 1000)
@@ -136,6 +138,30 @@ async def execute_step(page: "Page", step: dict, base_url: str,
         if "click" in step:
             await page.click(step["click"])
             return StepResult(step=f"click {step['click']}", status="pass", duration_ms=_elapsed())
+        if "save_storage_state" in step:
+            cfg = step["save_storage_state"]
+            state_file = (
+                os.path.join("data", "storage_states", f"{app}_{environment}.json")
+                if (cfg is True or not cfg) and app
+                else str(cfg)
+            )
+            os.makedirs(os.path.dirname(state_file), exist_ok=True)
+            ctx = getattr(page, "context", None)
+            if ctx and hasattr(ctx, "storage_state"):
+                res = ctx.storage_state(path=state_file)
+                if inspect.isawaitable(res):
+                    await res
+            return StepResult(step=f"save_storage_state {state_file}", status="pass", duration_ms=_elapsed())
+        if "add_cookies" in step:
+            cookies = step["add_cookies"]
+            if not isinstance(cookies, list):
+                cookies = [cookies]
+            ctx = getattr(page, "context", None)
+            if ctx and hasattr(ctx, "add_cookies"):
+                res = ctx.add_cookies(cookies)
+                if inspect.isawaitable(res):
+                    await res
+            return StepResult(step=f"add_cookies ({len(cookies)} cookies)", status="pass", duration_ms=_elapsed())
         if "select_option" in step:
             s = step["select_option"]
             field = s["field"]
@@ -262,6 +288,12 @@ async def run_browser_test(run_id: str, app: str, environment: str,
     async with ap() as pw:
         browser = await pw.chromium.launch(**launch_kwargs)
         page = await browser.new_page()
+        # Set extra HTTP headers if configured (e.g. Bearer tokens, API keys, proxy auth)
+        headers = test_def.get("headers")
+        if headers and hasattr(page, "set_extra_http_headers"):
+            res = page.set_extra_http_headers({str(k): str(v) for k, v in headers.items()})
+            if inspect.isawaitable(res):
+                await res
         # Initialize URL recorder if requested
         recorder: URLRecorder | None = None
         if record_url_steps:
