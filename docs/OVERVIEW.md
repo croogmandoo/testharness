@@ -57,6 +57,7 @@ testharness/
 │   ├── tls_engine.py            # TLS certificate expiration, SAN validation & security headers prober
 │   ├── browser.py                # Playwright automation, screenshot captures & Core Web Vitals extraction
 │   ├── url_recorder.py           # Navigation URL recording & automated test step synthesizer
+│   ├── journey_studio.py         # Interactive Guided Journey Studio CDP screencasting & click/type recorder
 │   ├── screenshot_diff.py        # Visual regression pixel diffing & high-contrast heatmap generation
 │   ├── proxy.py                  # Outbound forward proxy resolver (HTTP_PROXY / HTTPS_PROXY / config)
 │   ├── scheduler.py              # In-process cron scheduling (APScheduler)

@@ -410,6 +410,9 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
     from web.routes.admin_notifications import router as admin_notifications_router
     app.include_router(admin_notifications_router)
 
+    from web.routes.journey import router as journey_router
+    app.include_router(journey_router)
+
     screenshots_dir = "data/screenshots"
     os.makedirs(screenshots_dir, exist_ok=True)
     app.mount("/screenshots", StaticFiles(directory=screenshots_dir), name="screenshots")

@@ -114,10 +114,15 @@
           <textarea class="search field-expect-json input--code" rows="2">{{ test.expect_json | default('') | e }}</textarea>
         </div>
         <div class="fields-browser" {% if test.type != 'browser' %}style="display:none;"{% endif %}>
-          <label class="field-mini" style="display:inline-flex; align-items:center; gap:6px; margin-bottom:10px; cursor:pointer;">
-            <input type="checkbox" class="field-record-url-steps" {% if test.record_url_steps %}checked{% endif %}>
-            Record URL steps during journey
-          </label>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+            <label class="field-mini" style="display:inline-flex; align-items:center; gap:6px; cursor:pointer; margin-bottom:0;">
+              <input type="checkbox" class="field-record-url-steps" {% if test.record_url_steps %}checked{% endif %}>
+              Record URL steps during journey
+            </label>
+            <button type="button" class="btn btn-sm btn-primary" onclick="launchJourneyStudio(this)">
+              <span style="color:#ff7b72; font-weight:bold;">⏺</span> Launch Journey Studio (Interactive)
+            </button>
+          </div>
           <label class="field-mini mb-2">Steps</label>
           <div class="steps-container">
             {% for step in (test.steps or []) %}
@@ -418,11 +423,19 @@ function makeApiFields() {
 function makeBrowserFields() {
   const d = _el('div', { cls: 'fields-browser' });
   d.style.display = 'none';
-  const recLabel = _el('label', { cls: 'field-mini', style: 'display:inline-flex; align-items:center; gap:6px; margin-bottom:10px; cursor:pointer;' });
+  const rowTop = _el('div', { style: 'display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:8px;' });
+  const recLabel = _el('label', { cls: 'field-mini', style: 'display:inline-flex; align-items:center; gap:6px; cursor:pointer; margin-bottom:0;' });
   const recInput = _el('input', { cls: 'field-record-url-steps', attrs: { type: 'checkbox' } });
   recLabel.appendChild(recInput);
   recLabel.appendChild(document.createTextNode(' Record URL steps during journey'));
-  d.appendChild(recLabel);
+  rowTop.appendChild(recLabel);
+
+  const studioBtn = _el('button', { cls: 'btn btn-sm btn-primary', attrs: { type: 'button' } });
+  studioBtn.innerHTML = '<span style="color:#ff7b72; font-weight:bold;">⏺</span> Launch Journey Studio (Interactive)';
+  studioBtn.addEventListener('click', function() { launchJourneyStudio(studioBtn); });
+  rowTop.appendChild(studioBtn);
+
+  d.appendChild(rowTop);
   d.appendChild(_el('label', { cls: 'field-mini mb-2', text: 'Steps' }));
   const sc = _el('div', { cls: 'steps-container' });
   const ab = _el('button', { cls: 'btn btn-sm mt-1', attrs: { type: 'button' }, text: '+ Add Step' });
@@ -514,5 +527,288 @@ function applyVarDatalist() {
     el.setAttribute('list', 'var-options');
   });
 }
+
+// ── Guided Journey Studio ──────────────────────────────────────────────
+let studioSessionId = null;
+let studioWs = null;
+let studioTargetBlock = null;
+let studioSteps = [];
+
+async function launchJourneyStudio(btn) {
+  studioTargetBlock = btn.closest('.test-block');
+  const appUrl = (document.getElementById('f-url') ? document.getElementById('f-url').value.trim() : '');
+  
+  let initUrl = appUrl;
+  if (studioTargetBlock) {
+    const navStep = studioTargetBlock.querySelector('.step-row select.step-action option[value="navigate"]:checked');
+    if (navStep) {
+      const val = navStep.closest('.step-row').querySelector('.step-value');
+      if (val && val.value.trim()) {
+        const p = val.value.trim();
+        initUrl = p.startsWith('http') ? p : (appUrl.replace(/\/+$/, '') + '/' + p.replace(/^\/+/, ''));
+      }
+    }
+  }
+  if (!initUrl) {
+    showBanner('Please provide an App URL first so the studio knows where to begin.');
+    return;
+  }
+
+  document.getElementById('studio-url-input').value = initUrl;
+  document.getElementById('studio-steps-list').innerHTML = '';
+  document.getElementById('studio-steps-count').textContent = '0';
+  document.getElementById('studio-loader').style.display = 'flex';
+  studioSteps = [];
+
+  const modal = document.getElementById('journey-studio-modal');
+  modal.showModal();
+
+  try {
+    const res = await fetch('/api/journey/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: initUrl, base_url: appUrl }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to start journey studio');
+    }
+    const data = await res.json();
+    studioSessionId = data.session_id;
+
+    // Connect WebSocket
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${proto}//${window.location.host}/ws/journey/${studioSessionId}`;
+    studioWs = new WebSocket(wsUrl);
+
+    const canvas = document.getElementById('studio-canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+
+    studioWs.onmessage = function(ev) {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'frame' && msg.data) {
+          img.onload = function() {
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            document.getElementById('studio-loader').style.display = 'none';
+          };
+          img.src = 'data:image/jpeg;base64,' + msg.data;
+        } else if (msg.type === 'steps' && msg.steps) {
+          studioSteps = msg.steps;
+          renderStudioSteps(studioSteps);
+          if (msg.url) {
+            document.getElementById('studio-url-input').value = msg.url;
+          }
+        }
+      } catch (err) {
+        console.error('Error handling WebSocket message:', err);
+      }
+    };
+
+    studioWs.onerror = function(err) {
+      console.error('Journey Studio WebSocket error:', err);
+    };
+
+    canvas.onclick = function(ev) {
+      if (!studioWs || studioWs.readyState !== WebSocket.OPEN) return;
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const clickX = Math.round((ev.clientX - rect.left) * scaleX);
+      const clickY = Math.round((ev.clientY - rect.top) * scaleY);
+
+      studioWs.send(JSON.stringify({ type: 'click', x: clickX, y: clickY }));
+    };
+
+  } catch (e) {
+    document.getElementById('studio-loader').style.display = 'none';
+    alert('Failed to launch Guided Journey Studio: ' + e.message);
+    modal.close();
+  }
+}
+
+function renderStudioSteps(steps) {
+  const container = document.getElementById('studio-steps-list');
+  document.getElementById('studio-steps-count').textContent = steps.length;
+  container.innerHTML = '';
+  steps.forEach(function(s, idx) {
+    const action = Object.keys(s)[0];
+    const val = s[action];
+    const div = document.createElement('div');
+    div.style = 'background: var(--bg-base, #161b22); border: 1px solid var(--border-color, #30363d); border-radius: 4px; padding: 6px 8px; display: flex; align-items: center; justify-content: space-between; font-size: 12px;';
+    
+    let displayVal = '';
+    if (typeof val === 'string') displayVal = val;
+    else if (action === 'fill') displayVal = val.field + ' = "' + val.value + '"';
+    else if (val === null) displayVal = '';
+    else displayVal = JSON.stringify(val);
+
+    div.innerHTML = `
+      <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;">
+        <span class="badge" style="background: rgba(56, 139, 253, 0.15); color: #58a6ff; font-weight: bold; margin-right: 4px; font-size: 10px; padding: 1px 4px; border-radius: 3px;">${action}</span>
+        <span style="font-family: var(--font-mono, monospace); color: #c9d1d9;">${displayVal}</span>
+      </div>
+      <button type="button" class="btn-remove" style="margin-left: 6px;" onclick="studioRemoveStep(${idx})">&#215;</button>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function studioNavigate() {
+  const url = document.getElementById('studio-url-input').value.trim();
+  if (studioWs && url) {
+    studioWs.send(JSON.stringify({ type: 'navigate', url: url }));
+  }
+}
+
+function studioPromptFill() {
+  const field = prompt('Enter CSS selector for the input to fill (e.g. input[name=username]):');
+  if (!field) return;
+  const val = prompt('Enter value to type into the field:');
+  if (val === null) return;
+  if (studioWs) {
+    studioWs.send(JSON.stringify({ type: 'fill', field: field, value: val }));
+  }
+}
+
+function studioPromptAssertText() {
+  const text = prompt('Enter text to assert on the page:');
+  if (!text) return;
+  if (studioWs) {
+    studioWs.send(JSON.stringify({ type: 'assert_text', text: text }));
+  }
+}
+
+function studioAddScreenshot() {
+  if (studioWs) {
+    studioWs.send(JSON.stringify({ type: 'screenshot' }));
+  }
+}
+
+function studioRemoveStep(idx) {
+  if (studioWs) {
+    studioWs.send(JSON.stringify({ type: 'remove_step', index: idx }));
+  }
+}
+
+async function insertStudioSteps() {
+  if (!studioTargetBlock) {
+    await closeJourneyStudio();
+    return;
+  }
+  const stepsContainer = studioTargetBlock.querySelector('.steps-container');
+  if (stepsContainer && studioSteps.length > 0) {
+    stepsContainer.innerHTML = '';
+    studioSteps.forEach(function(s) {
+      const action = Object.keys(s)[0];
+      const val = s[action];
+      const btn = studioTargetBlock.querySelector('.fields-browser button');
+      addStepRow(btn);
+      const rows = stepsContainer.querySelectorAll('.step-row');
+      const lastRow = rows[rows.length - 1];
+      if (lastRow) {
+        const actionSel = lastRow.querySelector('.step-action');
+        actionSel.value = action;
+        onStepActionChange(actionSel);
+        if (action === 'fill') {
+          lastRow.querySelector('.step-fill-field').value = val.field || '';
+          lastRow.querySelector('.step-fill-value').value = val.value || '';
+        } else if (action !== 'screenshot') {
+          const vInput = lastRow.querySelector('.step-value');
+          if (vInput) vInput.value = (typeof val === 'string') ? val : '';
+        }
+      }
+    });
+  }
+  await closeJourneyStudio();
+}
+
+async function closeJourneyStudio() {
+  if (studioWs) {
+    try { studioWs.close(); } catch(e) {}
+    studioWs = null;
+  }
+  if (studioSessionId) {
+    try {
+      await fetch(`/api/journey/${studioSessionId}/stop`, { method: 'POST' });
+    } catch(e) {}
+    studioSessionId = null;
+  }
+  const modal = document.getElementById('journey-studio-modal');
+  if (modal) modal.close();
+}
+</script>
+
+<!-- Guided Journey Studio Modal Dialog -->
+<style>
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+dialog#journey-studio-modal::backdrop {
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+}
+</style>
+<dialog id="journey-studio-modal" class="modal-dialog" style="width: 95vw; max-width: 1400px; height: 90vh; max-height: 900px; padding: 0; background: var(--bg-surface, #1e222b); color: var(--text-main, #f0f6fc); border: 1px solid var(--border-color, #30363d); border-radius: 8px; box-shadow: 0 20px 40px rgba(0,0,0,0.6); overflow: hidden;">
+  <div style="display: flex; flex-direction: column; height: 100%;">
+    <!-- Top toolbar -->
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: var(--bg-base, #161b22); border-bottom: 1px solid var(--border-color, #30363d); gap: 12px; flex-wrap: wrap;">
+      <div style="display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px;">
+        <span style="color: #ff7b72; font-size: 16px;">⏺</span>
+        <span>Guided Journey Studio</span>
+        <span id="studio-status-badge" class="badge" style="background: rgba(35, 134, 54, 0.2); color: #3fb950; border: 1px solid rgba(56, 139, 253, 0.4); font-size: 11px; padding: 2px 6px; border-radius: 4px;">● LIVE</span>
+      </div>
+
+      <!-- URL navigation bar -->
+      <div style="display: flex; align-items: center; gap: 6px; flex: 1; max-width: 500px;">
+        <input id="studio-url-input" type="text" class="search mb-0" style="height: 32px; font-size: 13px; font-family: var(--font-mono, monospace);" placeholder="https://myapp.com" onkeydown="if(event.key==='Enter') studioNavigate()">
+        <button type="button" class="btn btn-sm" onclick="studioNavigate()">Go</button>
+      </div>
+
+      <!-- Action helper buttons -->
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <button type="button" class="btn btn-sm" onclick="studioPromptFill()">+ Fill</button>
+        <button type="button" class="btn btn-sm" onclick="studioPromptAssertText()">+ Assert Text</button>
+        <button type="button" class="btn btn-sm" onclick="studioAddScreenshot()">+ Screenshot</button>
+        <button type="button" class="btn btn-sm" onclick="closeJourneyStudio()" style="margin-left: 8px;">✕</button>
+      </div>
+    </div>
+
+    <!-- Middle split: left steps, right viewport -->
+    <div style="display: flex; flex: 1; overflow: hidden; background: #0d1117;">
+      <!-- Steps Sidebar -->
+      <div style="width: 320px; min-width: 260px; max-width: 360px; background: var(--bg-surface, #1e222b); border-right: 1px solid var(--border-color, #30363d); display: flex; flex-direction: column;">
+        <div style="padding: 10px 14px; border-bottom: 1px solid var(--border-color, #30363d); display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-weight: 600; font-size: 13px;">Captured Steps (<span id="studio-steps-count">0</span>)</span>
+          <span class="text-dim text-sm" style="font-size: 11px;">Real-time</span>
+        </div>
+        <div id="studio-steps-list" style="flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px;">
+          <!-- Steps will be rendered here dynamically -->
+        </div>
+      </div>
+
+      <!-- Viewport area -->
+      <div style="flex: 1; display: flex; align-items: center; justify-content: center; position: relative; overflow: auto; background: #010409; padding: 10px;">
+        <div id="studio-loader" style="position: absolute; inset: 0; background: rgba(13, 17, 23, 0.85); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10; gap: 10px;">
+          <div style="width: 32px; height: 32px; border: 3px solid rgba(255,255,255,0.2); border-top-color: #58a6ff; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+          <span style="font-size: 13px; color: #8b949e;">Launching browser session & streaming viewport...</span>
+        </div>
+        <canvas id="studio-canvas" width="1024" height="768" style="max-width: 100%; max-height: 100%; object-fit: contain; cursor: crosshair; box-shadow: 0 4px 20px rgba(0,0,0,0.8); border: 1px solid var(--border-color, #30363d);"></canvas>
+      </div>
+    </div>
+
+    <!-- Footer bar -->
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: var(--bg-base, #161b22); border-top: 1px solid var(--border-color, #30363d); flex-wrap: wrap; gap: 8px;">
+      <span class="text-dim text-sm" style="font-size: 12px;">
+        💡 Click on any button, input, or link on the screen to interact. Navigations and redirects are recorded automatically.
+      </span>
+      <div style="display: flex; gap: 8px;">
+        <button type="button" class="btn" onclick="closeJourneyStudio()">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="insertStudioSteps()">
+          ✓ Insert Captured Steps into Test
+        </button>
+      </div>
+    </div>
+  </div>
+</dialog>
 </script>
 {% endblock %}

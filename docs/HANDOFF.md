@@ -1,9 +1,9 @@
 # Web Testing Harness Session Handoff & Operational Runbook
 
-**Generated:** 2026-10-26T19:05:00-04:00  
+**Generated:** 2026-10-27T08:35:00-04:00  
 **Branch:** `master` (synchronized with `origin/master`)  
 **Workspace:** `testharness`  
-**Test Suite:** **889 / 889 tests passing** (100% green, ~38s)
+**Test Suite:** **895 / 895 tests passing** (100% green, ~38s)
 
 ---
 
@@ -24,10 +24,13 @@
 
 ## 2. Recent Work & Hardening Accomplishments
 
-1. **Guided Journey Creator – Interactive URL Recording & Step Generation (Issue #22 / Linear CRO-49 - CLOSED)**:
-   - Added [harness/url_recorder.py](harness/url_recorder.py) implementing `URLRecorder` and `record_url_steps` helper with Playwright `framenavigated` event subscription, relative path normalization against app `base_url`, and consecutive duplicate collapse.
+1. **Guided Journey Creator – In-Browser Interactive Studio Modal & URL Recording (Issue #22 / Linear CRO-49 - COMPLETED)**:
+   - Added [harness/journey_studio.py](harness/journey_studio.py) implementing `JourneySession` and `JourneyStudioManager`. Uses Playwright CDP screencasting (`Page.startScreencast` / `Page.screencastFrameAck`) to stream interactive live frames, resolve elements at `(x, y)` via `document.elementFromPoint`, synthesize robust CSS/text selectors (`#id`, `button:has-text()`, `[name=]`), and execute click, fill, assert, and screenshot actions.
+   - Added [web/routes/journey.py](web/routes/journey.py) exposing REST endpoints (`POST /api/journey/start`, `POST /api/journey/{id}/action`, `POST /api/journey/{id}/stop`) and real-time bidirectional WebSocket (`/ws/journey/{session_id}`).
+   - Embedded interactive Journey Studio modal in [web/templates/app_form.html](web/templates/app_form.html) allowing users to click "Launch Journey Studio (Interactive)", view the live screencast canvas, click directly on elements to record actions or use quick action buttons (Assert Text, Fill Input, Screenshot), and insert recorded steps directly into the test editor with a single click.
+   - Added [harness/url_recorder.py](harness/url_recorder.py) implementing headless URL recording via Playwright `framenavigated` event subscription, relative path normalization against app `base_url`, and consecutive duplicate collapse.
    - Integrated into `run_browser_test` in [harness/browser.py](harness/browser.py) via `record_url_steps=True` flag, automatically synthesizing and prepending `StepResult` navigation steps to the test log while ensuring web vitals and performance threshold evaluations remain intact.
-   - Comprehensive test suite in [tests/test_url_recorder.py](tests/test_url_recorder.py) verifying idempotency, consecutive deduplication, external URL preservation, subframe filtering, and full runner integration.
+   - Comprehensive test suite in [tests/test_journey_studio.py](tests/test_journey_studio.py) and [tests/test_url_recorder.py](tests/test_url_recorder.py) (895 tests passing).
    - Fully documented in [docs/guides/url_recorder_spec.md](docs/guides/url_recorder_spec.md), [docs/guides/writing-tests.md](docs/guides/writing-tests.md), and [docs/OVERVIEW.md](docs/OVERVIEW.md).
 
 2. **Notification Groups Management & Targeted App Alert Routing (Issue #23 - CLOSED)**:
