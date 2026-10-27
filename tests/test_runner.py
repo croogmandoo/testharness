@@ -319,3 +319,25 @@ async def test_exception_in_test_is_logged_and_recorded(db, caplog):
     # Check that app state was updated for the error test
     error_state = db.get_app_state("myapp", "production", "failing-test")
     assert error_state["state"] == "failing"
+
+
+@pytest.mark.asyncio
+async def test_runner_passes_record_url_steps_to_browser(db):
+    app_def = {
+        "app": "myapp", "url": "https://example.com",
+        "environments": {"production": "https://example.com"},
+        "_type": "yaml",
+        "tests": [{"name": "journey-test", "type": "browser",
+                   "record_url_steps": True, "steps": []}],
+    }
+    captured = {}
+
+    async def fake_browser(run_id, app, env, base_url, test_def, **kwargs):
+        captured.update(kwargs)
+        return make_result("pass", "journey-test")
+
+    with patch("harness.runner.run_browser_test", new=fake_browser), \
+         patch("harness.runner.dispatch_alerts", new=AsyncMock()):
+        await run_app(app_def, "production", "api", db, config={})
+
+    assert captured.get("record_url_steps") is True

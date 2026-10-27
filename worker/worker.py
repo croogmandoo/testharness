@@ -619,11 +619,15 @@ async def execute_job(
                     )
                 elif ttype == "browser":
                     test_timeout_ms = resolved_td.get("timeout_ms", timeout_ms)
+                    extra_bkwargs = {}
+                    if "record_url_steps" in resolved_td:
+                        extra_bkwargs["record_url_steps"] = bool(resolved_td["record_url_steps"])
                     result = await run_browser_test(
                         run_id, app_def["app"], environment, base_url,
                         resolved_td,
                         headless=browser_cfg.get("headless", True),
                         timeout_ms=test_timeout_ms,
+                        **extra_bkwargs,
                     )
                 else:
                     result = await run_availability_test(

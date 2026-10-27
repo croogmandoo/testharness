@@ -114,6 +114,10 @@
           <textarea class="search field-expect-json input--code" rows="2">{{ test.expect_json | default('') | e }}</textarea>
         </div>
         <div class="fields-browser" {% if test.type != 'browser' %}style="display:none;"{% endif %}>
+          <label class="field-mini" style="display:inline-flex; align-items:center; gap:6px; margin-bottom:10px; cursor:pointer;">
+            <input type="checkbox" class="field-record-url-steps" {% if test.record_url_steps %}checked{% endif %}>
+            Record URL steps during journey
+          </label>
           <label class="field-mini mb-2">Steps</label>
           <div class="steps-container">
             {% for step in (test.steps or []) %}
@@ -225,6 +229,10 @@ function collectSimpleFormData() {
       const ej = block.querySelector('.field-expect-json').value.trim();
       if (ej) test.expect_json = ej;
     } else if (test.type === 'browser') {
+      const recCb = block.querySelector('.field-record-url-steps');
+      if (recCb && recCb.checked) {
+        test.record_url_steps = true;
+      }
       test.steps = [];
       block.querySelectorAll('.step-row').forEach(function(stepRow) {
         const action = stepRow.querySelector('.step-action').value;
@@ -400,6 +408,11 @@ function makeApiFields() {
 function makeBrowserFields() {
   const d = _el('div', { cls: 'fields-browser' });
   d.style.display = 'none';
+  const recLabel = _el('label', { cls: 'field-mini', style: 'display:inline-flex; align-items:center; gap:6px; margin-bottom:10px; cursor:pointer;' });
+  const recInput = _el('input', { cls: 'field-record-url-steps', attrs: { type: 'checkbox' } });
+  recLabel.appendChild(recInput);
+  recLabel.appendChild(document.createTextNode(' Record URL steps during journey'));
+  d.appendChild(recLabel);
   d.appendChild(_el('label', { cls: 'field-mini mb-2', text: 'Steps' }));
   const sc = _el('div', { cls: 'steps-container' });
   const ab = _el('button', { cls: 'btn btn-sm mt-1', attrs: { type: 'button' }, text: '+ Add Step' });

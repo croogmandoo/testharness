@@ -62,10 +62,14 @@ async def _execute_test(test_def: dict, run_id: str, app: str, environment: str,
                                         test_def, ssl_ctx=ssl_ctx)
         elif test_type == "browser":
             test_timeout_ms = test_def.get("timeout_ms", timeout_ms)
+            extra_browser_kwargs = {}
+            if "record_url_steps" in test_def:
+                extra_browser_kwargs["record_url_steps"] = bool(test_def["record_url_steps"])
             result = await run_browser_test(run_id, app, environment, base_url,
                                             test_def,
                                             headless=browser_cfg.get("headless", True),
-                                            timeout_ms=test_timeout_ms)
+                                            timeout_ms=test_timeout_ms,
+                                            **extra_browser_kwargs)
             # Screenshot diff check (only on pass, only if previous screenshot exists)
             if result.screenshot and result.status == "pass" and db is not None:
                 prev_shot = db.get_last_screenshot(app, environment, test_def["name"])
