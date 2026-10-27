@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from playwright.async_api import Page
 
 from harness.models import TestResult, StepResult
+from harness.url_recorder import URLRecorder
+
 from harness.loader import slugify_test_name
 from harness.ssl_context import BUNDLE_PATH, chromium_spki_args
 
@@ -221,7 +223,8 @@ async def run_browser_test(run_id: str, app: str, environment: str,
                            base_url: str, test_def: dict,
                            screenshot_dir: str = "data/screenshots",
                            headless: bool = True, timeout_ms: int = 30000,
-                           proxy: Optional[dict] = None) -> TestResult:
+                           proxy: Optional[dict] = None,
+                           record_url_steps: bool = False) -> TestResult:
     result = TestResult(run_id=run_id, app=app, environment=environment,
                         test_name=test_def["name"])
     step_log = []
@@ -259,6 +262,11 @@ async def run_browser_test(run_id: str, app: str, environment: str,
     async with ap() as pw:
         browser = await pw.chromium.launch(**launch_kwargs)
         page = await browser.new_page()
+        # Initialize URL recorder if requested
+        recorder: URLRecorder | None = None
+        if record_url_steps:
+            recorder = URLRecorder(page, base_url)
+            await recorder.start()
         page.set_default_timeout(timeout_ms)
         steps = test_def.get("steps", [])
         slug = slugify_test_name(test_def["name"])
@@ -278,6 +286,16 @@ async def run_browser_test(run_id: str, app: str, environment: str,
                 result.screenshot = os.path.join(app, environment, run_id, f"{slug}.png")
                 result.error_msg = step_result.error
                 break
+        # Collect recorded navigation steps if recorder was active
+        if recorder is not None:
+            recorded_steps = await recorder.stop()
+            if record_url_steps and recorded_steps:
+                recorded_results = [
+                    StepResult(step=f"navigate {s['navigate']}", status="pass", duration_ms=0)
+                    for s in recorded_steps
+                ]
+                step_log = recorded_results + step_log
+
         if not failed:
             top_thresholds = {
                 k: test_def[k]
@@ -302,6 +320,7 @@ async def run_browser_test(run_id: str, app: str, environment: str,
                         result.screenshot = os.path.join(app, environment, run_id, f"{slug}.png")
                     except Exception:
                         pass
+
         await browser.close()
     result.status = "fail" if failed else "pass"
     result.step_log = step_log

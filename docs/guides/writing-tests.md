@@ -342,6 +342,15 @@ Browser tests can capture and enforce Web Vitals metrics extracted from Chromium
 - `max_load_ms`: Full page load event duration (ms)
 - `capture_web_vitals: true`: Records metrics into the step log without asserting failure thresholds.
 
+#### Guided Journey Creator: URL Recording & Step Generation
+
+The browser test engine includes automatic URL recording capabilities via `harness.url_recorder.URLRecorder` and the `record_url_steps` flag in `run_browser_test`. When enabled:
+- The recorder hooks into Playwright navigation events on the main page frame.
+- Captured URLs are converted into standardized step definitions (`{"navigate": "/path"}`).
+- Consecutive duplicate navigations are collapsed, while non-consecutive revisits are preserved.
+- URLs matching the app's `base_url` are normalized to clean relative paths, while external redirects (such as OAuth identity providers) retain their full URLs.
+- Recorded steps are prepended directly into the test result's `step_log` as passing navigation steps, allowing users to automatically capture and generate synthetic journey tests from interactive runs.
+
 Thresholds can also be declared as discrete steps:
 ```yaml
 steps:

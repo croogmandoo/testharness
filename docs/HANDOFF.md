@@ -3,7 +3,7 @@
 **Generated:** 2026-10-26T19:05:00-04:00  
 **Branch:** `master` (synchronized with `origin/master`)  
 **Workspace:** `testharness`  
-**Test Suite:** **882 / 882 tests passing** (100% green, ~42s)
+**Test Suite:** **889 / 889 tests passing** (100% green, ~38s)
 
 ---
 
@@ -16,15 +16,21 @@
   - Authentication DB: `data/auth.db`
 - **Secrets Key**: `data/secret.key` (Fernet 32-byte key, enforced `0600` permissions)
 - **Primary Dependencies**: FastAPI, Uvicorn, Playwright, SQLite3, Jinja2, Pytest, Pillow, ReportLab, Cryptography, APScheduler
-- **GitHub Task Tracking**: Issues #8 through #21 and #23 closed and verified on `croogmandoo/testharness`.
-- **Linear Project**: `Web Testing Harness (testharness)` on `Croogmando-homelab` (`CRO-47`, `CRO-49`).
+- **GitHub Task Tracking**: Issues #8 through #23 closed and verified on `croogmandoo/testharness`.
+- **Linear Project**: `Web Testing Harness (testharness)` on `Croogmando-homelab` (`CRO-47`, `CRO-49` - Completed).
 - **Observability Assets**: Prometheus alerting rules in [deploy/prometheus/alerts.yml](deploy/prometheus/alerts.yml) and Grafana dashboard in [deploy/grafana/dashboard.json](deploy/grafana/dashboard.json).
 
 ---
 
 ## 2. Recent Work & Hardening Accomplishments
 
-1. **Notification Groups Management & Targeted App Alert Routing (Issue #23 - CLOSED)**:
+1. **Guided Journey Creator – Interactive URL Recording & Step Generation (Issue #22 / Linear CRO-49 - CLOSED)**:
+   - Added [harness/url_recorder.py](harness/url_recorder.py) implementing `URLRecorder` and `record_url_steps` helper with Playwright `framenavigated` event subscription, relative path normalization against app `base_url`, and consecutive duplicate collapse.
+   - Integrated into `run_browser_test` in [harness/browser.py](harness/browser.py) via `record_url_steps=True` flag, automatically synthesizing and prepending `StepResult` navigation steps to the test log while ensuring web vitals and performance threshold evaluations remain intact.
+   - Comprehensive test suite in [tests/test_url_recorder.py](tests/test_url_recorder.py) verifying idempotency, consecutive deduplication, external URL preservation, subframe filtering, and full runner integration.
+   - Fully documented in [docs/guides/url_recorder_spec.md](docs/guides/url_recorder_spec.md), [docs/guides/writing-tests.md](docs/guides/writing-tests.md), and [docs/OVERVIEW.md](docs/OVERVIEW.md).
+
+2. **Notification Groups Management & Targeted App Alert Routing (Issue #23 - CLOSED)**:
    - Added [harness/db/_notification_groups.py](harness/db/_notification_groups.py) with `NotificationGroupsMixin` supporting group creation, listing, updating, deletion, and email address resolution (`resolve_emails_for_groups`).
    - Integrated into [harness/db/_base.py](harness/db/_base.py) with automatic schema migration (`notification_groups` table with unique name index).
    - Added full REST API endpoints in [web/routes/api.py](web/routes/api.py) (`GET`, `POST`, `PUT`, `DELETE /api/notification-groups`) with RBAC enforcement (`admin`, `runner`), input validation, and audit logging.
@@ -85,11 +91,9 @@
 
 ## 4. Prioritized Next Actions
 
-1. **[Guided Journey Creator - Interactive URL Recording & Step Generation (Issue #22 / Linear CRO-49)]**:
-   - Allow user to provide a URL, launch Playwright in recording mode (`codegen` or custom browser session), capture clicks/fills/assertions interactively, and generate a structured YAML browser test step list directly into the app builder.
-2. **[Scheduled Maintenance Window Recurrence]**:
+1. **[Scheduled Maintenance Window Recurrence]**:
    - Add recurring maintenance window schedules (e.g. weekly Sunday 02:00-04:00 UTC) in addition to one-off datetime windows.
-3. **[Optional Exploration: Windows-Level Control & Desktop Automation (Linear CRO-47)]**:
+2. **[Optional Exploration: Windows-Level Control & Desktop Automation (Linear CRO-47)]**:
    - Evaluate hybrid browser + desktop automation (`rpaframework`, `pywinauto`) for Windows-hosted remote workers testing native desktop clients and OS dialogs.
 
 ---
@@ -99,6 +103,6 @@
 ```text
 I am resuming work on Web Testing Harness (testharness).
 Please read docs/HANDOFF.md, docs/OVERVIEW.md, and docs/STANDARDS.md to understand the current architecture and state.
-All 882 tests are passing on master in .venv/bin/pytest. GitHub issues #8-#21 and #23 are closed.
-Our next priority is to review the new prioritized roadmap items in Section 4 (starting with Guided Journey Creator, Issue #22 / CRO-49).
+All 889 tests are passing on master in .venv/bin/pytest. GitHub issues #8-#23 and Linear CRO-49 are closed.
+Our next priority is to review the new prioritized roadmap items in Section 4.
 ```

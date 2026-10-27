@@ -56,6 +56,7 @@ testharness/
 │   ├── api_engine.py             # Multi-step REST API tests, JSON schema extraction & step chaining
 │   ├── tls_engine.py            # TLS certificate expiration, SAN validation & security headers prober
 │   ├── browser.py                # Playwright automation, screenshot captures & Core Web Vitals extraction
+│   ├── url_recorder.py           # Navigation URL recording & automated test step synthesizer
 │   ├── screenshot_diff.py        # Visual regression pixel diffing & high-contrast heatmap generation
 │   ├── proxy.py                  # Outbound forward proxy resolver (HTTP_PROXY / HTTPS_PROXY / config)
 │   ├── scheduler.py              # In-process cron scheduling (APScheduler)
@@ -137,3 +138,8 @@ testharness/
 2. **App Assignment**: Applications can specify one or more notification groups in their YAML definition (`notification_groups: ["DevOps", "Platform"]`) or through the app configuration UI.
 3. **Targeted Email Dispatch**: When tests fail or resolve, `dispatch_alerts()` queries `db.resolve_emails_for_groups()`. Recipient lists across assigned groups are merged, sanitized, and deduplicated.
 4. **Resilient Fallback**: If an application has no assigned notification groups, or none resolve to valid emails, alert dispatching falls back seamlessly to the global `alerts.email.to` configuration list.
+
+### 3.9 Guided Journey Step Generation & URL Recording
+1. **Interactive Session Capture**: The `URLRecorder` (`harness/url_recorder.py`) hooks into Playwright's `framenavigated` event stream on the top-level main frame during browser test execution.
+2. **Path Normalization & De-duplication**: Navigated URLs matching the application base URL are automatically converted to clean relative paths (e.g. `/dashboard`), while external redirects (OAuth IDPs, payment gateways) retain full URLs. Consecutive duplicate navigations are collapsed.
+3. **Automated Step Synthesis**: When `record_url_steps=True` is provided to `run_browser_test()`, recorded paths are synthesized into validated `StepResult` navigation steps and prepended to `step_log`, enabling rapid journey creation and step generation.
