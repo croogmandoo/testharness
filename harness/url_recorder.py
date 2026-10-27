@@ -58,7 +58,16 @@ class URLRecorder:
             return []
         # Detach listener
         if self._listener is not None:
-            self._page.off("framenavigated", self._listener)
+            if hasattr(self._page, "remove_listener"):
+                try:
+                    self._page.remove_listener("framenavigated", self._listener)
+                except Exception:
+                    pass
+            elif hasattr(self._page, "off"):
+                try:
+                    self._page.off("framenavigated", self._listener)
+                except Exception:
+                    pass
         self._running = False
 
         steps: List[dict] = []

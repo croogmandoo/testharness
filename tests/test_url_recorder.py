@@ -24,9 +24,12 @@ class MockPage:
     def on(self, event: str, handler):
         self._handlers.setdefault(event, []).append(handler)
 
-    def off(self, event: str, handler):
+    def remove_listener(self, event: str, handler):
         if event in self._handlers and handler in self._handlers[event]:
             self._handlers[event].remove(handler)
+
+    def off(self, event: str, handler):
+        self.remove_listener(event, handler)
 
     def emit_navigation(self, frame: MockFrame):
         for handler in self._handlers.get("framenavigated", []):
@@ -56,6 +59,34 @@ async def test_url_recorder_start_stop_idempotent():
 
     # stopping again is safe
     assert await recorder.stop() == []
+
+
+@pytest.mark.asyncio
+async def test_url_recorder_supports_python_playwright_remove_listener_only():
+    # Real Python Playwright Page has remove_listener but NOT off
+    class PlaywrightStylePage:
+        def __init__(self):
+            self.main_frame = MockFrame("https://example.com")
+            self._handlers: dict[str, list] = {}
+
+        def on(self, event: str, handler):
+            self._handlers.setdefault(event, []).append(handler)
+
+        def remove_listener(self, event: str, handler):
+            if event in self._handlers and handler in self._handlers[event]:
+                self._handlers[event].remove(handler)
+
+    page = PlaywrightStylePage()
+    assert not hasattr(page, "off")
+    assert hasattr(page, "remove_listener")
+
+    recorder = URLRecorder(page, "https://example.com")
+    await recorder.start()
+    assert len(page._handlers["framenavigated"]) == 1
+
+    steps = await recorder.stop()
+    assert steps == []
+    assert len(page._handlers["framenavigated"]) == 0
 
 
 @pytest.mark.asyncio
