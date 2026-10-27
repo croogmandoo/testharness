@@ -447,13 +447,48 @@ function makeBrowserFields() {
   return d;
 }
 
-function addStepRow(btn) {
-  const sc = btn.previousElementSibling;
+function createStepRow(action, val) {
   const row = _el('div', { cls: 'step-row app-form-row app-form-row--start' });
-  row.appendChild(makeStepActionSelect());
-  row.appendChild(makeInput('search step-value input--flex', 'text', 'value'));
-  row.appendChild(_el('span', { cls: 'field-spacer-1' }));
-  row.appendChild(makeRemoveBtn(function() { row.remove(); }));
+  const sel = makeStepActionSelect();
+  sel.value = action || 'navigate';
+  row.appendChild(sel);
+
+  const rm = makeRemoveBtn(function() { row.remove(); });
+
+  if (action === 'fill') {
+    const fieldVal = (val && typeof val === 'object') ? (val.field || '') : '';
+    const valueVal = (val && typeof val === 'object') ? (val.value || '') : '';
+    const fIn = makeInput('search step-fill-field input--flex', 'text', 'CSS selector');
+    fIn.value = fieldVal;
+    row.appendChild(fIn);
+
+    const vIn = makeInput('search step-fill-value input--flex', 'text', 'value');
+    vIn.value = valueVal;
+    row.appendChild(vIn);
+  } else if (action === 'screenshot') {
+    row.appendChild(_el('span', { cls: 'field-spacer-2' }));
+  } else {
+    const vIn = makeInput('search step-value input--flex', 'text', 'value');
+    vIn.value = (typeof val === 'string') ? val : (val ? String(val) : '');
+    row.appendChild(vIn);
+    row.appendChild(_el('span', { cls: 'field-spacer-1' }));
+  }
+
+  row.appendChild(rm);
+  return row;
+}
+
+function addStepRow(target) {
+  let sc;
+  if (!target) return;
+  if (target.classList && target.classList.contains('steps-container')) {
+    sc = target;
+  } else {
+    const block = target.closest('.fields-browser') || target.closest('.test-block');
+    sc = block ? block.querySelector('.steps-container') : target.previousElementSibling;
+  }
+  if (!sc) return;
+  const row = createStepRow('navigate', '');
   sc.appendChild(row);
   applyVarDatalist();
 }
@@ -699,27 +734,21 @@ async function insertStudioSteps() {
   }
   const stepsContainer = studioTargetBlock.querySelector('.steps-container');
   if (stepsContainer && studioSteps.length > 0) {
+    // Remove any stray step rows outside steps-container in this block
+    const fieldsBrowser = studioTargetBlock.querySelector('.fields-browser');
+    if (fieldsBrowser) {
+      fieldsBrowser.querySelectorAll('.step-row').forEach(function(r) {
+        if (!stepsContainer.contains(r)) r.remove();
+      });
+    }
     stepsContainer.innerHTML = '';
     studioSteps.forEach(function(s) {
       const action = Object.keys(s)[0];
       const val = s[action];
-      const btn = studioTargetBlock.querySelector('.fields-browser button');
-      addStepRow(btn);
-      const rows = stepsContainer.querySelectorAll('.step-row');
-      const lastRow = rows[rows.length - 1];
-      if (lastRow) {
-        const actionSel = lastRow.querySelector('.step-action');
-        actionSel.value = action;
-        onStepActionChange(actionSel);
-        if (action === 'fill') {
-          lastRow.querySelector('.step-fill-field').value = val.field || '';
-          lastRow.querySelector('.step-fill-value').value = val.value || '';
-        } else if (action !== 'screenshot') {
-          const vInput = lastRow.querySelector('.step-value');
-          if (vInput) vInput.value = (typeof val === 'string') ? val : '';
-        }
-      }
+      const row = createStepRow(action, val);
+      stepsContainer.appendChild(row);
     });
+    applyVarDatalist();
   }
   await closeJourneyStudio();
 }
