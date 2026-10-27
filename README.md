@@ -385,6 +385,8 @@ PNG.
 - **[Alerting](docs/guides/alerting.md)** — channels, maintenance windows,
   stale-run detection, generic webhook payload
 - **[API quickstart](docs/guides/api-quickstart.md)** — common curl recipes
+- **[Azure DevOps Pipeline Integration](docs/guides/azure-devops-pipeline-trigger.md)** — triggering tests and publishing JUnit reports
+- **[Azure DevOps Ephemeral Containers](docs/guides/azure-devops-container-job.md)** — running self-contained tests and browser diffs in PR pipelines
 - **[Deployment](docs/guides/deployment.md)** — Docker, native, reverse
   proxy, Prometheus integration, retention, hardening
 - **[Troubleshooting](docs/guides/troubleshooting.md)**
