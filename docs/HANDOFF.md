@@ -1,9 +1,9 @@
 # Web Testing Harness Session Handoff & Operational Runbook
 
-**Generated:** 2026-10-27T08:35:00-04:00  
+**Generated:** 2026-10-27T13:20:00-04:00  
 **Branch:** `master` (synchronized with `origin/master`)  
 **Workspace:** `testharness`  
-**Test Suite:** **895 / 895 tests passing** (100% green, ~38s)
+**Test Suite:** **897 / 897 tests passing** (100% green, ~39s)
 
 ---
 
@@ -24,7 +24,18 @@
 
 ## 2. Recent Work & Hardening Accomplishments
 
-1. **Guided Journey Creator – In-Browser Interactive Studio Modal & URL Recording (Issue #22 / Linear CRO-49 - COMPLETED)**:
+1. **Custom Request Headers, SAML Session Reuse (`storage_state`), & Certificate Status UI (COMPLETED)**:
+   - **Custom Headers with Secret Expansion**: In [harness/browser.py](harness/browser.py), added header support using `page.set_extra_http_headers()` with recursive `$VAR` resolution for sensitive API keys, tokens, or forward-auth headers (`Remote-User`, `Authorization: Bearer <token>`). Also wired into [harness/journey_studio.py](harness/journey_studio.py) live screencast sessions and [web/routes/journey.py](web/routes/journey.py).
+   - **SAML Session State Reuse**: In [harness/browser.py](harness/browser.py), added Playwright `storage_state` loading from custom config or auto-resolved `data/storage_states/{app}_{env}.json`. Added `save_storage_state` action step and post-run persistence, plus `add_cookies` action step to handle authenticated journeys without repeated IdP logins.
+   - **Certificate Status UI**:
+     - Added `tls` (SSL / Certificate) test type to [web/templates/app_form.html](web/templates/app_form.html) with settings for target host, expiration threshold, and security headers.
+     - Added dynamic Key-Value headers manager in [web/templates/app_form.html](web/templates/app_form.html) for both API and Browser tests.
+     - Added SSL certificate status badges (`🔒 45d`, `⚠️ 12d`, `🔒 expired`) to app cards on [web/templates/dashboard.html](web/templates/dashboard.html).
+     - Added prominent SSL/TLS Certificate banner to [web/templates/detail.html](web/templates/detail.html) with days remaining, issuer, expiry date, and status color coding.
+     - Added `get_latest_cert_statuses()` on `AppStateMixin` in [harness/db/_app_state.py](harness/db/_app_state.py).
+     - Full test suite verified (897 tests passing).
+
+2. **Guided Journey Creator – In-Browser Interactive Studio Modal & URL Recording (Issue #22 / Linear CRO-49 - COMPLETED)**:
    - Added [harness/journey_studio.py](harness/journey_studio.py) implementing `JourneySession` and `JourneyStudioManager`. Uses Playwright CDP screencasting (`Page.startScreencast` / `Page.screencastFrameAck`) to stream interactive live frames, resolve elements at `(x, y)` via `document.elementFromPoint`, synthesize robust CSS/text selectors (`#id`, `button:has-text()`, `[name=]`), and execute click, fill, assert, and screenshot actions.
    - Added [web/routes/journey.py](web/routes/journey.py) exposing REST endpoints (`POST /api/journey/start`, `POST /api/journey/{id}/action`, `POST /api/journey/{id}/stop`) and real-time bidirectional WebSocket (`/ws/journey/{session_id}`).
    - Embedded interactive Journey Studio modal in [web/templates/app_form.html](web/templates/app_form.html) allowing users to click "Launch Journey Studio (Interactive)", view the live screencast canvas, click directly on elements to record actions or use quick action buttons (Assert Text, Fill Input, Screenshot), and insert recorded steps directly into the test editor with a single click.
