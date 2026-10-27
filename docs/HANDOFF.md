@@ -1,9 +1,9 @@
 # Web Testing Harness Session Handoff & Operational Runbook
 
-**Generated:** 2026-10-27T15:02:00-04:00  
+**Generated:** 2026-10-27T15:45:00-04:00  
 **Branch:** `master` (synchronized with `origin/master`)  
 **Workspace:** `testharness`  
-**Test Suite:** **897 / 897 tests passing** (100% green, ~38s)
+**Test Suite:** **919 / 919 tests passing** (100% green, ~48s)
 
 ---
 
@@ -72,13 +72,37 @@
    - Checks security headers (`Strict-Transport-Security`, `X-Content-Type-Options`, `Content-Security-Policy`) over HTTPS responses.
    - Tested in [tests/test_tls_engine.py](tests/test_tls_engine.py).
 
+7. **Scheduled Maintenance Window Recurrence & Management UI/API (COMPLETED)**:
+   - Added [harness/db/_maintenance_windows.py](harness/db/_maintenance_windows.py) with `MaintenanceWindowsMixin` supporting creation, listing, updating, toggling, and deletion of maintenance windows.
+   - Enhanced [harness/maintenance.py](harness/maintenance.py) to support weekly recurring windows (`days_of_week`, `start_time`, `end_time` or `duration_minutes`, `timezone`), cron expressions, and fixed ranges, with optional app and environment targeting.
+   - Integrated into [harness/runner.py](harness/runner.py), [harness/worker_dispatch.py](harness/worker_dispatch.py), and [harness/staleness.py](harness/staleness.py) with DB window evaluation and app/env scoped suppression.
+   - Added REST API endpoints (`GET /api/maintenance-windows`, `POST /api/maintenance-windows`, `GET/PUT/DELETE /api/maintenance-windows/{id}`, `GET /api/maintenance-windows/active`) with RBAC and audit logging.
+   - Built Admin UI in [web/routes/admin_maintenance.py](web/routes/admin_maintenance.py) and [web/templates/admin_maintenance.html](web/templates/admin_maintenance.html) with active status banner, multi-schedule creator modal, enable/disable toggles, and direct dashboard integration.
+   - Verified in [tests/test_maintenance.py](tests/test_maintenance.py) and [tests/test_maintenance_windows_api.py](tests/test_maintenance_windows_api.py).
+
+8. **Automated Synthetic SSL Renewal Verification Alerting (COMPLETED)**:
+   - Added certificate renewal transition detection in [harness/runner.py](harness/runner.py) and [harness/db/_app_state.py](harness/db/_app_state.py): detects when a certificate transitions from failing or <30d validity to renewed (>60d or validity extension), emitting a targeted `AlertType.RESOLVE` notification detailing renewal validity, expiration, and issuer.
+   - Added [harness/tls_verifier.py](harness/tls_verifier.py) implementing `get_expiring_or_failing_tls_apps` and `check_and_verify_expiring_certificates`.
+   - Added automated background scheduler job `add_cert_check_job` in [harness/auto_scheduler.py](harness/auto_scheduler.py) wired into [web/main.py](web/main.py) for expedited re-checks of expiring or failing certificates.
+   - Added on-demand REST endpoints `POST /api/tls/verify/{app}` and `GET /api/tls/expiring` in [web/routes/api.py](web/routes/api.py).
+   - Verified in [tests/test_tls_renewal_verification.py](tests/test_tls_renewal_verification.py).
+
+9. **Microsoft Edge Session Import & Power Apps Synthetic Automation (COMPLETED)**:
+   - Added [harness/edge_session.py](harness/edge_session.py) implementing session import, multi-format cookie conversion (Cookie-Editor, EditThisCookie, Netscape `.txt`, Playwright format), storage state inspection (detecting Entra ID tokens `ESTSAUTH`, `MSPOK`, `buid`, `fpc`), and disk persistence.
+   - Enhanced [harness/browser.py](harness/browser.py) with automatic `storage_state` loading from `data/storage_states/{app}_{env}.json`, `browser_channel: "msedge"` launch support, explicit `frame` scoping, automatic fallback to `iframe[name="fullscreen-app-host"]` for canvas controls (`[data-control-name="..."]`), and the `wait_for_powerapps` step.
+   - Enhanced [harness/journey_studio.py](harness/journey_studio.py) to automatically load session state into interactive recording sessions and prioritize `[data-control-name]` for PowerApps controls in the live screencast.
+   - Added REST API endpoints in [web/routes/api.py](web/routes/api.py) (`GET`, `POST`, `DELETE /api/storage-states/{app}/{env}`) and an interactive "Import Edge / M365 Session" modal in [web/templates/app_form.html](web/templates/app_form.html).
+   - Documented in comprehensive guide [`docs/guides/powerapps_and_edge.md`](docs/guides/powerapps_and_edge.md).
+   - Verified 7 unit & integration tests in [tests/test_powerapps_and_edge_session.py](tests/test_powerapps_and_edge_session.py).
+
 ---
 
 ## 3. Key Architectural Invariants & Gotchas
 
 - **Header and Secret Invariant**: Custom headers support `$VAR` expansion. Missing variables are kept literally so templated strings don't fail, but configured secrets (`TESTHARNESS_SECRET_KEY`, etc.) should always be injected into runner environments.
 - **SAML Storage State File Hierarchy**: Browser execution checks `context_kwargs["storage_state"]` first; if not provided, it falls back to checking `data/storage_states/{app}_{env}.json`. Saving state writes back atomically.
-- **Certificate Data Aggregation**: App state queries extract certificate expiration from the latest passing TLS tests via `get_latest_cert_statuses()`. The detail view parses `step_log` and displays an amber alert if `< 30` days or red if expired.
+- **Certificate Data Aggregation & Renewal Detection**: App state queries extract certificate expiration from the latest passing TLS tests via `get_latest_cert_statuses()`. Transitions from failing or <30d validity to >=60d validity automatically trigger `AlertType.RESOLVE` with detailed renewal metrics.
+- **Maintenance Scoping**: Maintenance windows can be global or targeted by `app` and `environment`. Execution and run history continue to record normally while alert dispatch is suppressed.
 - **Notification Group Email Deduplication**: `db.resolve_emails_for_groups(groups)` deduplicates and sorts emails across all assigned groups. If an app has no notification groups or none resolve to emails, alert dispatching falls back to global `alerts.email.to`.
 - **Playwright Fallback**: `harness/browser.py` is written to be cleanly importable even on headless systems without Playwright installed; keep browser imports lazy inside test execution routines.
 - **Visual Baseline Invariant**: `get_last_screenshot` only queries `status='pass'` so failures do not contaminate subsequent baseline comparisons unless explicitly approved by an operator or admin.
@@ -89,16 +113,16 @@
 
 ## 4. Prioritized Next Actions (Top 5)
 
-1. **[Scheduled Maintenance Window Recurrence]**:
-   - Add recurring maintenance window schedules (e.g. weekly Sunday 02:00-04:00 UTC) with cron expressions in addition to one-off datetime windows.
-2. **[Multi-Factor / TOTP Auth Helper in Studio & Runner]**:
+1. **[Multi-Factor / TOTP Auth Helper in Studio & Runner]**:
    - Provide built-in TOTP generation helper (`totp_secret` or `totp_token`) for journeys requiring two-factor authentication during synthetic runs.
-3. **[Automated Synthetic SSL Renewal Verification Alerting]**:
-   - Trigger automated immediate TLS re-checks when certificate expiry transitions from <30d to renewed (>60d) and emit resolution alerts.
-4. **[Windows-Level Control & Desktop Automation (Linear CRO-47)]**:
+2. **[Windows-Level Control & Desktop Automation (Linear CRO-47)]**:
    - Evaluate hybrid browser + desktop automation (`rpaframework`, `pywinauto`) for Windows-hosted remote workers testing native desktop clients and OS dialogs.
-5. **[Out-of-the-Box OpenID Connect / OAuth2 Test Step Helper]**:
+3. **[Out-of-the-Box OpenID Connect / OAuth2 Test Step Helper]**:
    - Add first-class OAuth2 PKCE authorization code grant step helper to browser engine for IdPs requiring live browser-driven grant flows.
+4. **[Synthetic Alert Flapping Protection & Exponential Backoff]**:
+   - Prevent alert storms when endpoints oscillate rapidly between pass and fail around threshold margins.
+5. **[Automated Synthetic Performance Trend Regression Analysis]**:
+   - Detect gradual latency degradation (p95 regression) over sliding 7-day windows before hard timeouts occur.
 
 ---
 
@@ -107,6 +131,6 @@
 ```text
 I am resuming work on Web Testing Harness (testharness).
 Please read docs/HANDOFF.md, docs/OVERVIEW.md, and docs/STANDARDS.md to understand the current architecture and state.
-All 897 tests are passing on master in .venv/bin/pytest (100% green). Linear CRO-49 is completed, and Docker image ghcr.io/croogmandoo/testharness:latest is built and deployed.
+All 919 tests are passing on master in .venv/bin/pytest (100% green). Scheduled maintenance recurrence, automated SSL renewal verification, and Microsoft Edge / PowerApps automation are completed and verified.
 Our next priority is to review the Top 5 prioritized roadmap items in Section 4 of docs/HANDOFF.md.
 ```

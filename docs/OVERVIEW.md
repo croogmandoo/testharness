@@ -144,3 +144,21 @@ testharness/
 1. **Interactive Session Capture**: The `URLRecorder` (`harness/url_recorder.py`) hooks into Playwright's `framenavigated` event stream on the top-level main frame during browser test execution.
 2. **Path Normalization & De-duplication**: Navigated URLs matching the application base URL are automatically converted to clean relative paths (e.g. `/dashboard`), while external redirects (OAuth IDPs, payment gateways) retain full URLs. Consecutive duplicate navigations are collapsed.
 3. **Automated Step Synthesis**: When `record_url_steps=True` is provided to `run_browser_test()`, recorded paths are synthesized into validated `StepResult` navigation steps and prepended to `step_log`, enabling rapid journey creation and step generation.
+
+### 3.10 Recurring Maintenance Windows & Alert Suppression
+1. **Multi-Flavored Schedules**: Supports fixed datetime ranges (`range`), cron expressions (`cron` + `duration_minutes`), and recurring weekly schedules (`weekly` with days-of-week, start/end time, duration, and timezones).
+2. **Scoped Targeting**: Windows can be applied globally, or targeted specifically to individual applications (`app`) or environments (`environment`).
+3. **Storage & Administration**: Windows are managed via SQLite table `maintenance_windows` with full REST API (`/api/maintenance-windows`) and web management UI (`/admin/maintenance`).
+4. **Execution Preserved**: Runs and test logs execute normally for full auditability, while alert notifications across all channels are suppressed for active windows.
+
+### 3.11 Automated Synthetic SSL Renewal Verification Alerting
+1. **Renewal Transition Detection**: When monitored TLS certificates transition from failing or impending expiry (`< 30d`) to renewed (`> 60d` or significant validity extension), `harness/runner.py` detects the renewal transition.
+2. **Automated Expedited Re-checks**: `harness/tls_verifier.py` scans apps for failing or expiring certificates and triggers automated verification runs (`add_cert_check_job`).
+3. **Resolution Alerts**: Emits distinct `AlertType.RESOLVE` notifications across all notification channels (Slack, Teams, Discord, Email, Webhooks) detailing new expiration date, days remaining, and issuer.
+4. **On-Demand Verification**: Operators and deployment automation hooks can invoke `POST /api/tls/verify/{app}` to immediately verify certificate renewals and dispatch recovery alerts.
+
+### 3.12 Microsoft Edge Session Import & Power Apps Automation
+1. **Edge Session State Importer**: `harness/edge_session.py` provides multi-format session parsing (Playwright `storage_state`, Cookie-Editor / EditThisCookie JSON, Netscape cookies) and automatic persistence into `data/storage_states/{app}_{env}.json`.
+2. **Enterprise SSO & Entra ID Bypass**: Auto-injects M365 authentication tokens (`ESTSAUTH`, `MSPOK`, `buid`, `fpc`) into Playwright browser contexts via `browser.new_context(storage_state=...)`, bypassing repeated MFA prompts during synthetic runs.
+3. **PowerApps Canvas Iframe Scoping & Fallback**: `harness/browser.py` automatically resolves and targets elements inside the Power Apps player iframe (`iframe[name="fullscreen-app-host"]`), supporting explicit `frame` scoping or seamless fallback for `[data-control-name="..."]` control selectors.
+4. **Interactive Journey Studio PowerApps Recognition**: Journey Studio modal automatically loads stored session state and recognizes PowerApps control identifiers directly when clicking elements in the live screencast. Fully documented in [`docs/guides/powerapps_and_edge.md`](docs/guides/powerapps_and_edge.md).
