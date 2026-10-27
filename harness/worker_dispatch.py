@@ -288,7 +288,7 @@ async def ingest_runner_results(
 
     db.complete_runner_job(job_id, error=error)
 
-    maint = is_in_maintenance(config)
+    maint = is_in_maintenance(config, app=app, environment=environment, db=db)
     if maint and alerts_to_send:
         _log.info(
             "alerts: suppressed %d alert(s) for %s — maintenance window %r active",

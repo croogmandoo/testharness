@@ -175,5 +175,25 @@ def add_analytics_export_job(scheduler: AsyncIOScheduler,
     _log.info("auto_scheduler: analytics export scheduled %r", cron)
 
 
+def add_cert_check_job(scheduler: AsyncIOScheduler,
+                       cert_check_callback: Callable[[], None],
+                       cron: str = "0 * * * *") -> None:
+    """Wire the expedited TLS/SSL certificate renewal verification check.
+
+    `cert_check_callback` is invoked periodically to find apps nearing
+    certificate expiration (< 30d) or in failing state and perform an
+    immediate re-check. Default is hourly.
+    """
+    scheduler.add_job(
+        cert_check_callback,
+        cron_trigger(cron, timezone="UTC"),
+        id="tls::cert_check",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    _log.info("auto_scheduler: TLS cert renewal check scheduled %r", cron)
+
+
 def is_enabled(config: dict) -> bool:
     return (config.get("scheduling") or {}).get("enabled", True)

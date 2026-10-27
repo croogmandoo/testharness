@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="breadcrumb">
+  <a href="/admin">Admin</a> / Maintenance Windows
+</div>
+<div class="page-header">
+  <div>
+    <h1>Maintenance Windows</h1>
+    <p class="text-secondary mt-1">Configure scheduled downtime and recurring maintenance to suppress alert dispatch while preserving run metrics and logs.</p>
+  </div>
+</div>
+
+{% if active_now %}
+<div class="mb-6 p-4 bg-warn-subtle border-warn rounded-md flex items-center justify-between">
+  <div>
+    <strong class="text-warn font-semibold">⚠️ Active Maintenance Window:</strong>
+    <span class="ml-2 font-mono">{{ active_now }}</span>
+  </div>
+  <span class="tag-chip font-bold text-xs bg-warn text-dark">ALERTS SUPPRESSED</span>
+</div>
+{% endif %}
+
+<div class="grid grid-2 gap-6">
+  <div>
+    <div class="card">
+      <div class="card-title">Schedule Maintenance Window</div>
+      {% if error %}
+      <div class="form-error mb-4">{{ error }}</div>
+      {% endif %}
+      <form method="post" action="/admin/maintenance" id="maint-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        <div class="field">
+          <label class="label">Window Name</label>
+          <input class="input" name="name" placeholder="e.g. Sunday DB Maintenance" required>
+        </div>
+
+        <div class="field">
+          <label class="label">Description (optional)</label>
+          <input class="input" name="description" placeholder="Planned OS updates & database vacuum">
+        </div>
+
+        <div class="grid grid-2 gap-3">
+          <div class="field">
+            <label class="label">Target App (optional)</label>
+            <select class="input" name="app">
+              <option value="">All Applications (Global)</option>
+              {% for a in apps %}
+              <option value="{{ a.app }}">{{ a.app }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label class="label">Target Environment (optional)</label>
+            <select class="input" name="environment">
+              <option value="">All Environments</option>
+              {% for env_name in environments %}
+              <option value="{{ env_name }}">{{ env_name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label">Schedule Type</label>
+          <select class="input" name="window_type" id="window_type_select" onchange="updateScheduleFields()" required>
+            <option value="weekly" selected>Weekly Recurring Schedule</option>
+            <option value="cron">Cron Expression</option>
+            <option value="range">Fixed Date &amp; Time Range</option>
+          </select>
+        </div>
+
+        <!-- Weekly Recurring Fields -->
+        <div id="weekly_fields" class="space-y-3 mb-4 p-3 bg-1 border rounded-md">
+          <label class="label">Days of Week</label>
+          <div class="flex flex-wrap gap-3">
+            <label class="flex items-center gap-1 text-sm"><input type="checkbox" name="days_of_week" value="sun" checked> Sun</label>
+            <label class="flex items-center gap-1 text-sm"><input type="checkbox" name="days_of_week" value="mon"> Mon</label>
+            <label class="flex items-center gap-1 text-sm"><input type="checkbox" name="days_of_week" value="tue"> Tue</label>
+            <label class="flex items-center gap-1 text-sm"><input type="checkbox" name="days_of_week" value="wed"> Wed</label>
+            <label class="flex items-center gap-1 text-sm"><input type="checkbox" name="days_of_week" value="thu"> Thu</label>
+            <label class="flex items-center gap-1 text-sm"><input type="checkbox" name="days_of_week" value="fri"> Fri</label>
+            <label class="flex items-center gap-1 text-sm"><input type="checkbox" name="days_of_week" value="sat"> Sat</label>
+          </div>
+
+          <div class="grid grid-3 gap-2 mt-2">
+            <div>
+              <label class="text-xs text-muted">Start Time (HH:MM)</label>
+              <input class="input font-mono text-sm" name="start_time" placeholder="02:00" value="02:00">
+            </div>
+            <div>
+              <label class="text-xs text-muted">End Time (HH:MM)</label>
+              <input class="input font-mono text-sm" name="end_time" placeholder="04:00" value="04:00">
+            </div>
+            <div>
+              <label class="text-xs text-muted">Timezone</label>
+              <input class="input font-mono text-sm" name="timezone_str" placeholder="UTC" value="UTC">
+            </div>
+          </div>
+        </div>
+
+        <!-- Cron Fields -->
+        <div id="cron_fields" class="space-y-3 mb-4 p-3 bg-1 border rounded-md" style="display: none;">
+          <div class="grid grid-2 gap-2">
+            <div>
+              <label class="text-xs text-muted">Cron Expression</label>
+              <input class="input font-mono text-sm" name="cron" placeholder="0 2 * * 0">
+            </div>
+            <div>
+              <label class="text-xs text-muted">Duration (minutes)</label>
+              <input class="input font-mono text-sm" name="duration_minutes" placeholder="120">
+            </div>
+          </div>
+        </div>
+
+        <!-- Range Fields -->
+        <div id="range_fields" class="space-y-3 mb-4 p-3 bg-1 border rounded-md" style="display: none;">
+          <div class="grid grid-2 gap-2">
+            <div>
+              <label class="text-xs text-muted">Start Timestamp (ISO)</label>
+              <input class="input font-mono text-sm" id="range_start" placeholder="2026-12-23T00:00:00Z">
+            </div>
+            <div>
+              <label class="text-xs text-muted">End Timestamp (ISO)</label>
+              <input class="input font-mono text-sm" id="range_end" placeholder="2026-12-27T23:59:59Z">
+            </div>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Schedule Window</button>
+      </form>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-title">Configured Maintenance Windows ({{ windows|length }})</div>
+      {% if windows %}
+      <div class="space-y-4">
+        {% for w in windows %}
+        <div class="p-4 bg-1 border rounded-md {% if w.is_active %}border-warn{% endif %}">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <div class="flex items-center gap-2">
+                <strong class="text-md">{{ w.name }}</strong>
+                {% if w.is_active %}
+                <span class="tag-chip text-xs bg-warn text-dark font-bold">ACTIVE NOW</span>
+                {% elif not w.enabled %}
+                <span class="tag-chip text-xs text-muted">DISABLED</span>
+                {% else %}
+                <span class="tag-chip text-xs text-pass">SCHEDULED</span>
+                {% endif %}
+              </div>
+              {% if w.description %}
+              <div class="text-xs text-muted mt-0.5">{{ w.description }}</div>
+              {% endif %}
+            </div>
+
+            <div class="flex items-center gap-2">
+              <form method="post" action="/admin/maintenance/{{ w.id }}/toggle" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-sm {% if w.enabled %}btn-secondary{% else %}btn-primary{% endif %}">
+                  {% if w.enabled %}Disable{% else %}Enable{% endif %}
+                </button>
+              </form>
+              <form method="post" action="/admin/maintenance/{{ w.id }}/delete" onsubmit="return confirm('Delete maintenance window {{ w.name }}?');" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+              </form>
+            </div>
+          </div>
+
+          <div class="text-xs space-y-1 mb-2">
+            <div>
+              <span class="font-semibold text-muted uppercase">Schedule:</span>
+              {% if w.window_type == 'weekly' %}
+                <span class="font-mono">{{ (w.days_of_week or [])|join(", ")|upper }} {{ w.start_time }}-{{ w.end_time or (w.duration_minutes ~ 'm') }} ({{ w.timezone }})</span>
+              {% elif w.window_type == 'cron' %}
+                <span class="font-mono">cron: {{ w.cron }} ({{ w.duration_minutes }}m duration)</span>
+              {% else %}
+                <span class="font-mono">{{ w.start_time }} to {{ w.end_time }}</span>
+              {% endif %}
+            </div>
+            <div>
+              <span class="font-semibold text-muted uppercase">Target Scope:</span>
+              <span class="tag-chip text-xs font-mono">app: {{ w.app or 'all' }}</span>
+              <span class="tag-chip text-xs font-mono">env: {{ w.environment or 'all' }}</span>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-muted">No maintenance windows configured in database yet. Maintenance windows silence alerts during updates and planned downtime.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+function updateScheduleFields() {
+  const type = document.getElementById('window_type_select').value;
+  document.getElementById('weekly_fields').style.display = type === 'weekly' ? 'block' : 'none';
+  document.getElementById('cron_fields').style.display = type === 'cron' ? 'block' : 'none';
+  document.getElementById('range_fields').style.display = type === 'range' ? 'block' : 'none';
+}
+
+document.getElementById('maint-form').addEventListener('submit', function(e) {
+  const type = document.getElementById('window_type_select').value;
+  if (type === 'range') {
+    const startVal = document.getElementById('range_start').value;
+    const endVal = document.getElementById('range_end').value;
+    const startInput = document.querySelector('input[name="start_time"]');
+    const endInput = document.querySelector('input[name="end_time"]');
+    if (startInput) startInput.value = startVal;
+    if (endInput) endInput.value = endVal;
+  }
+});
+</script>
+{% endblock %}

@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
-from typing import Any, Optional
+from typing import Any, Optional, Union
 from harness.config import ConfigError
 from harness.models import Run
 from harness.runner import run_app
@@ -309,6 +309,36 @@ class NotificationGroupUpdateRequest(BaseModel):
     emails: Optional[list[str]] = None
 
 
+class MaintenanceWindowCreateRequest(BaseModel):
+    name: str
+    window_type: str
+    description: Optional[str] = ""
+    app: Optional[str] = None
+    environment: Optional[str] = None
+    cron: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    days_of_week: Optional[list[Any]] = None
+    timezone: Optional[str] = "UTC"
+    enabled: Optional[bool] = True
+
+
+class MaintenanceWindowUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    window_type: Optional[str] = None
+    description: Optional[str] = None
+    app: Optional[str] = None
+    environment: Optional[str] = None
+    cron: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    days_of_week: Optional[list[Any]] = None
+    timezone: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
 @router.get("/notification-groups")
 async def list_notification_groups(current_user: dict = Depends(require_role("admin", "runner", "viewer"))):
     from web.main import get_db
@@ -401,3 +431,265 @@ async def delete_notification_group(
         details=f"Deleted notification group {existing['name']}",
     )
     return {"ok": True, "deleted": group_id}
+
+
+# ── Maintenance Windows ──────────────────────────────────────────────────────
+
+@router.get("/maintenance-windows")
+async def list_maintenance_windows(
+    app: Optional[str] = None,
+    environment: Optional[str] = None,
+    enabled_only: bool = False,
+    current_user: dict = Depends(require_role("admin", "runner", "viewer")),
+):
+    from web.main import get_db
+    return get_db().list_maintenance_windows(enabled_only=enabled_only, app=app, environment=environment)
+
+
+@router.get("/maintenance-windows/active")
+async def get_active_maintenance_windows(
+    app: Optional[str] = None,
+    environment: Optional[str] = None,
+    current_user: dict = Depends(require_role("admin", "runner", "viewer")),
+):
+    from harness.maintenance import is_in_maintenance
+    from web.main import get_config, get_db
+    config = get_config()
+    db = get_db()
+    active_name = is_in_maintenance(config=config, app=app, environment=environment, db=db)
+    return {
+        "active": active_name is not None,
+        "window_name": active_name,
+        "app": app,
+        "environment": environment,
+    }
+
+
+@router.post("/maintenance-windows", status_code=201)
+async def create_maintenance_window(
+    req: MaintenanceWindowCreateRequest,
+    current_user: dict = Depends(require_role("admin", "runner")),
+):
+    from web.main import get_db
+    db = get_db()
+    try:
+        win = db.create_maintenance_window(
+            name=req.name,
+            window_type=req.window_type,
+            description=req.description or "",
+            app=req.app,
+            environment=req.environment,
+            cron=req.cron,
+            duration_minutes=req.duration_minutes,
+            start_time=req.start_time,
+            end_time=req.end_time,
+            days_of_week=req.days_of_week,
+            timezone_str=req.timezone or "UTC",
+            enabled=bool(req.enabled if req.enabled is not None else True),
+            created_by=current_user.get("id"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    db.log_audit(
+        "maintenance_window.create",
+        user_id=current_user["id"],
+        username=current_user.get("username"),
+        target=win["name"],
+        details=f"Created {win['window_type']} maintenance window",
+    )
+    return win
+
+
+@router.get("/maintenance-windows/{window_id}")
+async def get_maintenance_window(
+    window_id: str,
+    current_user: dict = Depends(require_role("admin", "runner", "viewer")),
+):
+    from web.main import get_db
+    win = get_db().get_maintenance_window(window_id)
+    if not win:
+        raise HTTPException(status_code=404, detail="Maintenance window not found")
+    return win
+
+
+@router.put("/maintenance-windows/{window_id}")
+async def update_maintenance_window(
+    window_id: str,
+    req: MaintenanceWindowUpdateRequest,
+    current_user: dict = Depends(require_role("admin", "runner")),
+):
+    from web.main import get_db
+    db = get_db()
+    existing = db.get_maintenance_window(window_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Maintenance window not found")
+
+    try:
+        updated = db.update_maintenance_window(
+            window_id=window_id,
+            name=req.name,
+            description=req.description,
+            app=req.app,
+            environment=req.environment,
+            window_type=req.window_type,
+            cron=req.cron,
+            duration_minutes=req.duration_minutes,
+            start_time=req.start_time,
+            end_time=req.end_time,
+            days_of_week=req.days_of_week,
+            timezone_str=req.timezone,
+            enabled=req.enabled,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    db.log_audit(
+        "maintenance_window.update",
+        user_id=current_user["id"],
+        username=current_user.get("username"),
+        target=updated["name"],
+        details=f"Updated maintenance window {updated['name']}",
+    )
+    return updated
+
+
+@router.delete("/maintenance-windows/{window_id}")
+async def delete_maintenance_window(
+    window_id: str,
+    current_user: dict = Depends(require_role("admin", "runner")),
+):
+    from web.main import get_db
+    db = get_db()
+    existing = db.get_maintenance_window(window_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Maintenance window not found")
+
+    db.delete_maintenance_window(window_id)
+    db.log_audit(
+        "maintenance_window.delete",
+        user_id=current_user["id"],
+        username=current_user.get("username"),
+        target=existing["name"],
+        details=f"Deleted maintenance window {existing['name']}",
+    )
+    return {"ok": True, "deleted": window_id}
+
+
+# ── TLS / Certificate Renewal Verification ───────────────────────────────────
+
+@router.get("/tls/expiring")
+async def list_expiring_certificates(
+    threshold_days: float = 30.0,
+    current_user: dict = Depends(require_role("admin", "runner", "viewer")),
+):
+    from harness.tls_verifier import get_expiring_or_failing_tls_apps
+    from web.main import get_db, get_apps, get_config
+    db = get_db()
+    apps = get_apps()
+    config = get_config()
+    envs = list((config.get("environments") or {"production": {}}).keys())
+    return get_expiring_or_failing_tls_apps(db, apps, environments=envs, threshold_days=threshold_days)
+
+
+@router.post("/tls/verify/{app_name}")
+async def verify_tls_for_app(
+    app_name: str,
+    environment: Optional[str] = None,
+    current_user: dict = Depends(require_role("admin", "runner")),
+):
+    from harness.tls_verifier import verify_app_tls
+    from web.main import get_db, get_apps, get_config
+    db = get_db()
+    apps = get_apps()
+    config = get_config()
+
+    target_app = next((a for a in apps if a.get("app") == app_name), None)
+    if not target_app:
+        raise HTTPException(status_code=404, detail=f"Application '{app_name}' not found")
+
+    env = environment or config.get("default_environment", "production")
+    results = await verify_app_tls(target_app, env, db, config, triggered_by="tls_manual_verify")
+
+    cert_map = db.get_latest_cert_statuses(env)
+    latest_cert = cert_map.get(app_name)
+
+    db.log_audit(
+        "tls.verify",
+        user_id=current_user["id"],
+        username=current_user.get("username"),
+        target=f"{app_name}:{env}",
+        details=f"Triggered immediate TLS renewal verification for {app_name} ({env})",
+    )
+    return {
+        "app": app_name,
+        "environment": env,
+        "results_count": len(results),
+        "cert_status": latest_cert,
+    }
+
+
+# ── Browser Session State & Microsoft Edge Auth ──────────────────────────────
+
+class StorageStateImportRequest(BaseModel):
+    storage_state: Union[dict, list, str]
+
+
+@router.get("/storage-states/{app}/{env}")
+async def get_storage_state_endpoint(
+    app: str,
+    env: str,
+    current_user: dict = Depends(require_role("admin", "runner", "viewer")),
+):
+    from harness.edge_session import inspect_storage_state
+    info = inspect_storage_state(app, env)
+    return info
+
+
+@router.post("/storage-states/{app}/{env}")
+async def import_storage_state_endpoint(
+    app: str,
+    env: str,
+    req: StorageStateImportRequest,
+    current_user: dict = Depends(require_role("admin", "runner")),
+):
+    from harness.edge_session import import_edge_session
+    from web.main import get_db
+    try:
+        info = import_edge_session(app, env, req.storage_state)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    get_db().log_audit(
+        "session_state.import",
+        user_id=current_user["id"],
+        username=current_user.get("username"),
+        target=f"{app}:{env}",
+        details=f"Imported session state ({info.get('cookie_count', 0)} cookies, Entra ID={info.get('has_entra_id_auth')})",
+    )
+    return {"ok": True, "info": info}
+
+
+@router.delete("/storage-states/{app}/{env}")
+async def delete_storage_state_endpoint(
+    app: str,
+    env: str,
+    current_user: dict = Depends(require_role("admin", "runner")),
+):
+    from harness.edge_session import delete_storage_state
+    from web.main import get_db
+    deleted = delete_storage_state(app, env)
+    get_db().log_audit(
+        "session_state.delete",
+        user_id=current_user["id"],
+        username=current_user.get("username"),
+        target=f"{app}:{env}",
+        details="Deleted browser session state",
+    )
+    return {"ok": True, "deleted": deleted}

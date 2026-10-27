@@ -119,6 +119,25 @@ def evaluate_performance_thresholds(metrics: dict, thresholds: dict) -> tuple[st
     return summary, error_msg
 
 
+async def _resolve_frame_locator(page: Any, frame_spec: str) -> Any:
+    f_sel = frame_spec if ("[" in frame_spec or "#" in frame_spec) else f"iframe[name='{frame_spec}']"
+    fl = page.frame_locator(f_sel)
+    if inspect.isawaitable(fl):
+        fl = await fl
+    return fl
+
+
+async def _locator_action(container: Any, selector: str, action: str, *args, **kwargs) -> Any:
+    loc = container.locator(selector)
+    if inspect.isawaitable(loc):
+        loc = await loc
+    act = getattr(loc, action)
+    res = act(*args, **kwargs)
+    if inspect.isawaitable(res):
+        return await res
+    return res
+
+
 async def execute_step(page: "Page", step: dict, base_url: str,
                        screenshot_path: Optional[str] = None,
                        app: str = "", environment: str = "") -> StepResult:
@@ -126,18 +145,65 @@ async def execute_step(page: "Page", step: dict, base_url: str,
     def _elapsed() -> int:
         return int((time.monotonic() - start) * 1000)
     try:
+        frame_spec = step.get("frame")
+
+        if "wait_for_powerapps" in step:
+            cfg = step["wait_for_powerapps"]
+            timeout_ms = (cfg.get("timeout_ms") if isinstance(cfg, dict) else 30000) or 30000
+            pa_selector = 'iframe[name="fullscreen-app-host"], #fullscreen-app-host, div[data-control-name]'
+            await page.wait_for_selector(pa_selector, timeout=timeout_ms)
+            try:
+                await page.wait_for_selector('#app-load-screen, .app-splash-screen', state="hidden", timeout=timeout_ms)
+            except Exception:
+                pass
+            return StepResult(step="wait_for_powerapps ready", status="pass", duration_ms=_elapsed())
+
         if "navigate" in step:
             target = step["navigate"]
             url = target if target.startswith("http") else base_url.rstrip("/") + target
             await page.goto(url)
             return StepResult(step=f"navigate {target}", status="pass", duration_ms=_elapsed())
+
         if "fill" in step:
             s = step["fill"]
-            await page.fill(s["field"], s["value"])
-            return StepResult(step=f"fill {s['field']}", status="pass", duration_ms=_elapsed())
+            field = s["field"]
+            val = s["value"]
+            if frame_spec and hasattr(page, "frame_locator"):
+                fl = await _resolve_frame_locator(page, frame_spec)
+                await _locator_action(fl, field, "fill", val)
+                return StepResult(step=f"fill {field} (frame {frame_spec})", status="pass", duration_ms=_elapsed())
+            try:
+                await page.fill(field, val)
+            except Exception as exc:
+                if hasattr(page, "frame_locator"):
+                    try:
+                        fl = await _resolve_frame_locator(page, 'iframe[name="fullscreen-app-host"]')
+                        await _locator_action(fl, field, "fill", val)
+                        return StepResult(step=f"fill {field} (powerapps frame)", status="pass", duration_ms=_elapsed())
+                    except Exception:
+                        pass
+                raise exc
+            return StepResult(step=f"fill {field}", status="pass", duration_ms=_elapsed())
+
         if "click" in step:
-            await page.click(step["click"])
-            return StepResult(step=f"click {step['click']}", status="pass", duration_ms=_elapsed())
+            target = step["click"]
+            if frame_spec and hasattr(page, "frame_locator"):
+                fl = await _resolve_frame_locator(page, frame_spec)
+                await _locator_action(fl, target, "click")
+                return StepResult(step=f"click {target} (frame {frame_spec})", status="pass", duration_ms=_elapsed())
+            try:
+                await page.click(target)
+            except Exception as exc:
+                if hasattr(page, "frame_locator"):
+                    try:
+                        fl = await _resolve_frame_locator(page, 'iframe[name="fullscreen-app-host"]')
+                        await _locator_action(fl, target, "click")
+                        return StepResult(step=f"click {target} (powerapps frame)", status="pass", duration_ms=_elapsed())
+                    except Exception:
+                        pass
+                raise exc
+            return StepResult(step=f"click {target}", status="pass", duration_ms=_elapsed())
+
         if "save_storage_state" in step:
             cfg = step["save_storage_state"]
             state_file = (
@@ -202,7 +268,18 @@ async def execute_step(page: "Page", step: dict, base_url: str,
                               status="pass", duration_ms=_elapsed())
         if "assert_text" in step:
             expected = step["assert_text"]
-            body = await page.text_content("body")
+            if frame_spec and hasattr(page, "frame_locator"):
+                f_sel = frame_spec if ("[" in frame_spec or "#" in frame_spec) else f"iframe[name='{frame_spec}']"
+                body = await page.frame_locator(f_sel).locator("body").text_content()
+            else:
+                body = await page.text_content("body")
+                if expected not in (body or "") and hasattr(page, "frame_locator"):
+                    try:
+                        pa_body = await page.frame_locator('iframe[name="fullscreen-app-host"]').locator("body").text_content()
+                        if pa_body and expected in pa_body:
+                            body = pa_body
+                    except Exception:
+                        pass
             if expected not in (body or ""):
                 err = f"Expected page to contain text '{expected}'"
                 return StepResult(step=f"assert_text {expected}",
@@ -219,7 +296,20 @@ async def execute_step(page: "Page", step: dict, base_url: str,
             return StepResult(step=f"wait_for_url {expected}", status="pass", duration_ms=_elapsed())
         if "wait_for_selector" in step:
             selector = step["wait_for_selector"]
-            await page.wait_for_selector(selector)
+            if frame_spec and hasattr(page, "frame_locator"):
+                f_sel = frame_spec if ("[" in frame_spec or "#" in frame_spec) else f"iframe[name='{frame_spec}']"
+                await page.frame_locator(f_sel).locator(selector).wait_for()
+                return StepResult(step=f"wait_for_selector {selector} (frame {frame_spec})", status="pass", duration_ms=_elapsed())
+            try:
+                await page.wait_for_selector(selector)
+            except Exception as exc:
+                if hasattr(page, "frame_locator"):
+                    try:
+                        await page.frame_locator('iframe[name="fullscreen-app-host"]').locator(selector).wait_for()
+                        return StepResult(step=f"wait_for_selector {selector} (powerapps frame)", status="pass", duration_ms=_elapsed())
+                    except Exception:
+                        pass
+                raise exc
             return StepResult(step=f"wait_for_selector {selector}", status="pass", duration_ms=_elapsed())
         if "screenshot" in step:
             if not screenshot_path:
@@ -270,6 +360,11 @@ async def run_browser_test(run_id: str, app: str, environment: str,
     # bundle is absent -- normal launch, normal trust.
     launch_args = chromium_spki_args(BUNDLE_PATH)
     launch_kwargs: dict = {"headless": headless, "args": launch_args}
+    if test_def.get("browser_channel"):
+        launch_kwargs["channel"] = test_def["browser_channel"]
+    elif test_def.get("channel"):
+        launch_kwargs["channel"] = test_def["channel"]
+
     if proxy is not None:
         launch_kwargs["proxy"] = proxy
     else:
@@ -277,6 +372,21 @@ async def run_browser_test(run_id: str, app: str, environment: str,
         pw_proxy = get_playwright_proxy_args()
         if pw_proxy:
             launch_kwargs["proxy"] = pw_proxy
+
+    # Storage state auto-resolution (custom path or convention data/storage_states/{app}_{env}.json)
+    state_file = test_def.get("storage_state")
+    if not state_file:
+        convention_file = os.path.join("data", "storage_states", f"{app}_{environment}.json")
+        if os.path.exists(convention_file):
+            state_file = convention_file
+
+    context_kwargs: dict = {
+        "viewport": test_def.get("viewport", {"width": 1280, "height": 800}),
+        "ignore_https_errors": True,
+    }
+    if state_file and os.path.exists(state_file):
+        context_kwargs["storage_state"] = state_file
+
     # PEP-562 ``__getattr__`` only fires for attribute access on the module
     # (``browser_mod.async_playwright``), not bare-name lookup inside the
     # module itself -- which would raise ``NameError`` on the full image. So
@@ -287,7 +397,11 @@ async def run_browser_test(run_id: str, app: str, environment: str,
         from playwright.async_api import async_playwright as ap
     async with ap() as pw:
         browser = await pw.chromium.launch(**launch_kwargs)
-        page = await browser.new_page()
+        if context_kwargs.get("storage_state") and hasattr(browser, "new_context"):
+            context = await browser.new_context(**context_kwargs)
+            page = await context.new_page()
+        else:
+            page = await browser.new_page()
         # Set extra HTTP headers if configured (e.g. Bearer tokens, API keys, proxy auth)
         headers = test_def.get("headers")
         if headers and hasattr(page, "set_extra_http_headers"):

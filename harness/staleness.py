@@ -58,7 +58,7 @@ def find_stale_apps(db, apps: list, config: dict,
     cfg = _staleness_config(config)
     if not cfg["enabled"]:
         return []
-    if is_in_maintenance(config, now=now):
+    if is_in_maintenance(config, now=now, db=db):
         return []
     if now is None:
         now = datetime.now(timezone.utc)
@@ -76,6 +76,8 @@ def find_stale_apps(db, apps: list, config: dict,
         # Only check envs the app knows about, and only those declared in
         # global config (so an app YAML doesn't widen the scope).
         for env in [e for e in app_envs if e in envs]:
+            if is_in_maintenance(config, now=now, app=app_name, environment=env, db=db):
+                continue
             last_finished_str = db.get_app_last_finished_at(app_name, env)
             last_finished = _parse_iso(last_finished_str)
             if last_finished is None:

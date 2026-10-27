@@ -157,9 +157,14 @@
               <input type="checkbox" class="field-record-url-steps" {% if test.record_url_steps %}checked{% endif %}>
               Record URL steps during journey
             </label>
-            <button type="button" class="btn btn-sm btn-primary" onclick="launchJourneyStudio(this)">
-              <span style="color:#ff7b72; font-weight:bold;">⏺</span> Launch Journey Studio (Interactive)
-            </button>
+            <div class="flex items-center gap-2">
+              <button type="button" class="btn btn-sm btn-primary" onclick="launchJourneyStudio(this)">
+                <span style="color:#ff7b72; font-weight:bold;">⏺</span> Launch Journey Studio (Interactive)
+              </button>
+              <button type="button" class="btn btn-sm" onclick="openEdgeSessionModal()">
+                <span>🔑</span> Import Edge / M365 Session
+              </button>
+            </div>
           </div>
           
           <label class="field-mini mb-1">Headers (optional, e.g. Bearer tokens, API keys)</label>
@@ -179,7 +184,7 @@
             {% set action = step.keys() | list | first %}
             <div class="step-row app-form-row app-form-row--start">
               <select class="search step-action input--wide" onchange="onStepActionChange(this)">
-                {% for a in ['navigate','fill','click','assert_text','assert_url_contains','wait_for_selector','wait_for_url','wait','screenshot'] %}
+                {% for a in ['navigate','fill','click','assert_text','assert_url_contains','wait_for_selector','wait_for_url','wait','wait_for_powerapps','screenshot'] %}
                 <option value="{{ a }}" {{ 'selected' if action == a else '' }}>{{ a }}</option>
                 {% endfor %}
               </select>
@@ -630,7 +635,7 @@ function addStepRow(target) {
 function makeStepActionSelect() {
   const sel = _el('select', { cls: 'search step-action input--wide' });
   sel.addEventListener('change', function() { onStepActionChange(sel); });
-  ['navigate','fill','click','assert_text','assert_url_contains','wait_for_selector','wait_for_url','wait','screenshot'].forEach(function(a) {
+  ['navigate','fill','click','assert_text','assert_url_contains','wait_for_selector','wait_for_url','wait','wait_for_powerapps','screenshot'].forEach(function(a) {
     const o = _el('option'); o.value = a; o.textContent = a; sel.appendChild(o);
   });
   return sel;
@@ -987,5 +992,101 @@ dialog#journey-studio-modal::backdrop {
     </div>
   </div>
 </dialog>
+
+<!-- Edge / M365 Session Import Modal -->
+<dialog id="edge-session-modal" class="modal-dialog">
+  <div class="modal-box" style="max-width: 600px; padding: 20px;">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-lg font-bold">Import Microsoft Edge / M365 Session</h3>
+      <button type="button" class="btn btn-sm" onclick="document.getElementById('edge-session-modal').close()">✕</button>
+    </div>
+    <p class="text-xs text-secondary mb-3">
+      Paste cookies or Playwright storage state JSON exported from Microsoft Edge or Chrome (e.g. from Cookie-Editor extension or <code>playwright codegen --save-storage</code>). Enables headless SSO and PowerApps access without MFA prompts.
+    </p>
+    <div id="session-modal-status" class="mb-3 text-xs"></div>
+    <div class="field mb-3">
+      <label class="label text-xs">Target Environment</label>
+      <input class="input font-mono text-sm" id="session-env-input" value="production" placeholder="production">
+    </div>
+    <div class="field mb-3">
+      <label class="label text-xs">Session JSON or Cookies</label>
+      <textarea class="input font-mono text-xs" id="session-json-input" rows="8" placeholder='[{"name": "ESTSAUTH", "value": "...", "domain": ".login.microsoftonline.com"}, ...]'></textarea>
+    </div>
+    <div class="flex items-center justify-between">
+      <button type="button" class="btn btn-sm btn-danger" onclick="deleteSessionState()">Clear Stored Session</button>
+      <div class="flex items-center gap-2">
+        <button type="button" class="btn btn-sm" onclick="document.getElementById('edge-session-modal').close()">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" onclick="submitImportSession()">Save Session State</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<script>
+async function openEdgeSessionModal() {
+  const nameInput = document.getElementById('f-name');
+  const appName = (nameInput ? nameInput.value.trim() : '') || '{{ (app_def.app if app_def is defined and app_def else "") | e }}';
+  const env = document.getElementById('session-env-input').value.trim() || 'production';
+  const modal = document.getElementById('edge-session-modal');
+  modal.showModal();
+  if (appName) {
+    try {
+      const res = await fetch(`/api/storage-states/${appName}/${env}`);
+      if (res.ok) {
+        const info = await res.json();
+        const statEl = document.getElementById('session-modal-status');
+        if (info.exists) {
+          statEl.innerHTML = `<span class="tag-chip text-xs text-pass">✓ Active Session: ${info.cookie_count} cookies (${info.has_entra_id_auth ? 'Entra ID Auth' : 'Standard cookies'}) - ${info.expires_at || ''}</span>`;
+        } else {
+          statEl.innerHTML = '<span class="tag-chip text-xs text-muted">No session state currently stored for this app</span>';
+        }
+      }
+    } catch(e) {}
+  }
+}
+
+async function submitImportSession() {
+  const nameInput = document.getElementById('f-name');
+  const appName = (nameInput ? nameInput.value.trim() : '') || '{{ (app_def.app if app_def is defined and app_def else "") | e }}';
+  const env = document.getElementById('session-env-input').value.trim() || 'production';
+  const raw = document.getElementById('session-json-input').value.trim();
+  if (!appName) { alert('Please enter an Application Name first.'); return; }
+  if (!raw) { alert('Please paste session JSON or cookie data.'); return; }
+
+  let payload = raw;
+  try { payload = JSON.parse(raw); } catch(e) {}
+
+  try {
+    const res = await fetch(`/api/storage-states/${appName}/${env}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ storage_state: payload })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      alert(`Session state imported successfully! (${data.info.cookie_count} cookies, Entra ID Auth=${data.info.has_entra_id_auth})`);
+      document.getElementById('edge-session-modal').close();
+    } else {
+      const err = await res.json();
+      alert('Import failed: ' + (err.detail || 'Invalid format'));
+    }
+  } catch(e) {
+    alert('Import error: ' + e);
+  }
+}
+
+async function deleteSessionState() {
+  const nameInput = document.getElementById('f-name');
+  const appName = (nameInput ? nameInput.value.trim() : '') || '{{ (app_def.app if app_def is defined and app_def else "") | e }}';
+  const env = document.getElementById('session-env-input').value.trim() || 'production';
+  if (!appName || !confirm('Delete stored session state for this application?')) return;
+  try {
+    const res = await fetch(`/api/storage-states/${appName}/${env}`, { method: 'DELETE' });
+    if (res.ok) {
+      alert('Session state cleared.');
+      document.getElementById('edge-session-modal').close();
+    }
+  } catch(e) {}
+}
 </script>
 {% endblock %}

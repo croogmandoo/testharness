@@ -10,6 +10,7 @@ import sqlite3
 from ._api_keys import APIKeysMixin
 from ._app_state import AppStateMixin
 from ._audit import AuditMixin
+from ._maintenance_windows import MaintenanceWindowsMixin
 from ._notification_groups import NotificationGroupsMixin
 from ._runner_jobs import RunnerJobsMixin
 from ._runners import RunnersMixin
@@ -156,14 +157,35 @@ CREATE TABLE IF NOT EXISTS notification_groups (
 );
 CREATE INDEX IF NOT EXISTS idx_notification_groups_name
     ON notification_groups(name);
+CREATE TABLE IF NOT EXISTS maintenance_windows (
+    id               TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    description      TEXT,
+    app              TEXT,
+    environment      TEXT,
+    window_type      TEXT NOT NULL,
+    cron             TEXT,
+    duration_minutes INTEGER,
+    start_time       TEXT,
+    end_time         TEXT,
+    days_of_week     TEXT,
+    timezone         TEXT NOT NULL DEFAULT 'UTC',
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    created_by       TEXT REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_maintenance_windows_active
+    ON maintenance_windows(enabled, app, environment);
 CREATE INDEX IF NOT EXISTS idx_runner_jobs_dispatch
     ON runner_jobs(state, runner_name, target_tag);
 CREATE INDEX IF NOT EXISTS idx_runner_jobs_run_id
     ON runner_jobs(run_id);
 """
 
-class Database(APIKeysMixin, AppStateMixin, AuditMixin, NotificationGroupsMixin,
-               RunnerJobsMixin, RunnersMixin, RunsMixin, SecretsMixin, UsersMixin):
+class Database(APIKeysMixin, AppStateMixin, AuditMixin, MaintenanceWindowsMixin,
+               NotificationGroupsMixin, RunnerJobsMixin, RunnersMixin, RunsMixin,
+               SecretsMixin, UsersMixin):
     def __init__(self, path: str = "data/harness.db"):
         self.path = path
 

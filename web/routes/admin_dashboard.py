@@ -123,11 +123,11 @@ def _gather_card_stats(db, config: dict) -> dict:
 
     # Maintenance windows
     from harness.maintenance import is_in_maintenance
-    active_window = is_in_maintenance(config)
+    active_window = is_in_maintenance(config, db=db)
+    db_windows_count = len(db.list_maintenance_windows()) if hasattr(db, "list_maintenance_windows") else 0
+    config_windows_count = len((config.get("alerts") or {}).get("maintenance_windows") or [])
     stats["maintenance_active"] = active_window
-    stats["maintenance_windows_defined"] = len(
-        (config.get("alerts") or {}).get("maintenance_windows") or []
-    )
+    stats["maintenance_windows_defined"] = config_windows_count + db_windows_count
 
     # Analytics export
     stats["analytics_enabled"] = bool((config.get("analytics") or {}).get("enabled"))

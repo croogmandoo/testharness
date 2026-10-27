@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
@@ -27,9 +28,11 @@ def _get_playwright_launcher():
 class JourneySession:
     """Represents an active interactive journey recording session."""
 
-    def __init__(self, session_id: str, base_url: str):
+    def __init__(self, session_id: str, base_url: str, app: str = "", environment: str = "production"):
         self.session_id = session_id
         self.base_url = base_url.rstrip("/")
+        self.app = app
+        self.environment = environment
         self.current_url = ""
         self.steps: List[Dict[str, Any]] = []
         self.created_at = time.time()
@@ -98,10 +101,16 @@ class JourneySession:
                 "--disable-dev-shm-usage",
             ],
         )
-        self._context = await self._browser.new_context(
-            viewport={"width": 1024, "height": 768},
-            ignore_https_errors=True,
-        )
+        context_kwargs = {
+            "viewport": {"width": 1024, "height": 768},
+            "ignore_https_errors": True,
+        }
+        if self.app:
+            state_file = os.path.join("data", "storage_states", f"{self.app}_{self.environment}.json")
+            if os.path.exists(state_file):
+                context_kwargs["storage_state"] = state_file
+
+        self._context = await self._browser.new_context(**context_kwargs)
         self._page = await self._context.new_page()
         if headers and hasattr(self._page, "set_extra_http_headers"):
             res = self._page.set_extra_http_headers({str(k): str(v) for k, v in headers.items()})
@@ -166,6 +175,14 @@ class JourneySession:
             """([x, y]) => {
                 const el = document.elementFromPoint(x, y);
                 if (!el) return { selector: 'body', tag: 'body' };
+                // Prioritize PowerApps canvas control identifiers
+                const paControl = el.closest('[data-control-name]');
+                if (paControl) {
+                    const cname = paControl.getAttribute('data-control-name');
+                    if (cname) {
+                        return { selector: '[data-control-name=\"' + CSS.escape(cname) + '\"]', tag: el.tagName.toLowerCase(), control_name: cname };
+                    }
+                }
                 if (el.id) return { selector: '#' + CSS.escape(el.id), tag: el.tagName.toLowerCase(), id: el.id };
                 if (el.name) return { selector: '[name=\"' + CSS.escape(el.name) + '\"]', tag: el.tagName.toLowerCase(), name: el.name };
                 if (el.placeholder) return { selector: '[placeholder=\"' + CSS.escape(el.placeholder) + '\"]', tag: el.tagName.toLowerCase() };

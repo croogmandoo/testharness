@@ -219,21 +219,52 @@ class AppStateMixin:
                     steps = json.loads(step_log_raw)
                 except Exception:
                     steps = []
-                for s in steps:
-                    desc = s.get("step", "")
-                    if "Cert expiry:" in desc:
-                        m_days = re.search(r"Cert expiry:\s*([\d\.]+)\s*days remaining", desc)
-                        m_exp = re.search(r"expires\s*([\d\-]+)", desc)
-                        m_iss = re.search(r"issuer:\s*([^,\)]+)", desc)
-                        days = float(m_days.group(1)) if m_days else None
-                        status = s.get("status", row["status"])
-                        cert_map[app] = {
-                            "status": status,
-                            "days_remaining": days,
-                            "days_text": f"{int(days)}d" if days is not None else "",
-                            "expires": m_exp.group(1) if m_exp else "",
-                            "issuer": m_iss.group(1).strip() if m_iss else "",
-                            "desc": desc,
-                        }
-                        break
+                parsed = self._extract_cert_info_from_steps(steps, row["status"])
+                if parsed:
+                    cert_map[app] = parsed
             return cert_map
+
+    def _extract_cert_info_from_steps(self, steps: list, fallback_status: str = "pass") -> Optional[dict]:
+        import re
+        for s in steps:
+            desc = s.step if hasattr(s, "step") else (s.get("step", "") if isinstance(s, dict) else "")
+            if "Cert expiry:" in desc:
+                m_days = re.search(r"Cert expiry:\s*([\d\.]+)\s*days remaining", desc)
+                m_exp = re.search(r"expires\s*([\d\-]+)", desc)
+                m_iss = re.search(r"issuer:\s*([^,\)]+)", desc)
+                days = float(m_days.group(1)) if m_days else None
+                status = s.status if hasattr(s, "status") else (s.get("status", fallback_status) if isinstance(s, dict) else fallback_status)
+                return {
+                    "status": status,
+                    "days_remaining": days,
+                    "days_text": f"{int(days)}d" if days is not None else "",
+                    "expires": m_exp.group(1) if m_exp else "",
+                    "issuer": m_iss.group(1).strip() if m_iss else "",
+                    "desc": desc,
+                }
+        return None
+
+    def get_latest_cert_status_for_test(self, app: str, environment: str, test_name: str) -> Optional[dict]:
+        """Return the most recent parsed certificate status for a given app, environment, and test."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT status, step_log, finished_at
+                FROM test_results
+                WHERE app = ? AND environment = ? AND test_name = ? AND step_log LIKE '%Cert expiry%'
+                ORDER BY finished_at DESC
+                LIMIT 1
+                """,
+                (app, environment, test_name),
+            ).fetchone()
+            if not row:
+                return None
+            import json
+            try:
+                steps = json.loads(row["step_log"] or "[]")
+            except Exception:
+                steps = []
+            info = self._extract_cert_info_from_steps(steps, row["status"])
+            if info:
+                info["finished_at"] = row["finished_at"]
+            return info

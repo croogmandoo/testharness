@@ -233,6 +233,11 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
                 since=err_result.finished_at,
             ))
             continue
+        is_tls = test_def.get("type") in ("tls", "certificate", "ssl")
+        prev_cert = None
+        if is_tls and hasattr(db, "get_latest_cert_status_for_test"):
+            prev_cert = db.get_latest_cert_status_for_test(run.app, environment, result.test_name)
+
         db.insert_test_result(result)
         prev = db.get_app_state(run.app, environment, result.test_name)
         prev_state = prev["state"] if prev else "unknown"
@@ -244,9 +249,38 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
         )
         db.upsert_app_state(new_state)
         alert_type = determine_alert(prev_state, result.status)
+        alert_msg = result.error_msg
+
+        # SSL/TLS renewal verification detection
+        if is_tls and result.status == "pass":
+            curr_cert = None
+            step_dicts = [s.model_dump() if hasattr(s, "model_dump") else (s.dict() if hasattr(s, "dict") else s) for s in result.step_log]
+            if hasattr(db, "_extract_cert_info_from_steps"):
+                curr_cert = db._extract_cert_info_from_steps(step_dicts, result.status)
+
+            if curr_cert and curr_cert.get("days_remaining") is not None:
+                curr_days = curr_cert["days_remaining"]
+                prev_days = prev_cert.get("days_remaining") if prev_cert else None
+                prev_cert_status = prev_cert.get("status") if prev_cert else None
+
+                is_renewed = False
+                if prev_state == "failing" or prev_cert_status in ("fail", "error"):
+                    is_renewed = True
+                elif prev_days is not None and prev_days < 30 and curr_days >= 60:
+                    is_renewed = True
+                elif prev_days is not None and (curr_days - prev_days) >= 30:
+                    is_renewed = True
+
+                if is_renewed:
+                    alert_type = AlertType.RESOLVE
+                    alert_msg = (
+                        f"TLS/SSL Certificate renewed: valid for {curr_days:.1f} days "
+                        f"(expires {curr_cert.get('expires', 'unknown')}, issuer: {curr_cert.get('issuer', 'unknown')})"
+                    )
+
         if alert_type:
             alerts_to_send.append(
-                (alert_type, run.app, environment, result.test_name, result.error_msg)
+                (alert_type, run.app, environment, result.test_name, alert_msg)
             )
 
     db.update_run_status(run.id, "complete",
@@ -258,7 +292,7 @@ async def run_app(app_def: dict, environment: str, triggered_by: str,
     # Maintenance windows: suppress *alert dispatch* while keeping the run
     # itself recorded in DB / audit / metrics.  Operators reviewing the
     # dashboard will still see the failure; they just won't be paged.
-    maint = is_in_maintenance(config)
+    maint = is_in_maintenance(config, app=run.app, environment=environment, db=db)
     if maint:
         if alerts_to_send:
             _log.info(

@@ -23,7 +23,10 @@ def format_alert_message(alert_type: AlertType, app: str, environment: str,
         if error_msg:
             msg += f"\n\nDetails: {error_msg}"
         return msg
-    return f"[RESOLVED] {app} ({environment}) — {test_name} is now passing"
+    msg = f"[RESOLVED] {app} ({environment}) — {test_name} is now passing"
+    if error_msg:
+        msg += f"\n\nDetails: {error_msg}"
+    return msg
 
 async def _send_teams(webhook_url: str, text: str) -> None:
     async with httpx.AsyncClient(timeout=10) as client:

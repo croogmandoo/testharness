@@ -77,7 +77,7 @@ def _start_scheduler() -> None:
         return
     try:
         from harness.auto_scheduler import (
-            build_scheduler, add_retention_job, add_stale_check_job, is_enabled,
+            build_scheduler, add_retention_job, add_stale_check_job, add_cert_check_job, is_enabled,
         )
         from harness.runner import run_app
         from harness.retention import prune_old_runs
@@ -153,6 +153,20 @@ def _start_scheduler() -> None:
             except Exception:
                 _log.exception("scheduler: stale-run check failed")
         add_stale_check_job(sched, _stale_cb)
+
+    # Automated expedited TLS certificate renewal verification
+    cert_check_enabled = ((_config.get("alerts") or {})
+                          .get("cert_renewal_check_enabled", True))
+    if cert_check_enabled:
+        async def _cert_check_cb() -> None:
+            if _db is None:
+                return
+            try:
+                from harness.tls_verifier import check_and_verify_expiring_certificates
+                await check_and_verify_expiring_certificates(_db, _apps, _config)
+            except Exception:
+                _log.exception("scheduler: TLS cert renewal check failed")
+        add_cert_check_job(sched, _cert_check_cb)
 
     # Daily Parquet analytics export — see docs/guides/analytics.md.
     # Opt-in via `analytics.enabled: true` + a target block in config.yaml.
@@ -409,6 +423,9 @@ def create_app(db: Database = None, config: dict = None, apps_dir: str = "apps")
 
     from web.routes.admin_notifications import router as admin_notifications_router
     app.include_router(admin_notifications_router)
+
+    from web.routes.admin_maintenance import router as admin_maintenance_router
+    app.include_router(admin_maintenance_router)
 
     from web.routes.journey import router as journey_router
     app.include_router(journey_router)

@@ -117,7 +117,7 @@
     <div class="admin-card-sub">Loaded settings, redacted</div>
   </a>
 
-  <div class="admin-card admin-card--info">
+  <a href="/admin/maintenance" class="admin-card">
     <div class="admin-card-title">Maintenance</div>
     <div class="admin-card-stat admin-card-stat--small">
       {% if stats.maintenance_active %}
@@ -135,7 +135,7 @@
         {{ stats.maintenance_windows_defined }} window(s) configured
       {% endif %}
     </div>
-  </div>
+  </a>
 
   <div class="admin-card admin-card--info">
     <div class="admin-card-title">Analytics Export</div>
