@@ -545,10 +545,18 @@ function makeBrowserFields() {
   recLabel.appendChild(document.createTextNode(' Record URL steps during journey'));
   rowTop.appendChild(recLabel);
 
+  const btnGroup = _el('div', { cls: 'flex items-center gap-2' });
   const studioBtn = _el('button', { cls: 'btn btn-sm btn-primary', attrs: { type: 'button' } });
   studioBtn.innerHTML = '<span style="color:#ff7b72; font-weight:bold;">⏺</span> Launch Journey Studio (Interactive)';
   studioBtn.addEventListener('click', function() { launchJourneyStudio(studioBtn); });
-  rowTop.appendChild(studioBtn);
+  btnGroup.appendChild(studioBtn);
+
+  const edgeBtn = _el('button', { cls: 'btn btn-sm', attrs: { type: 'button' } });
+  edgeBtn.innerHTML = '<span>🔑</span> Import Edge / M365 Session';
+  edgeBtn.addEventListener('click', function() { openEdgeSessionModal(); });
+  btnGroup.appendChild(edgeBtn);
+
+  rowTop.appendChild(btnGroup);
 
   d.appendChild(rowTop);
   d.appendChild(createHeadersBlock('Headers (optional, e.g. Bearer tokens, API keys)'));
@@ -735,6 +743,10 @@ async function launchJourneyStudio(btn) {
   document.getElementById('studio-loader').style.display = 'flex';
   studioSteps = [];
 
+  const nameInput = document.getElementById('f-name');
+  const appName = (nameInput ? nameInput.value.trim() : '') || '{{ (app_def.app if app_def is defined and app_def else "") | e }}';
+  const env = (document.getElementById('session-env-input') ? document.getElementById('session-env-input').value.trim() : '') || 'production';
+
   const modal = document.getElementById('journey-studio-modal');
   modal.showModal();
 
@@ -754,6 +766,8 @@ async function launchJourneyStudio(btn) {
       body: JSON.stringify({
         url: initUrl,
         base_url: appUrl,
+        app: appName,
+        environment: env,
         headers: Object.keys(blockHeaders).length > 0 ? blockHeaders : null,
       }),
     });
@@ -808,6 +822,8 @@ async function launchJourneyStudio(btn) {
 
       studioWs.send(JSON.stringify({ type: 'click', x: clickX, y: clickY }));
     };
+
+    window.addEventListener('keydown', studioOnKeyDown);
 
   } catch (e) {
     document.getElementById('studio-loader').style.display = 'none';
@@ -906,7 +922,42 @@ async function insertStudioSteps() {
   await closeJourneyStudio();
 }
 
+function studioOnKeyDown(ev) {
+  if (!studioWs || studioWs.readyState !== WebSocket.OPEN) return;
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+  if (['Tab', 'Escape'].includes(ev.key)) return;
+  ev.preventDefault();
+  studioWs.send(JSON.stringify({ type: 'keypress', key: ev.key }));
+}
+
+async function studioSaveState() {
+  if (!studioSessionId) return;
+  const btn = document.getElementById('studio-save-state-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+  }
+  try {
+    const res = await fetch(`/api/journey/${studioSessionId}/save-state`, { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      alert(`Session state saved! Captured ${data.info.cookie_count} cookies (${data.info.has_entra_id_auth ? 'Entra ID Auth detected' : 'Standard cookies'}) and localStorage.`);
+    } else {
+      const err = await res.json();
+      alert('Save session state failed: ' + (err.detail || 'Unknown error'));
+    }
+  } catch(e) {
+    alert('Error saving session: ' + e);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '💾 Save Session State';
+    }
+  }
+}
+
 async function closeJourneyStudio() {
+  window.removeEventListener('keydown', studioOnKeyDown);
   if (studioWs) {
     try { studioWs.close(); } catch(e) {}
     studioWs = null;
@@ -985,6 +1036,7 @@ dialog#journey-studio-modal::backdrop {
       </span>
       <div style="display: flex; gap: 8px;">
         <button type="button" class="btn" onclick="closeJourneyStudio()">Cancel</button>
+        <button type="button" class="btn btn-sm" id="studio-save-state-btn" onclick="studioSaveState()" title="Save current authenticated session cookies & localStorage directly for this app">💾 Save Session State</button>
         <button type="button" class="btn btn-primary" onclick="insertStudioSteps()">
           ✓ Insert Captured Steps into Test
         </button>
@@ -1000,9 +1052,15 @@ dialog#journey-studio-modal::backdrop {
       <h3 class="text-lg font-bold">Import Microsoft Edge / M365 Session</h3>
       <button type="button" class="btn btn-sm" onclick="document.getElementById('edge-session-modal').close()">✕</button>
     </div>
-    <p class="text-xs text-secondary mb-3">
-      Paste cookies or Playwright storage state JSON exported from Microsoft Edge or Chrome (e.g. from Cookie-Editor extension or <code>playwright codegen --save-storage</code>). Enables headless SSO and PowerApps access without MFA prompts.
+    <p class="text-xs text-secondary mb-2">
+      Paste Playwright storage state JSON or exported cookies for Microsoft 365, Entra ID, or PowerApps.
     </p>
+    <div style="background: rgba(88,166,255,0.1); border: 1px solid rgba(88,166,255,0.25); border-radius: 4px; padding: 8px 10px; margin-bottom: 12px; font-size: 11px; line-height: 1.4; color: var(--text-dim, #8b949e);">
+      <strong style="color: #58a6ff;">💡 Microsoft SSO / PowerApps note:</strong> PowerApps uses MSAL tokens in <code>localStorage</code> plus cookies on <code>.login.microsoftonline.com</code>. A single-page Cookie-Editor export from <code>powerapps.com</code> lacks login tokens.<br>
+      <strong>Best ways:</strong><br>
+      1. Click <strong>Launch Journey Studio</strong>, sign in with Microsoft once, then click <strong>💾 Save Session State</strong> in the studio footer.<br>
+      2. Or export full state via CLI: <code>npx playwright codegen --save-storage=auth.json &lt;url&gt;</code> and paste <code>auth.json</code> below.
+    </div>
     <div id="session-modal-status" class="mb-3 text-xs"></div>
     <div class="field mb-3">
       <label class="label text-xs">Target Environment</label>

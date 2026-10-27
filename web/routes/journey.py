@@ -20,6 +20,8 @@ router = APIRouter(tags=["journey"])
 class StartJourneyRequest(BaseModel):
     url: str
     base_url: Optional[str] = None
+    app: Optional[str] = None
+    environment: Optional[str] = "production"
     headers: Optional[Dict[str, str]] = None
 
 
@@ -48,6 +50,8 @@ async def start_journey(
     session = await studio_manager.create_session(
         base_url=base,
         initial_url=target_url,
+        app=req.app or "",
+        environment=req.environment or "production",
         headers=req.headers,
     )
     return {
@@ -91,6 +95,22 @@ async def perform_journey_action(
         "current_url": session.current_url,
         "info": info,
     }
+
+
+@router.post("/api/journey/{session_id}/save-state")
+async def save_journey_storage_state(
+    session_id: str,
+    current_user: dict = Depends(require_role("admin", "runner")),
+):
+    """Save the current browser context session state to data/storage_states/{app}_{env}.json."""
+    session = await studio_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        info = await session.save_storage_state()
+        return {"ok": True, "info": info}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/api/journey/{session_id}/stop")
@@ -149,6 +169,10 @@ async def journey_websocket(websocket: WebSocket, session_id: str):
                 x = int(msg.get("x", 0))
                 y = int(msg.get("y", 0))
                 await session.click(x, y)
+            elif mtype in ("keypress", "key"):
+                key = msg.get("key", "")
+                if key:
+                    await session.press_key(key)
             elif mtype == "fill":
                 field = msg.get("field", "")
                 val = msg.get("value", "")

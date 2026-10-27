@@ -28,6 +28,8 @@ class FakePage:
         self.goto = AsyncMock()
         self.mouse = MagicMock()
         self.mouse.click = AsyncMock()
+        self.keyboard = MagicMock()
+        self.keyboard.press = AsyncMock()
         self.fill = AsyncMock()
         self.set_extra_http_headers = AsyncMock()
         self.evaluate = AsyncMock(return_value={"selector": "button#submit", "tag": "button"})
@@ -46,6 +48,7 @@ class FakeContext:
         self._page = page
         self._cdp = cdp
         self.close = AsyncMock()
+        self.storage_state = AsyncMock()
 
     async def new_page(self):
         return self._page
@@ -157,12 +160,17 @@ async def test_journey_api_endpoints(mock_playwright_stack, client):
     # Test POST /api/journey/start
     res = client.post(
         "/api/journey/start",
-        json={"url": "https://example.com/login", "base_url": "https://example.com"},
+        json={"url": "https://example.com/login", "base_url": "https://example.com", "app": "testapp", "environment": "production"},
     )
     assert res.status_code == 200
     data = res.json()
     assert "session_id" in data
     session_id = data["session_id"]
+
+    # Test POST /api/journey/{id}/save-state
+    save_res = client.post(f"/api/journey/{session_id}/save-state")
+    assert save_res.status_code == 200
+    assert save_res.json()["ok"] is True
 
     # Test POST /api/journey/{id}/action
     action_res = client.post(

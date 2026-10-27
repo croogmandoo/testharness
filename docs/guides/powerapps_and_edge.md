@@ -23,17 +23,35 @@ Automating Power Apps in headless browsers presents two unique enterprise challe
 
 By capturing an authenticated session from Microsoft Edge, `testharness` can load Power Apps with single sign-on (SSO) active, bypassing MFA and repeated login forms.
 
-### Method A: Via the Web UI (Recommended)
+### Method A: Via Guided Journey Studio (Zero Tools Required)
 
-1. Open **Microsoft Edge** on your workstation and log into your Power Apps portal (e.g. `https://apps.powerapps.com` or `https://make.powerapps.com`).
-2. Export the active cookies using a browser extension (such as **Cookie-Editor** or **EditThisCookie**) by clicking **Export -> JSON**.
-3. In the `testharness` dashboard, open your Application Form (`/apps/{name}/edit`).
-4. Under the Browser test configuration, click **"🔑 Import Edge / M365 Session"**.
-5. Paste the exported JSON or cookies into the dialog and click **Save Session State**.
-6. The system automatically normalizes the cookies into a Playwright `storage_state` and saves it to:
+1. In the `testharness` dashboard, edit your Application (`/apps/{name}/edit`).
+2. On your Browser test, click **⏺ Launch Journey Studio (Interactive)**.
+3. The studio streams a live browser session. You will see the Microsoft sign-in page.
+4. Log into your Microsoft 365 account directly (type credentials and approve MFA).
+5. Once your Power App loads, click **💾 Save Session State** in the studio footer.
+6. The entire authenticated context (all cookies across `.login.microsoftonline.com` and `powerapps.com`, plus all MSAL `localStorage` tokens) is automatically saved to:
    ```text
    data/storage_states/{app}_{environment}.json
    ```
+
+### Method B: Via Playwright CLI (Full Session State)
+
+Because Microsoft 365 / Entra ID authentication relies on cross-domain cookies (`.login.microsoftonline.com`) and MSAL client tokens in `localStorage`, using Playwright to record the session captures everything cleanly:
+
+```bash
+# Using npx or python playwright:
+npx playwright codegen --save-storage=auth.json "https://apps.powerapps.com/play/e/.../a/..."
+# or: python -m playwright codegen --save-storage=auth.json "https://apps.powerapps.com"
+```
+
+1. Sign into Microsoft and complete MFA in the browser window that opens.
+2. Once the Power App finishes loading, close the browser window.
+3. In `testharness`, open the App Edit screen, click **"🔑 Import Edge / M365 Session"**, paste the contents of `auth.json`, and click **Save Session State**.
+
+> [!WARNING]
+> **Why single-domain Cookie-Editor exports fail for Microsoft 365 / PowerApps**:
+> If you click Cookie-Editor while on `apps.powerapps.com`, it only exports cookies for that single domain. The vital `ESTSAUTH` and `SignInStateCookie` SSO tokens reside on `login.microsoftonline.com`, and PowerApps client tokens reside in `localStorage`. Without these, Microsoft redirects to the login screen. Always use **Method A (Journey Studio)** or **Method B (Playwright codegen)** for Entra ID apps.
 
 ### Method B: Via the REST API
 

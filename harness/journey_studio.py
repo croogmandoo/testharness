@@ -255,6 +255,28 @@ class JourneySession:
             self._notify_steps()
         return list(self.steps)
 
+    async def press_key(self, key: str) -> None:
+        """Forward a keyboard key press directly into the active browser page."""
+        self.last_active = time.time()
+        if self._page:
+            try:
+                await self._page.keyboard.press(key)
+            except Exception as e:
+                _log.debug("studio: press_key '%s' error: %s", key, e)
+
+    async def save_storage_state(self) -> dict:
+        """Save the current browser context session state (cookies and localStorage)."""
+        if not self._context:
+            raise RuntimeError("Browser context is not running")
+        if not self.app:
+            raise RuntimeError("Application name not provided to studio session")
+        target_dir = os.path.join("data", "storage_states")
+        os.makedirs(target_dir, exist_ok=True)
+        path = os.path.join(target_dir, f"{self.app}_{self.environment}.json")
+        await self._context.storage_state(path=path)
+        from harness.edge_session import inspect_storage_state
+        return inspect_storage_state(self.app, self.environment)
+
     def subscribe_frames(self) -> asyncio.Queue:
         q = asyncio.Queue(maxsize=10)
         self._frame_subscribers.append(q)
@@ -324,10 +346,12 @@ class JourneyStudioManager:
         self,
         base_url: str,
         initial_url: Optional[str] = None,
+        app: str = "",
+        environment: str = "production",
         headers: Optional[Dict[str, str]] = None,
     ) -> JourneySession:
         session_id = str(uuid.uuid4())
-        session = JourneySession(session_id, base_url)
+        session = JourneySession(session_id, base_url, app=app, environment=environment)
         await session.start(initial_url=initial_url, headers=headers)
         async with self._lock:
             self._sessions[session_id] = session
