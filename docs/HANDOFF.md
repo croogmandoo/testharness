@@ -1,9 +1,9 @@
 # Web Testing Harness Session Handoff & Operational Runbook
 
-**Generated:** 2026-10-27T15:45:00-04:00  
-**Branch:** `master` (synchronized with `origin/master`)  
+**Generated:** 2026-10-28T16:22:00-04:00  
+**Branch:** `master` (synchronized with `origin/master`, commit `8665688`)  
 **Workspace:** `testharness`  
-**Test Suite:** **919 / 919 tests passing** (100% green, ~48s)
+**Test Suite:** **919 / 919 tests passing** (100% green, ~49s)
 
 ---
 
@@ -15,6 +15,7 @@
   - Test / Metrics DB: `data/harness.db`
   - Authentication DB: `data/auth.db`
 - **Secrets Key**: `data/secret.key` (Fernet 32-byte key, enforced `0600` permissions)
+- **Container Registry**: `ghcr.io/croogmandoo/testharness:latest` & `ghcr.io/croogmandoo/testharness:8665688` (built and verified via GitHub Actions `Docker` workflow).
 - **Primary Dependencies**: FastAPI, Uvicorn, Playwright, SQLite3, Jinja2, Pytest, Pillow, ReportLab, Cryptography, APScheduler
 - **GitHub Task Tracking**: Issues #8 through #23 closed and verified on `croogmandoo/testharness`.
 - **Linear Project**: `Web Testing Harness (testharness)` on `Croogmando-homelab` (`CRO-47`, `CRO-49` - Completed).
@@ -95,12 +96,20 @@
    - Documented in comprehensive guide [`docs/guides/powerapps_and_edge.md`](docs/guides/powerapps_and_edge.md).
    - Verified 7 unit & integration tests in [tests/test_powerapps_and_edge_session.py](tests/test_powerapps_and_edge_session.py).
 
+10. **Guided Journey Studio In-App Session Capture, Dynamic Test Creation & Keyboard Forwarding (COMPLETED)**:
+    - **Dynamic Test Creation**: Updated `makeBrowserFields()` in [web/templates/app_form.html](web/templates/app_form.html) so that dynamically created browser test blocks immediately render the **"🔑 Import Edge / M365 Session"** button without requiring the operator to save the app and reload.
+    - **Context-Bound Studio Sessions**: Updated `/api/journey/start` in [web/routes/journey.py](web/routes/journey.py) and `studio_manager.create_session()` in [harness/journey_studio.py](harness/journey_studio.py) to accept `app` and `environment` parameters, ensuring Journey Studio sessions automatically bind and load `data/storage_states/{app}_{env}.json`.
+    - **In-Studio Session State Persistence**: Added `POST /api/journey/{session_id}/save-state` endpoint and a **"💾 Save Session State"** button to the Journey Studio modal footer. Operators can open Journey Studio, log into Microsoft Entra ID / MFA interactively once in the live browser view, and click "Save Session State" to capture complete cross-domain cookies (`.login.microsoftonline.com`, `.powerapps.com`) and MSAL `localStorage` tokens directly to disk in 1 click.
+    - **Live Keyboard Forwarding**: Added `keypress` WebSocket event forwarding so operators can click input fields in the screencast canvas and type credentials naturally from their keyboard.
+    - Verified in [tests/test_journey_studio.py](tests/test_journey_studio.py).
+
 ---
 
 ## 3. Key Architectural Invariants & Gotchas
 
 - **Header and Secret Invariant**: Custom headers support `$VAR` expansion. Missing variables are kept literally so templated strings don't fail, but configured secrets (`TESTHARNESS_SECRET_KEY`, etc.) should always be injected into runner environments.
-- **SAML Storage State File Hierarchy**: Browser execution checks `context_kwargs["storage_state"]` first; if not provided, it falls back to checking `data/storage_states/{app}_{env}.json`. Saving state writes back atomically.
+- **SAML & Entra ID Storage State File Hierarchy**: Browser execution checks `context_kwargs["storage_state"]` first; if not provided, it falls back to checking `data/storage_states/{app}_{env}.json`. Saving state writes back atomically.
+- **Microsoft 365 / Entra ID Cross-Domain & LocalStorage Invariant**: Microsoft SSO requires cookies from `.login.microsoftonline.com` AND MSAL client tokens in `localStorage`. Single-domain cookie exports from `powerapps.com` alone lack login credentials. Always capture via Journey Studio ("Save Session State") or `playwright codegen --save-storage=auth.json`.
 - **Certificate Data Aggregation & Renewal Detection**: App state queries extract certificate expiration from the latest passing TLS tests via `get_latest_cert_statuses()`. Transitions from failing or <30d validity to >=60d validity automatically trigger `AlertType.RESOLVE` with detailed renewal metrics.
 - **Maintenance Scoping**: Maintenance windows can be global or targeted by `app` and `environment`. Execution and run history continue to record normally while alert dispatch is suppressed.
 - **Notification Group Email Deduplication**: `db.resolve_emails_for_groups(groups)` deduplicates and sorts emails across all assigned groups. If an app has no notification groups or none resolve to emails, alert dispatching falls back to global `alerts.email.to`.
